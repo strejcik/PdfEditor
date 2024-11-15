@@ -17,7 +17,7 @@ function App() {
   const [selectionEnd, setSelectionEnd] = useState({ x: 0, y: 0 });
   const [initialPositions, setInitialPositions] = useState([]);
 
-  const fontSize = 30;
+  const fontSize = 20;
   const cellSize = 20;
   const boxPadding = 10;
 
@@ -41,6 +41,20 @@ const removeSelectedText = () => {
   if (selectedTextIndex !== null) {
     // Remove the selected text item from the list
     const updatedItems = textItems.filter((_, index) => index !== selectedTextIndex);
+
+
+    // Update state and localStorage
+    setTextItems(updatedItems);
+    saveTextItemsToLocalStorage(updatedItems);
+
+    // Reset selection
+    setIsTextSelected(false);
+    setSelectedTextIndex(null);
+  }
+  if(selectedTextIndexes.length >=1) {
+    // Remove the selected text item from the list
+    const updatedItems = textItems.filter((_, index) => selectedTextIndexes.forEach((e,i) => index !== i));
+
 
     // Update state and localStorage
     setTextItems(updatedItems);
@@ -362,7 +376,7 @@ const removeSelectedText = () => {
       <button onClick={saveCanvasAsPDF} style={{ marginLeft: '10px' }}>
         Save as PDF
       </button>
-      <button onClick={removeSelectedText} disabled={selectedTextIndex === null} style={{ marginLeft: '10px' }}>
+      <button onClick={removeSelectedText}  disabled={selectedTextIndex === null && selectedTextIndexes.length < 1} style={{ marginLeft: '10px' }}>
           Remove Text
       </button> 
       {showAddTextModal && (
