@@ -16,6 +16,15 @@ function App() {
   const [selectionStart, setSelectionStart] = useState({ x: 0, y: 0 });
   const [selectionEnd, setSelectionEnd] = useState({ x: 0, y: 0 });
   const [initialPositions, setInitialPositions] = useState([]);
+  const [isSelectingModeEnabled, setIsSelectingModeEnabled] = useState(true);     // State to track whether selecting mode is enabled
+  const [maxWidth, setMaxWidth] = useState(200); // Max width input for the modal
+
+// Function to toggle selecting mode
+const toggleSelectingMode = () => {
+  setIsSelectingModeEnabled((prevMode) => !prevMode);
+};
+
+
 
   const fontSize = 20;
   const cellSize = 20;
@@ -130,6 +139,7 @@ const removeSelectedText = () => {
   };
 
   const handleMouseDown = (e) => {
+    if (!isSelectingModeEnabled) return; // Exit if selecting mode is disabled
     const { offsetX, offsetY } = e.nativeEvent;
     const ctx = canvasRef.current.getContext('2d');
     ctx.font = `${fontSize}px Arial`;
@@ -318,14 +328,51 @@ const removeSelectedText = () => {
     }
   };
 
-  const addTextToCanvas = () => {
-    const newItem = { text: newText, x: 50, y: 50 }; // Add new text item at a default position
-    const updatedItems = [...textItems, newItem];
+// Function to handle adding new text to the canvas with wrapping
+const addTextToCanvas = () => {
+  if (newText.trim() !== '') {
+    const wrappedText = wrapText(newText, maxWidth); // Wrap text based on maxWidth
+    const updatedItems = [...textItems, ...wrappedText];
     setTextItems(updatedItems);
     saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
     setShowAddTextModal(false); // Close modal
     setNewText(''); // Reset text input
-  };
+    setMaxWidth(200); // Reset maxWidth input
+    drawCanvas(); // Redraw canvas to show new text immediately
+  }
+};
+
+
+// Function to wrap text based on maxWidth
+const wrapText = (text, maxWidth) => {
+  const canvas = canvasRef.current;
+  const ctx = canvas.getContext('2d');
+  ctx.font = `${fontSize}px Arial`;
+
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = '';
+  let y = 50; // Default starting y-coordinate
+
+  words.forEach((word) => {
+    const testLine = currentLine + word + ' ';
+    const testWidth = ctx.measureText(testLine).width;
+
+    if (testWidth > maxWidth && currentLine) {
+      lines.push({ text: currentLine.trim(), x: 50, y }); // Add current line
+      currentLine = word + ' ';
+      y += fontSize + 5; // Move to next line
+    } else {
+      currentLine = testLine;
+    }
+  });
+
+  if (currentLine) {
+    lines.push({ text: currentLine.trim(), x: 50, y }); // Add remaining text
+  }
+
+  return lines;
+};
 
   const toggleGrid = () => {
     setShowGrid((prevShowGrid) => !prevShowGrid);
@@ -378,36 +425,54 @@ const removeSelectedText = () => {
       </button>
       <button onClick={removeSelectedText}  disabled={selectedTextIndex === null && selectedTextIndexes.length < 1} style={{ marginLeft: '10px' }}>
           Remove Text
-      </button> 
+      </button>
+      <button onClick={toggleSelectingMode} style={{ marginLeft: '10px' }}>
+        {isSelectingModeEnabled ? 'Disable Selecting' : 'Enable Selecting'}
+      </button>
       {showAddTextModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            backgroundColor: 'white',
-            padding: '20px',
-            border: '1px solid #ccc',
-            boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
-            zIndex: 1000,
+    <div
+      style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        backgroundColor: 'white',
+        padding: '20px',
+        border: '1px solid #ccc',
+        boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
+        zIndex: 1000,
+      }}
+    >
+      <h2>Add New Text</h2>
+      <input
+        type="text"
+        value={newText}
+        onChange={(e) => setNewText(e.target.value)}
+        placeholder="Enter text here"
+        style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+      />
+      <input
+        type="number"
+        value={maxWidth}
+        onChange={(e) => setMaxWidth(parseInt(e.target.value, 10))}
+        placeholder="Enter max width (e.g., 200)"
+        style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+      />
+      <div>
+        <button onClick={addTextToCanvas}>Ok</button>
+        <button
+          onClick={() => {
+            setShowAddTextModal(false);
+            setNewText('');
+            setMaxWidth(200);
           }}
+          style={{ marginLeft: '10px' }}
         >
-          <h2>Add New Text</h2>
-          <input
-            type="text"
-            value={newText}
-            onChange={(e) => setNewText((prev) => prev = e.target.value)}
-            placeholder="Enter text here"
-          />
-          <div style={{ marginTop: '10px' }}>
-            <button onClick={addTextToCanvas}>Ok</button>
-            <button onClick={() => setShowAddTextModal(false)} style={{ marginLeft: '10px' }}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+          Cancel
+        </button>
+      </div>
+    </div>
+  )}
     </div>
   );
 }
