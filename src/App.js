@@ -26,7 +26,7 @@ function App() {
   const [imageItems, setImageItems] = useState([]); // State to hold images added to the canvas
   const [isImageDragging, setIsImageDragging] = useState(false);
   const [draggedImageIndex, setDraggedImageIndex] = useState(null);
-  
+  const [selectedImageIndex, setSelectedImageIndex] = useState(null);   // State to track the selected image
 
 
   // State to track editing mode and the text being edited
@@ -314,12 +314,20 @@ const removeSelectedText = () => {
       offsetY >= item.y &&
       offsetY <= item.y + item.height
     ) {
+      setSelectedImageIndex(index); // Set the clicked image as selected
       setIsImageDragging(true);
       setDraggedImageIndex(index);
       setDragStart({ x: offsetX, y: offsetY });
       imageClicked = true;
+      
+      
     }
   });
+
+  if (imageClicked) {
+    setIsSelecting(false); // Disable selection square if an image is being dragged
+    return; // Exit to prevent triggering selection logic
+  }
 
 
 
@@ -503,6 +511,18 @@ const addTextToCanvas = () => {
 };
 
 
+// Handle deleting the selected image
+const deleteSelectedImage = () => {
+  if (selectedImageIndex !== null) {
+    const updatedItems = imageItems.filter((_, index) => index !== selectedImageIndex);
+    setImageItems(updatedItems); // Update state
+    saveImageItemsToLocalStorage(updatedItems); // Save to localStorage
+    setSelectedImageIndex(null); // Reset selected image
+    drawCanvas(); // Redraw canvas without the deleted image
+  }
+};
+
+
 // Function to wrap text based on maxWidth
 const wrapText = (text, maxWidth) => {
   const canvas = canvasRef.current;
@@ -639,7 +659,7 @@ const closeEditModal = () => {
 
   return (
     <div style={{ padding: '20px' }}>
-      <h1>Text Editor with Grid and PDF Save</h1>
+      <h1>PdfEditor //not_finished</h1>
       <canvas
         ref={canvasRef}
         style={{ border: '1px solid black', marginBottom: '20px' }}
@@ -667,6 +687,13 @@ const closeEditModal = () => {
       onChange={handleAddImage}
       style={{ marginBottom: '10px' }}
     />
+    <button
+      onClick={deleteSelectedImage}
+      disabled={selectedImageIndex === null} // Disable button if no image is selected
+      style={{ marginLeft: '10px' }}
+    >
+      Delete Image
+    </button>
       {
   showAddTextModal && (
     <div
