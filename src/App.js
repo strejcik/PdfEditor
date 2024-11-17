@@ -27,7 +27,8 @@ function App() {
   const [isImageDragging, setIsImageDragging] = useState(false);
   const [draggedImageIndex, setDraggedImageIndex] = useState(null);
   const [selectedImageIndex, setSelectedImageIndex] = useState(null);   // State to track the selected image
-
+  const [resizingImageIndex, setResizingImageIndex] = useState(null); // Track image being resized
+  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0 }); // Track start of resizing
 
   // State to track editing mode and the text being edited
   const [isEditing, setIsEditing] = useState(false);
@@ -207,6 +208,18 @@ const removeSelectedText = () => {
     // Draw image items
     imageItems.forEach((item) => {
       ctx.drawImage(item.image, item.x, item.y, item.width, item.height);
+
+    // Draw resizing handle (bottom-right corner)
+    ctx.fillStyle = 'dodgerblue';
+    const handleSize = 10;
+    ctx.fillRect(
+      item.x + item.width - handleSize / 2,
+      item.y + item.height - handleSize / 2,
+      handleSize,
+      handleSize
+    );
+
+
     });
 
     // Draw the selection square if selecting
@@ -306,6 +319,37 @@ const removeSelectedText = () => {
 
 
   let imageClicked = false;
+  let resizing = false;
+
+
+
+
+
+
+   // Check for resizing handle clicks
+   imageItems.forEach((item, index) => {
+    const handleSize = 10;
+
+    const handleX = item.x + item.width - handleSize / 2;
+    const handleY = item.y + item.height - handleSize / 2;
+
+    if (
+      offsetX >= handleX &&
+      offsetX <= handleX + handleSize &&
+      offsetY >= handleY &&
+      offsetY <= handleY + handleSize
+    ) {
+      setResizingImageIndex(index);
+      setResizeStart({ x: offsetX, y: offsetY });
+      resizing = true;
+    }
+  });
+
+  if (resizing) {
+    setIsSelecting(false); // Disable selection square during resizing
+    return;
+  }
+
 
   imageItems.forEach((item, index) => {
     if (
@@ -323,6 +367,12 @@ const removeSelectedText = () => {
       
     }
   });
+
+  
+  if (!imageClicked) {
+    setIsImageDragging(false);
+    setResizingImageIndex(null);
+  }
 
   if (imageClicked) {
     setIsSelecting(false); // Disable selection square if an image is being dragged
@@ -375,6 +425,35 @@ const removeSelectedText = () => {
       setDragStart({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
       drawCanvas();
     }
+
+
+
+
+
+
+
+
+
+    if (resizingImageIndex !== null) {
+      const { offsetX, offsetY } = e.nativeEvent;
+  
+      const updatedItems = [...imageItems];
+      const item = updatedItems[resizingImageIndex];
+  
+      // Calculate new width and height based on mouse movement
+      const deltaX = offsetX - resizeStart.x;
+      const deltaY = offsetY - resizeStart.y;
+  
+      item.width = Math.max(10, item.width + deltaX); // Minimum width is 10px
+      item.height = Math.max(10, item.height + deltaY); // Minimum height is 10px
+  
+      setImageItems(updatedItems);
+      saveImageItemsToLocalStorage(updatedItems); // Persist changes
+      setResizeStart({ x: offsetX, y: offsetY }); // Update resize start position
+      drawCanvas();
+    }
+
+
 
 
     if (isImageDragging && draggedImageIndex !== null) {
@@ -444,6 +523,10 @@ const removeSelectedText = () => {
       setIsDragging(false);
       setInitialPositions([]);
       setDragStart({ x: 0, y: 0 });
+    }
+
+    if (resizingImageIndex !== null) {
+      setResizingImageIndex(null);
     }
 
     if (isImageDragging) {
