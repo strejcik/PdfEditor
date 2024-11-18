@@ -4,7 +4,7 @@ import { PDFDocument, rgb } from 'pdf-lib';
 function App() {
   let fontSize = 20;
   const cellSize = 20;
-  const boxPadding = 20;
+  const boxPadding = 10;
   
   const canvasRef = useRef(null);
   const [textItems, setTextItems] = useState([]); // List of text items on the canvas
@@ -196,8 +196,8 @@ const removeSelectedText = () => {
         ctx.strokeRect(
           item.x - item.boxPadding,
           item.y - actualHeight - item.boxPadding,
-          textWidth + item.boxPadding * 2,
-          actualHeight + item.boxPadding * 2
+          textWidth + item.boxPadding,
+          actualHeight + item.boxPadding
         );
       }
 
@@ -256,7 +256,7 @@ const removeSelectedText = () => {
     if (!isSelectingModeEnabled) return; // Exit if selecting mode is disabled
     const { offsetX, offsetY } = e.nativeEvent;
     const ctx = canvasRef.current.getContext('2d');
-    ctx.font = `${fontSize}px Arial`;
+    //ctx.font = `${fontSize}px Arial`;
 
     let clickedOnText = false;
 
@@ -410,7 +410,6 @@ const removeSelectedText = () => {
           };
         });
       } else {
-              //TOREMOVE
       selectedTextIndexes.forEach((index) => {
         updatedItems[index] = {
           ...updatedItems[index],
@@ -483,7 +482,7 @@ const removeSelectedText = () => {
 
       const selectedIndexes = [];
       const ctx = canvasRef.current.getContext('2d');
-      ctx.font = `${fontSize}px Arial`;
+      //ctx.font = `${fontSize}px Arial`;
 
       textItems.forEach((item, index) => {
         const textWidth = ctx.measureText(item.text).width;
@@ -610,7 +609,7 @@ const deleteSelectedImage = () => {
 const wrapText = (text, maxWidth) => {
   const canvas = canvasRef.current;
   const ctx = canvas.getContext('2d');
-  ctx.font = `${fontSize}px Arial`;
+  //ctx.font = `${fontSize}px Arial`;
 
   const words = text.split(' ');
   const lines = [];
@@ -695,7 +694,7 @@ const wrapText = (text, maxWidth) => {
 const handleDoubleClick = (e) => {
   const { offsetX, offsetY } = e.nativeEvent;
   const ctx = canvasRef.current.getContext('2d');
-  ctx.font = `${fontSize}px Arial`;
+  //ctx.font = `${fontSize}px Arial`;
 
   textItems.forEach((item, index) => {
     const textWidth = ctx.measureText(item.text).width;
