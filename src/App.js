@@ -201,6 +201,19 @@ const removeSelectedText = () => {
         );
       }
 
+
+
+      // Draw vertical dotted line for selected text
+      ctx.beginPath();
+      ctx.setLineDash([5, 5]); // Dotted line pattern
+      ctx.strokeStyle = 'dodgerblue';
+      ctx.moveTo(item.x - item.boxPadding, 0);
+      ctx.lineTo(item.x - item.boxPadding, canvas.height);
+      ctx.stroke();
+      ctx.setLineDash([]); // Reset line dash
+
+
+
       ctx.fillStyle = 'black';
       ctx.fillText(item.text, item.x, item.y);
     });
@@ -392,6 +405,59 @@ const removeSelectedText = () => {
       drawCanvas();
     }
 
+
+
+
+
+
+
+    if (isDragging) {
+      const { offsetX, offsetY } = e.nativeEvent;
+  
+      const deltaX = offsetX - dragStart.x;
+      const deltaY = offsetY - dragStart.y;
+  
+      const updatedItems = [...textItems];
+      const draggedItem = updatedItems[selectedTextIndex];
+  
+      // Calculate new position for the dragged text
+      let newX = draggedItem.x + deltaX;
+      let newY = draggedItem.y + deltaY;
+  
+      let snapped = false; // Track whether snapping has occurred
+  
+      // Snapping threshold
+      const snappingThreshold = 3;
+  
+      // Check for snapping to any other text's vertical line
+      textItems.forEach((item, index) => {
+        if (index !== selectedTextIndex) {
+          const itemPadding = (item.fontSize || fontSize) * 0.2;
+          const lineX = item.x - itemPadding;
+  
+          // Check if the dragged text's left edge is near the current item's line
+          const draggedPadding = (draggedItem.fontSize || fontSize) * 0.2;
+          const draggedLeftEdge = newX - draggedPadding;
+  
+          if (Math.abs(draggedLeftEdge - lineX) < snappingThreshold) {
+            newX = lineX + draggedPadding; // Snap dragged text to the line
+            snapped = true;
+          }
+        }
+      });
+  
+      // Update position only if snapping occurred or text is moving normally
+      if (snapped || deltaX !== 0 || deltaY !== 0) {
+         draggedItem.x = newX - deltaX;
+         draggedItem.y = newY - deltaY;
+  
+        setTextItems(updatedItems);
+        saveTextItemsToLocalStorage(updatedItems); // Save updated position in localStorage
+        setDragStart({ x: offsetX, y: offsetY }); // Update drag start position
+        drawCanvas();
+      }
+    }
+
     if (isDragging) {
       const offsetX = e.nativeEvent.offsetX - dragStart.x;
       const offsetY = e.nativeEvent.offsetY - dragStart.y;
@@ -424,14 +490,6 @@ const removeSelectedText = () => {
       setDragStart({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
       drawCanvas();
     }
-
-
-
-
-
-
-
-
 
     if (resizingImageIndex !== null) {
       const { offsetX, offsetY } = e.nativeEvent;
