@@ -23,6 +23,16 @@ function App() {
   const [isSelectingModeEnabled, setIsSelectingModeEnabled] = useState(true);     // State to track whether selecting mode is enabled
   const [maxWidth, setMaxWidth] = useState(200); // Max width input for the modal
 
+
+
+  const [pages, setPages] = useState([]); // Pages state, each page is a canvas with text/image data
+  const [activePage, setActivePage] = useState(0); // Track the currently active page
+  const canvasRefs = useRef([]); // Ref for all canvases
+
+
+
+
+
   const [imageItems, setImageItems] = useState([]); // State to hold images added to the canvas
   const [isImageDragging, setIsImageDragging] = useState(false);
   const [draggedImageIndex, setDraggedImageIndex] = useState(null);
@@ -47,6 +57,21 @@ const toggleSelectingMode = () => {
   setIsSelectingModeEnabled((prevMode) => !prevMode);
 };
 
+ // Load pages from localStorage on mount
+  useEffect(() => {
+    let storedPages = localStorage?.getItem('pages');
+    if (Array.isArray(storedPages) && storedPages.length) {
+      setPages(JSON.parse(storedPages));
+    } else {
+      setPages([...pages, { textItems: [], imageItems: [] }]);
+    }
+  }, []);
+
+   // Save pages to localStorage whenever they change
+   useEffect(() => {
+    localStorage.setItem('pages', JSON.stringify(pages));
+  }, [pages]);
+
 
 // Function to handle file input change
 const handleAddImage = (e) => {
@@ -64,12 +89,13 @@ const handleAddImage = (e) => {
         x: 50, 
         y: 50, 
         width: img.width / 2, 
-        height: img.height / 2 
+        height: img.height / 2,
+        index: activePage
       };
       const updatedItems = [...imageItems, newItem];
       setImageItems(updatedItems);
       saveImageItemsToLocalStorage(updatedItems); // Save to localStorage
-      drawCanvas();
+      drawCanvas(activePage);
     };
   };
   reader.readAsDataURL(file);
@@ -148,7 +174,7 @@ const removeSelectedText = () => {
     // Remove the selected text item from the list
     const updatedItems = textItems.filter((_, index) => index !== selectedTextIndex);
 
-
+    
     // Update state and localStorage
     setTextItems(updatedItems);
     saveTextItemsToLocalStorage(updatedItems);
@@ -156,6 +182,8 @@ const removeSelectedText = () => {
     // Reset selection
     setIsTextSelected(false);
     setSelectedTextIndex(null);
+
+    updatePageItems('textItems', updatedItems)
   }
   if(selectedTextIndexes.length >=1) {
     // Remove the selected text item from the list
@@ -169,6 +197,8 @@ const removeSelectedText = () => {
     // Reset selection
     setIsTextSelected(false);
     setSelectedTextIndex(null);
+
+    updatePageItems('textItems', updatedItems)
   }
 };
 
@@ -176,17 +206,23 @@ const removeSelectedText = () => {
     localStorage.setItem('textItems', JSON.stringify(items));
   };
 
-  const drawCanvas = () => {
-    const canvas = canvasRef.current;
+  const drawCanvas = (pageIndex) => {
+    const canvas = canvasRefs.current[pageIndex];
+    if (!canvas) return; // Ensure the canvas exists before proceeding
     const ctx = canvas.getContext('2d');
     canvas.width = 1024;
     canvas.height = 768;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    //const { textItems, imageItems } = pages[pageIndex];
+
+
     if (showGrid) drawGrid(ctx);
 
     textItems.forEach((item, index) => {
-      ctx.font = `${item.fontSize}px Arial`;
+      if(item.index === activePage) {
+        ctx.font = `${item.fontSize}px Arial`;
       const textWidth = ctx.measureText(item.text).width;
       const textHeight = ctx.measureText(item.text);
       let actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent
@@ -216,21 +252,24 @@ const removeSelectedText = () => {
 
       ctx.fillStyle = 'black';
       ctx.fillText(item.text, item.x, item.y);
+      }
     });
 
     // Draw image items
     imageItems.forEach((item) => {
+    if(item.index === activePage) {
       ctx.drawImage(item.image, item.x, item.y, item.width, item.height);
 
-    // Draw resizing handle (bottom-right corner)
-    ctx.fillStyle = 'dodgerblue';
-    const handleSize = 10;
-    ctx.fillRect(
-      item.x + item.width - handleSize / 2,
-      item.y + item.height - handleSize / 2,
-      handleSize,
-      handleSize
-    );
+      // Draw resizing handle (bottom-right corner)
+      ctx.fillStyle = 'dodgerblue';
+      const handleSize = 10;
+      ctx.fillRect(
+        item.x + item.width - handleSize / 2,
+        item.y + item.height - handleSize / 2,
+        handleSize,
+        handleSize
+      );
+    }
 
 
     });
@@ -246,6 +285,14 @@ const removeSelectedText = () => {
       ctx.fillRect(selectionStart.x, selectionStart.y, rectWidth, rectHeight);
     }
   };
+
+   // Add a new page
+   const addNewPage = () => {
+    setPages([...pages, { textItems: [], imageItems: [] }]);
+    setActivePage(pages.length); // Switch to the new page
+  };
+
+
 
   const drawGrid = (ctx) => {
     ctx.beginPath();
@@ -268,9 +315,9 @@ const removeSelectedText = () => {
   const handleMouseDown = (e) => {
     if (!isSelectingModeEnabled) return; // Exit if selecting mode is disabled
     const { offsetX, offsetY } = e.nativeEvent;
-    const ctx = canvasRef.current.getContext('2d');
+    const ctx = canvasRefs.current[activePage].getContext('2d');
     //ctx.font = `${fontSize}px Arial`;
-
+    //let { textItems, imageItems } = pages[activePage];
     let clickedOnText = false;
 
     textItems.forEach((item, index) => {
@@ -297,7 +344,12 @@ const removeSelectedText = () => {
           y: textItems[i].y,
         }));
         setInitialPositions(positions)
-
+        // const updatePageItems = (type, items) => {
+        //   const updatedPages = [...pages];
+        //   updatedPages[activePage][type] = items;
+        //   setPages(updatedPages);
+        // };
+        
         
       // if (selectedTextIndexes.includes(index)) {
       //   setIsDragging(true);
@@ -315,6 +367,7 @@ const removeSelectedText = () => {
 
 
       }
+
 
     });
 
@@ -395,14 +448,14 @@ const removeSelectedText = () => {
 
 
 
-
-
+  updatePageItems('textItems', textItems)
+  updatePageItems('imageItems', imageItems)
   };
 
   const handleMouseMove = (e) => {
     if (isSelecting) {
       setSelectionEnd({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
-      drawCanvas();
+      drawCanvas(activePage);
     }
 
 
@@ -454,7 +507,7 @@ const removeSelectedText = () => {
         setTextItems(updatedItems);
         saveTextItemsToLocalStorage(updatedItems); // Save updated position in localStorage
         setDragStart({ x: offsetX, y: offsetY }); // Update drag start position
-        drawCanvas();
+        drawCanvas(activePage);
       }
     }
 
@@ -488,7 +541,7 @@ const removeSelectedText = () => {
       setTextItems(updatedItems);
       saveTextItemsToLocalStorage(updatedItems);
       setDragStart({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
-      drawCanvas();
+      drawCanvas(activePage);
     }
 
     if (resizingImageIndex !== null) {
@@ -507,7 +560,7 @@ const removeSelectedText = () => {
       setImageItems(updatedItems);
       saveImageItemsToLocalStorage(updatedItems); // Persist changes
       setResizeStart({ x: offsetX, y: offsetY }); // Update resize start position
-      drawCanvas();
+      drawCanvas(activePage);
     }
 
 
@@ -525,8 +578,11 @@ const removeSelectedText = () => {
       setImageItems(updatedItems);
       saveImageItemsToLocalStorage(updatedItems); // Save updated positions to localStorage
       setDragStart({ x: offsetX, y: offsetY });
-      drawCanvas();
+      drawCanvas(activePage);
     }
+
+    updatePageItems('textItems', textItems)
+    updatePageItems('imageItems', imageItems)
   };
 
   const handleMouseUp = () => {
@@ -539,7 +595,7 @@ const removeSelectedText = () => {
       };
 
       const selectedIndexes = [];
-      const ctx = canvasRef.current.getContext('2d');
+      const ctx = canvasRefs.current[activePage].getContext('2d');
       //ctx.font = `${fontSize}px Arial`;
 
       textItems.forEach((item, index) => {
@@ -637,7 +693,8 @@ const addTextToCanvas = () => {
       fontSize: newFontSize, 
       boxPadding: padding, // Include dynamic box padding
       x: e.x, 
-      y: e.y 
+      y: e.y,
+      index: activePage
     }))
     const updatedItems = [...textItems, ...newItem];
     setTextItems(updatedItems);
@@ -646,7 +703,8 @@ const addTextToCanvas = () => {
     setNewText(''); // Reset text input
     setNewFontSize(fontSize); // Reset font size input
     setMaxWidth(200); // Reset maxWidth input
-    drawCanvas(); // Redraw canvas to show new text immediately
+    updatePageItems('textItems', updatedItems)
+    drawCanvas(activePage); // Redraw canvas to show new text immediately
   }
 };
 
@@ -658,15 +716,15 @@ const deleteSelectedImage = () => {
     setImageItems(updatedItems); // Update state
     saveImageItemsToLocalStorage(updatedItems); // Save to localStorage
     setSelectedImageIndex(null); // Reset selected image
-    drawCanvas(); // Redraw canvas without the deleted image
+    drawCanvas(activePage); // Redraw canvas without the deleted image
+    updatePageItems('textItems', updatedItems)
   }
 };
 
 
 // Function to wrap text based on maxWidth
 const wrapText = (text, maxWidth) => {
-  const canvas = canvasRef.current;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvasRefs.current[activePage].getContext('2d');
   //ctx.font = `${fontSize}px Arial`;
 
   const words = text.split(' ');
@@ -696,48 +754,63 @@ const wrapText = (text, maxWidth) => {
 
   const toggleGrid = () => {
     setShowGrid((prevShowGrid) => !prevShowGrid);
-    drawCanvas();
+    drawCanvas(activePage);
   };
 
-  const saveCanvasAsPDF = async () => {
-    const canvas = canvasRef.current;
-    const { width, height } = canvas;
+    // Save all pages as PDF
+  const saveAllPagesAsPDF = async () => {
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([width, height]);
 
-    textItems.forEach((item) => {
-      page.drawText(item.text, {
-        x: item.x,
-        y: height - item.y,
-        size: fontSize,
-        color: rgb(0, 0, 0),
+    for (const page of pages) {
+      const pageCanvas = canvasRefs.current[pages.indexOf(page)];
+      const ctx = pageCanvas.getContext('2d');
+      const { width, height } = pageCanvas;
+      const pdfPage = pdfDoc.addPage([width, height]);
+
+      const { textItems, imageItems } = page;
+
+      // Add text items
+      textItems.forEach((item) => {
+        pdfPage.drawText(item.text, {
+          x: item.x,
+          y: height - item.y, // Convert canvas y to PDF coordinate system
+          size: item.fontSize || fontSize,
+          color: rgb(0, 0, 0),
+        });
       });
-    });
 
-  // Add image items to PDF
-  for (const item of imageItems) {
-    const imgBytes = await fetch(item.data).then((res) => res.arrayBuffer());
-    const pdfImage = await pdfDoc.embedPng(imgBytes); // Assuming PNG; use `embedJpg` for JPEG
-    page.drawImage(pdfImage, {
-      x: item.x,
-      y: height - item.y - item.height, // Adjust for PDF coordinate system
-      width: item.width,
-      height: item.height,
-    });
-  }
+      // Add image items
+      for (const item of imageItems) {
+        const imgBytes = await fetch(item.data).then((res) => res.arrayBuffer());
+        const pdfImage = await pdfDoc.embedPng(imgBytes); // Assuming PNG
+        pdfPage.drawImage(pdfImage, {
+          x: item.x,
+          y: height - item.y - item.height,
+          width: item.width,
+          height: item.height,
+        });
+      }
+    }
 
     const pdfBytes = await pdfDoc.save();
     const blob = new Blob([pdfBytes], { type: 'application/pdf' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = 'canvas_content.pdf';
+    link.download = 'multi_page_document.pdf';
     link.click();
   };
 
   useEffect(() => {
-    drawCanvas();
-  }, [textItems, showGrid, isTextSelected]);
+    drawCanvas(activePage);
+  }, [textItems, showGrid, isTextSelected, pages, activePage]);
 
+
+  // Update textItems or imageItems on the current page
+  const updatePageItems = (type, items) => {
+    let updatedPages = [...pages];
+    updatedPages[activePage][type] = items;
+    setPages(updatedPages);
+  };
 
 
 
@@ -751,7 +824,7 @@ const wrapText = (text, maxWidth) => {
 // Function to handle double-click on a text
 const handleDoubleClick = (e) => {
   const { offsetX, offsetY } = e.nativeEvent;
-  const ctx = canvasRef.current.getContext('2d');
+  const ctx = canvasRefs.current[activePage].getContext('2d');
   //ctx.font = `${fontSize}px Arial`;
 
   textItems.forEach((item, index) => {
@@ -800,21 +873,31 @@ const closeEditModal = () => {
   return (
     <div style={{ padding: '20px' }}>
       <h1>PdfEditor //not_finished</h1>
-      <canvas
-        ref={canvasRef}
-        style={{ border: '1px solid black', marginBottom: '20px' }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onDoubleClick={handleDoubleClick}
-      />
+      {pages.map((_, index) => (
+          <canvas
+          key={index}
+          ref={(el) => (canvasRefs.current[index] = el)}
+          style={{
+            border: '1px solid black',
+            marginBottom: '20px',
+          }}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onDoubleClick={handleDoubleClick}
+          onClick={() => setActivePage(index)}
+        />
+        ))}
+        <button onClick={addNewPage} style={{ marginBottom: '10px' }}>
+          Add New Page
+        </button>
       <button onClick={() => setShowAddTextModal(true)}>Add Text</button>
       <button onClick={toggleGrid} style={{ marginLeft: '10px' }}>
         {showGrid ? 'Hide Grid' : 'Show Grid'}
       </button>
-      <button onClick={saveCanvasAsPDF} style={{ marginLeft: '10px' }}>
-        Save as PDF
-      </button>
+      <button onClick={saveAllPagesAsPDF} style={{ marginTop: '10px' }}>
+          Save as PDF
+        </button>
       <button onClick={removeSelectedText}  disabled={selectedTextIndex === null && selectedTextIndexes.length < 1} style={{ marginLeft: '10px' }}>
           Remove Text
       </button>
