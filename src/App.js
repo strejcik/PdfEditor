@@ -57,15 +57,15 @@ const toggleSelectingMode = () => {
   setIsSelectingModeEnabled((prevMode) => !prevMode);
 };
 
- // Load pages from localStorage on mount
-  useEffect(() => {
-    let storedPages = localStorage?.getItem('pages');
-    if (Array.isArray(storedPages) && storedPages.length) {
-      setPages(JSON.parse(storedPages));
-    } else {
-      setPages([...pages, { textItems: [], imageItems: [] }]);
-    }
-  }, []);
+//  // Load pages from localStorage on mount
+//   useEffect(() => {
+//     let storedPages = localStorage?.getItem('pages');
+//     if (Array.isArray(storedPages) && storedPages.length) {
+//       setPages(JSON.parse(storedPages));
+//     } else {
+//       setPages([{ textItems: [], imageItems: [] }]);
+//     }
+//   }, []);
 
    // Save pages to localStorage whenever they change
    useEffect(() => {
@@ -183,7 +183,7 @@ const removeSelectedText = () => {
     setIsTextSelected(false);
     setSelectedTextIndex(null);
 
-    updatePageItems('textItems', updatedItems)
+    //updatePageItems('textItems', updatedItems)
   }
   if(selectedTextIndexes.length >=1) {
     // Remove the selected text item from the list
@@ -198,7 +198,7 @@ const removeSelectedText = () => {
     setIsTextSelected(false);
     setSelectedTextIndex(null);
 
-    updatePageItems('textItems', updatedItems)
+    //updatePageItems('textItems', updatedItems)
   }
 };
 
@@ -221,7 +221,7 @@ const removeSelectedText = () => {
     if (showGrid) drawGrid(ctx);
 
     textItems.forEach((item, index) => {
-      if(item.index === activePage) {
+      if(item.index === pageIndex) {
         ctx.font = `${item.fontSize}px Arial`;
       const textWidth = ctx.measureText(item.text).width;
       const textHeight = ctx.measureText(item.text);
@@ -257,7 +257,7 @@ const removeSelectedText = () => {
 
     // Draw image items
     imageItems.forEach((item) => {
-    if(item.index === activePage) {
+    if(item.index === pageIndex) {
       ctx.drawImage(item.image, item.x, item.y, item.width, item.height);
 
       // Draw resizing handle (bottom-right corner)
@@ -288,7 +288,7 @@ const removeSelectedText = () => {
 
    // Add a new page
    const addNewPage = () => {
-    setPages([...pages, { textItems: [], imageItems: [] }]);
+    setPages((prev) => [...prev, { textItems: [], imageItems: [] }]);
     setActivePage(pages.length); // Switch to the new page
   };
 
@@ -446,10 +446,8 @@ const removeSelectedText = () => {
   }
 
 
-
-
-  updatePageItems('textItems', textItems)
-  updatePageItems('imageItems', imageItems)
+  // updatePageItems('textItems', textItems)
+  // updatePageItems('imageItems', imageItems)
   };
 
   const handleMouseMove = (e) => {
@@ -527,7 +525,15 @@ const removeSelectedText = () => {
             x: updatedItems[index].x + offsetX,
             y: updatedItems[index].y + offsetY,
           };
+
         });
+        let temp = [];
+        updatedItems.forEach(e => {
+          if(e.index === activePage) {
+            temp.push(e);
+          }
+        })
+        updatePageItems('textItems', temp)
       } else {
       selectedTextIndexes.forEach((index) => {
         updatedItems[index] = {
@@ -536,6 +542,13 @@ const removeSelectedText = () => {
           y: updatedItems[index].y + offsetY,
         };
       });
+      let temp = [];
+      updatedItems.forEach(e => {
+        if(e.index === activePage) {
+          temp.push(e);
+        }
+      })
+      updatePageItems('textItems', temp)
       }
 
       setTextItems(updatedItems);
@@ -580,9 +593,9 @@ const removeSelectedText = () => {
       setDragStart({ x: offsetX, y: offsetY });
       drawCanvas(activePage);
     }
-
-    updatePageItems('textItems', textItems)
-    updatePageItems('imageItems', imageItems)
+    
+     
+     updatePageItems('imageItems', imageItems)
   };
 
   const handleMouseUp = () => {
@@ -703,7 +716,7 @@ const addTextToCanvas = () => {
     setNewText(''); // Reset text input
     setNewFontSize(fontSize); // Reset font size input
     setMaxWidth(200); // Reset maxWidth input
-    updatePageItems('textItems', updatedItems)
+    updatePageItems('textItems', newItem)
     drawCanvas(activePage); // Redraw canvas to show new text immediately
   }
 };
@@ -762,6 +775,7 @@ const wrapText = (text, maxWidth) => {
     const pdfDoc = await PDFDocument.create();
 
     for (const page of pages) {
+      let i = 0;
       const pageCanvas = canvasRefs.current[pages.indexOf(page)];
       const ctx = pageCanvas.getContext('2d');
       const { width, height } = pageCanvas;
@@ -790,6 +804,8 @@ const wrapText = (text, maxWidth) => {
           height: item.height,
         });
       }
+
+      i++;
     }
 
     const pdfBytes = await pdfDoc.save();
@@ -805,11 +821,34 @@ const wrapText = (text, maxWidth) => {
   }, [textItems, showGrid, isTextSelected, pages, activePage]);
 
 
-  // Update textItems or imageItems on the current page
+  // // Update textItems or imageItems on the current page
+  // const updatePageItems = (type, items) => {
+  //   const updatedPages = pages.map((page, index) => {
+  //     // Update only the active page, keep others unchanged
+  //     if (index === activePage) {
+  //       return {
+  //         ...page,
+  //         [type]: items, // Update the specific type (textItems or imageItems)
+  //       };
+  //     }
+  //     return page;
+  //   });
+  
+  //   setPages(updatedPages); // Update state with the new pages array
+  // };
+
+
   const updatePageItems = (type, items) => {
-    let updatedPages = [...pages];
-    updatedPages[activePage][type] = items;
-    setPages(updatedPages);
+    const updatedPages = [...pages];
+    updatedPages.map((page, index) => {
+      if (index === activePage){
+        updatedPages[activePage][type] = items;
+        setPages(updatedPages);
+      } else {
+        return ;
+      }
+    })
+
   };
 
 
@@ -881,7 +920,7 @@ const closeEditModal = () => {
             border: '1px solid black',
             marginBottom: '20px',
           }}
-          onMouseDown={handleMouseDown}
+          onMouseDown={(e) => handleMouseDown(e)}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onDoubleClick={handleDoubleClick}
