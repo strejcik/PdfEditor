@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { PDFDocument, rgb } from 'pdf-lib';
-
+let runOnce = false;
 function App() {
   let fontSize = 20;
   const cellSize = 20;
@@ -57,20 +57,26 @@ const toggleSelectingMode = () => {
   setIsSelectingModeEnabled((prevMode) => !prevMode);
 };
 
-//  // Load pages from localStorage on mount
-//   useEffect(() => {
-//     let storedPages = localStorage?.getItem('pages');
-//     if (Array.isArray(storedPages) && storedPages.length) {
-//       setPages(JSON.parse(storedPages));
-//     } else {
-//       setPages([{ textItems: [], imageItems: [] }]);
-//     }
-//   }, []);
+ // Load pages from localStorage on mount
+ useEffect(() => {
+  let storedPages = localStorage?.getItem('pages');
+  if(storedPages) {
+    setPages(JSON.parse(storedPages));
+  } else {
+    setPages([{textItems:[], imageItems:[]}])
+  }
+}, []);
 
-   // Save pages to localStorage whenever they change
-   useEffect(() => {
+ // Save pages to localStorage whenever they change
+ useEffect(() => {
+  if(pages?.length > 0) {
     localStorage.setItem('pages', JSON.stringify(pages));
-  }, [pages]);
+    if(runOnce === false) {
+      pages.forEach((e, i) => setActivePage(i));
+      runOnce = true;
+    }
+  }
+}, [pages]);
 
 
 // Function to handle file input change
@@ -94,6 +100,8 @@ const handleAddImage = (e) => {
       };
       const updatedItems = [...imageItems, newItem];
       setImageItems(updatedItems);
+      const uI = updatedItems.filter((_, index) => _.index === activePage);
+      updatePageItems('imageItems', uI);
       saveImageItemsToLocalStorage(updatedItems); // Save to localStorage
       drawCanvas(activePage);
     };
@@ -117,37 +125,47 @@ const handleAddImage = (e) => {
   
 
   // Load images and text items from local storage on mount
-useEffect(() => {
-  const storedTextItems = localStorage.getItem('textItems');
-  const storedImageItems = localStorage.getItem('imageItems');
+  useEffect(() => {
+    const storedTextItems = localStorage?.getItem('textItems');
+    const storedImageItems = localStorage?.getItem('imageItems');
+  
+    if (storedTextItems?.length > 0) {
+      setTextItems(JSON.parse(storedTextItems));
+    }
+  
+    if (storedImageItems?.length > 0) {
+      const parsedImages = JSON.parse(storedImageItems).map((item) => ({
+        ...item,
+        image: createImageElement(item?.data), // Convert base64 back to Image element
+      }));
+      setImageItems(parsedImages);
+    }
+  }, []);
 
-  if (storedTextItems) {
-    setTextItems(JSON.parse(storedTextItems));
+
+
+
+  const saveImageItemsToLocalStorage2 = (items) => {
   }
-
-  if (storedImageItems) {
-    const parsedImages = JSON.parse(storedImageItems).map((item) => ({
-      ...item,
-      image: createImageElement(item.data), // Convert base64 back to Image element
-    }));
-    setImageItems(parsedImages);
-  }
-}, []);
-
-
-
-
-
 
 // Save image items to local storage
 const saveImageItemsToLocalStorage = (items) => {
-  const serializedImages = items.map((item) => ({
-    data: item.data, // Save base64 data
-    x: item.x,
-    y: item.y,
-    width: item.width,
-    height: item.height,
-  }));
+  const serializedImages = items.map((item) => {
+    // if(item.index === activePage) {
+      
+    // }
+    return {
+      data: item.data, // Save base64 data
+      x: item.x,
+      y: item.y,
+      width: item.width,
+      height: item.height,
+      index: item.index
+    }
+  });
+  // if(serializedImages.length > 0) {
+    
+  // }
   localStorage.setItem('imageItems', JSON.stringify(serializedImages));
 };
 
@@ -258,6 +276,7 @@ const removeSelectedText = () => {
     // Draw image items
     imageItems.forEach((item) => {
     if(item.index === pageIndex) {
+      
       ctx.drawImage(item.image, item.x, item.y, item.width, item.height);
 
       // Draw resizing handle (bottom-right corner)
@@ -275,7 +294,7 @@ const removeSelectedText = () => {
     });
 
     // Draw the selection square if selecting
-    if (isSelecting) {
+    if (isSelecting && activePage === pageIndex) {
       const rectWidth = selectionEnd.x - selectionStart.x;
       const rectHeight = selectionEnd.y - selectionStart.y;
       ctx.strokeStyle = 'dodgerblue';
@@ -330,7 +349,7 @@ const removeSelectedText = () => {
         offsetX >= item.x - boxPadding &&
         offsetX <= item.x + textWidth + boxPadding &&
         offsetY >= item.y - actualHeight - boxPadding &&
-        offsetY <= item.y + boxPadding
+        offsetY <= item.y + boxPadding && item.index === activePage
       ) {
         setIsTextSelected(true);
         setSelectedTextIndexes([index]);
@@ -403,7 +422,7 @@ const removeSelectedText = () => {
       offsetX >= handleX &&
       offsetX <= handleX + handleSize &&
       offsetY >= handleY &&
-      offsetY <= handleY + handleSize
+      offsetY <= handleY + handleSize && item.index === activePage
     ) {
       setResizingImageIndex(index);
       setResizeStart({ x: offsetX, y: offsetY });
@@ -422,9 +441,9 @@ const removeSelectedText = () => {
       offsetX >= item.x &&
       offsetX <= item.x + item.width &&
       offsetY >= item.y &&
-      offsetY <= item.y + item.height
+      offsetY <= item.y + item.height && item.index === activePage
     ) {
-      setSelectedImageIndex(index); // Set the clicked image as selected
+      setSelectedImageIndex(item.index); // Set the clicked image as selected
       setIsImageDragging(true);
       setDraggedImageIndex(index);
       setDragStart({ x: offsetX, y: offsetY });
@@ -438,6 +457,7 @@ const removeSelectedText = () => {
   if (!imageClicked) {
     setIsImageDragging(false);
     setResizingImageIndex(null);
+    setSelectedImageIndex(null);
   }
 
   if (imageClicked) {
@@ -589,16 +609,27 @@ const removeSelectedText = () => {
       updatedItems[draggedImageIndex].y += deltaY;
   
       setImageItems(updatedItems);
+
+
+      const uI = imageItems.filter((_, index) => _.index === activePage);
+      setImageItems(updatedItems); // Update state
+
+      ///////////////////////////////////
+      // HERE //
+      ///////////////////////////////////
+
       saveImageItemsToLocalStorage(updatedItems); // Save updated positions to localStorage
+      updatePageItems('imageItems', uI)
       setDragStart({ x: offsetX, y: offsetY });
       drawCanvas(activePage);
     }
     
-     
-     updatePageItems('imageItems', imageItems)
+    const uI = imageItems.filter((_, index) => _.index === activePage);
+     updatePageItems('imageItems', uI)
   };
 
   const handleMouseUp = () => {
+    //setSelectedImageIndex(null); setSelectedTextIndex(null); setSelectedTextIndexes([]);
     if (isSelecting) {
       const selectionRect = {
         x: Math.min(selectionStart.x, selectionEnd.x),
@@ -906,8 +937,6 @@ const closeEditModal = () => {
   setEditingText('');
   setEditingIndex(null);
 };
-
-
 
   return (
     <div style={{ padding: '20px' }}>
