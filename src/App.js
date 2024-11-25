@@ -110,6 +110,37 @@ const handleAddImage = (e) => {
 };
 
 
+useEffect(() => {
+  const handleMouseMove = (e) => {
+    const canvas = canvasRefs.current[activePage];
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const isOutside =
+      e.clientX < rect.left ||
+      e.clientX > rect.right ||
+      e.clientY < rect.top ||
+      e.clientY > rect.bottom;
+
+    if (isOutside) {
+      console.log('Mouse is outside the canvas!');
+      setIsDragging(false); // Stop dragging
+      setDraggedImageIndex(null)
+      setResizingImageIndex(null);
+      setIsSelecting(null);
+    }
+  };
+
+  // Attach the event listener
+  window.addEventListener('mousemove', handleMouseMove);
+
+  // Cleanup event listener on unmount or when activePage changes
+  return () => {
+    window.removeEventListener('mousemove', handleMouseMove);
+  };
+}, [activePage, canvasRefs]);
+
+
 
   // useEffect(() => {
   //   const storedTextItems = localStorage.getItem('textItems');
@@ -143,10 +174,6 @@ const handleAddImage = (e) => {
   }, []);
 
 
-
-
-  const saveImageItemsToLocalStorage2 = (items) => {
-  }
 
 // Save image items to local storage
 const saveImageItemsToLocalStorage = (items) => {
@@ -470,7 +497,8 @@ const removeSelectedText = () => {
   // updatePageItems('imageItems', imageItems)
   };
 
-  const handleMouseMove = (e) => {
+  const handleMouseMove = (e, index) => {
+    setActivePage(index);
     if (isSelecting) {
       setSelectionEnd({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
       drawCanvas(activePage);
@@ -950,7 +978,7 @@ const closeEditModal = () => {
             marginBottom: '20px',
           }}
           onMouseDown={(e) => handleMouseDown(e)}
-          onMouseMove={handleMouseMove}
+          onMouseMove={(e) => handleMouseMove(e, index)}
           onMouseUp={handleMouseUp}
           onDoubleClick={handleDoubleClick}
           onClick={() => setActivePage(index)}
