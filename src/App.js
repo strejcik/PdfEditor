@@ -72,6 +72,7 @@ const toggleSelectingMode = () => {
   if(pages?.length > 0) {
     localStorage.setItem('pages', JSON.stringify(pages));
     if(runOnce === false) {
+      console.log('now;');
       pages.forEach((e, i) => setActivePage(i));
       runOnce = true;
     }
@@ -336,6 +337,27 @@ const removeSelectedText = () => {
    const addNewPage = () => {
     setPages((prev) => [...prev, { textItems: [], imageItems: [] }]);
     setActivePage(pages.length); // Switch to the new page
+  };
+
+
+  // Function to remove the current page
+  const removePage = () => {
+    if (pages.length <= 1) {
+      alert('Cannot remove the last page.');
+      return;
+    }
+    let updatedPages = pages.filter((_, index) => index !== activePage);
+    let updatedTextItems = textItems.filter((_, index) => _.index !== activePage)
+    let updatedImageItems = imageItems.filter((_, index) => _.index !== activePage);
+
+    updatedTextItems.forEach((e,i) => e.index = i);
+    updatedImageItems.forEach((e,i) => e.index = i);
+    // Ensure activePage is valid after removing the current page
+    const newActivePage = Math.max(0, activePage - 1);
+    setTextItems(updatedTextItems); // update textItems state
+    setImageItems(updatedImageItems);
+    setPages(updatedPages); // Update pages state
+    setActivePage(newActivePage); // Update the active page
   };
 
 
@@ -745,8 +767,8 @@ const removeSelectedText = () => {
       if (e.key === 'ArrowRight') selectedItem.x += 1;
 
       // Ensure text stays within canvas bounds
-      selectedItem.x = Math.max(0, Math.min(selectedItem.x, canvasRef.current.width - fontSize));
-      selectedItem.y = Math.max(fontSize, Math.min(selectedItem.y, canvasRef.current.height));
+      selectedItem.x = Math.max(0, Math.min(selectedItem.x, canvasRefs.current[activePage].width - fontSize));
+      selectedItem.y = Math.max(fontSize, Math.min(selectedItem.y, canvasRefs.current[activePage].height));
 
       setTextItems(updatedItems);
       saveTextItemsToLocalStorage(updatedItems); // Save updated position in localStorage
@@ -952,6 +974,7 @@ const saveEditedText = () => {
       ...updatedItems[editingIndex],
       text: editingText, // Update the text
       fontSize: editingFontSize, // Update the font size
+      index: activePage
     };
     setTextItems(updatedItems);
     saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
@@ -974,7 +997,7 @@ const closeEditModal = () => {
           key={index}
           ref={(el) => (canvasRefs.current[index] = el)}
           style={{
-            border: '1px solid black',
+            border: activePage === index ? '1px solid dodgerblue' : '1px solid black',
             marginBottom: '20px',
           }}
           onMouseDown={(e) => handleMouseDown(e)}
@@ -986,6 +1009,9 @@ const closeEditModal = () => {
         ))}
         <button onClick={addNewPage} style={{ marginBottom: '10px' }}>
           Add New Page
+        </button>
+        <button onClick={removePage} style={{ marginBottom: '10px' }}>
+          Remove Page
         </button>
       <button onClick={() => setShowAddTextModal(true)}>Add Text</button>
       <button onClick={toggleGrid} style={{ marginLeft: '10px' }}>
