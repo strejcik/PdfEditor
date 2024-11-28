@@ -232,14 +232,16 @@ const removeSelectedText = () => {
     //updatePageItems('textItems', updatedItems)
   }
   if(selectedTextIndexes.length >=1) {
+    console.log(selectedTextIndexes);
     // Remove the selected text item from the list
-    const updatedItems = textItems.filter((_, index) => selectedTextIndexes.forEach((e,i) => index !== i));
-
+    let updatedItems = textItems.filter((e,i) => e.index === activePage && selectedTextIndexes.indexOf(i) > -1 ? false : true); // [1]
+    
+    console.log(updatedItems);
 
     // Update state and localStorage
     setTextItems(updatedItems);
     saveTextItemsToLocalStorage(updatedItems);
-
+    updatePageItems('textItems', updatedItems)
     // Reset selection
     setIsTextSelected(false);
     setSelectedTextIndex(null);
@@ -347,17 +349,39 @@ const removeSelectedText = () => {
       return;
     }
     let updatedPages = pages.filter((_, index) => index !== activePage);
-    let updatedTextItems = textItems.filter((_, index) => _.index !== activePage)
-    let updatedImageItems = imageItems.filter((_, index) => _.index !== activePage);
+    let updatedTextItems = [];
+    let updatedImageItems = [];
+    updatedPages.forEach(e =>{
+      e["textItems"].forEach((e, index) =>{
+        if(activePage > 1) {
+          return;
+        } else {
+          e.index = Math.max(0, e.index - 1)
+        }
+      });
+      e["imageItems"].forEach((e, index) =>{
+        if(activePage > 1) {
+          return;
+        } else {
+          e.index = Math.max(0, e.index - 1)
+        }
+      });
+    });
+    updatedPages.forEach(e =>{
+      
+      e["textItems"].forEach((e, index) =>{
+        updatedTextItems.push(e);
+      });
+      e["imageItems"].forEach((e, index) =>{
+        updatedImageItems.push(e);
+      });
+    })
 
-    updatedTextItems.forEach((e,i) => e.index = i);
-    updatedImageItems.forEach((e,i) => e.index = i);
-    // Ensure activePage is valid after removing the current page
-    const newActivePage = Math.max(0, activePage - 1);
     setTextItems(updatedTextItems); // update textItems state
+    saveTextItemsToLocalStorage(updatedTextItems);
     setImageItems(updatedImageItems);
+    saveImageItemsToLocalStorage(updatedImageItems);
     setPages(updatedPages); // Update pages state
-    setActivePage(newActivePage); // Update the active page
   };
 
 
@@ -389,53 +413,55 @@ const removeSelectedText = () => {
     let clickedOnText = false;
 
     textItems.forEach((item, index) => {
-      const textWidth = ctx.measureText(item.text).width;
-      const textHeight = ctx.measureText(item.text);
-      let actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent
-
-      // Check if the click is within the bounding box of any text item
-      if (
-        offsetX >= item.x - boxPadding &&
-        offsetX <= item.x + textWidth + boxPadding &&
-        offsetY >= item.y - actualHeight - boxPadding &&
-        offsetY <= item.y + boxPadding && item.index === activePage
-      ) {
-        setIsTextSelected(true);
-        setSelectedTextIndexes([index]);
-        setSelectedTextIndex(index);
-        setDragStart({ x: offsetX, y: offsetY });
-        setIsDragging(true);
-        clickedOnText = true;
-        const positions = selectedTextIndexes.map(i => ({
-          index: i,
-          x: textItems[i].x,
-          y: textItems[i].y,
-        }));
-        setInitialPositions(positions)
-        // const updatePageItems = (type, items) => {
-        //   const updatedPages = [...pages];
-        //   updatedPages[activePage][type] = items;
-        //   setPages(updatedPages);
-        // };
-        
-        
-      // if (selectedTextIndexes.includes(index)) {
-      //   setIsDragging(true);
-      //   setDragStart({ x: offsetX, y: offsetY });
-      //   // Capture initial positions of all selected texts
-      //   const positions = selectedTextIndexes.map(i => ({
-      //     index: i,
-      //     x: textItems[i].x,
-      //     y: textItems[i].y,
-      //   }));
-      //   setInitialPositions(positions);
-      //   clickedOnText = true;
-      // }
-
-
-
+      if(item.index === activePage) {
+        const textWidth = ctx.measureText(item.text).width;
+        const textHeight = ctx.measureText(item.text);
+        let actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent
+  
+        // Check if the click is within the bounding box of any text item
+        if (
+          offsetX >= item.x - boxPadding &&
+          offsetX <= item.x + textWidth + boxPadding &&
+          offsetY >= item.y - actualHeight - boxPadding &&
+          offsetY <= item.y + boxPadding && item.index === activePage
+        ) {
+          setIsTextSelected(true);
+          setSelectedTextIndexes([index]);
+          setSelectedTextIndex(index);
+          setDragStart({ x: offsetX, y: offsetY });
+          setIsDragging(true);
+          clickedOnText = true;
+          const positions = selectedTextIndexes.map(i => ({
+            index: i,
+            x: textItems[i].x,
+            y: textItems[i].y,
+          }));
+          setInitialPositions(positions)
+          // const updatePageItems = (type, items) => {
+          //   const updatedPages = [...pages];
+          //   updatedPages[activePage][type] = items;
+          //   setPages(updatedPages);
+          // };
+          
+          
+        // if (selectedTextIndexes.includes(index)) {
+        //   setIsDragging(true);
+        //   setDragStart({ x: offsetX, y: offsetY });
+        //   // Capture initial positions of all selected texts
+        //   const positions = selectedTextIndexes.map(i => ({
+        //     index: i,
+        //     x: textItems[i].x,
+        //     y: textItems[i].y,
+        //   }));
+        //   setInitialPositions(positions);
+        //   clickedOnText = true;
+        // }
+  
+  
+  
+        }
+  
       }
-
 
     });
 
