@@ -72,7 +72,6 @@ const toggleSelectingMode = () => {
   if(pages?.length > 0) {
     localStorage.setItem('pages', JSON.stringify(pages));
     if(runOnce === false) {
-      console.log('now;');
       pages.forEach((e, i) => setActivePage(i));
       runOnce = true;
     }
@@ -128,7 +127,6 @@ useEffect(() => {
       setIsDragging(false); // Stop dragging
       setDraggedImageIndex(null)
       setResizingImageIndex(null);
-      setIsSelecting(null);
     }
   };
 
@@ -318,6 +316,11 @@ const removeSelectedText = () => {
         handleSize,
         handleSize
       );
+
+      // Draw a 1px border around the image
+      ctx.strokeStyle = 'black'; // Border color
+      ctx.lineWidth = 1; // Border width
+      ctx.strokeRect(item.x, item.y, item.width, item.height);
     }
 
 
