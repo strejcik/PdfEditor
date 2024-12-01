@@ -5,8 +5,7 @@ function App() {
   let fontSize = 20;
   const cellSize = 20;
   const boxPadding = 10;
-  
-  const canvasRef = useRef(null);
+
   const [textItems, setTextItems] = useState([]); // List of text items on the canvas
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -24,6 +23,9 @@ function App() {
   const [maxWidth, setMaxWidth] = useState(200); // Max width input for the modal
 
 
+  const [isTextBoxEditEnabled, setIsTextBoxEditEnabled] = useState(false); // Track TextBox Edit mode
+  const [textBox, setTextBox] = useState(null); // Store TextBox properties (position, size, content)
+  const [isTextBoxEditing, setIsTextBoxEditing] = useState(false);
 
   const [pages, setPages] = useState([]); // Pages state, each page is a canvas with text/image data
   const [activePage, setActivePage] = useState(0); // Track the currently active page
@@ -336,6 +338,33 @@ const removeSelectedText = () => {
       ctx.strokeRect(selectionStart.x, selectionStart.y, rectWidth, rectHeight);
       ctx.fillRect(selectionStart.x, selectionStart.y, rectWidth, rectHeight);
     }
+
+
+
+  if (isTextBoxEditEnabled && textBox) {
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    const rectWidth = selectionEnd.x - selectionStart.x;
+    const rectHeight = selectionEnd.y - selectionStart.y;
+    textBox.x = selectionStart.x;
+    textBox.y = selectionStart.y;
+    textBox.width = rectWidth;
+    textBox.height = rectHeight;
+    ctx.strokeRect(textBox.x, textBox.y, rectWidth, rectHeight); // Draw border
+
+    if(isSelecting === false) {
+
+      ctx.font = `${fontSize}px Arial`;
+      const lines = textBox.text.split('\n');
+      lines.forEach((line, index) => {
+       if(textBox.index === activePage) {
+        ctx.fillText(line, textBox.x + 5, textBox.y + 20 + index * 20); // Adjust line spacing
+       }
+      });
+    }
+  }
+
+  
   };
 
    // Add a new page
@@ -439,28 +468,7 @@ const removeSelectedText = () => {
             x: textItems[i].x,
             y: textItems[i].y,
           }));
-          setInitialPositions(positions)
-          // const updatePageItems = (type, items) => {
-          //   const updatedPages = [...pages];
-          //   updatedPages[activePage][type] = items;
-          //   setPages(updatedPages);
-          // };
-          
-          
-        // if (selectedTextIndexes.includes(index)) {
-        //   setIsDragging(true);
-        //   setDragStart({ x: offsetX, y: offsetY });
-        //   // Capture initial positions of all selected texts
-        //   const positions = selectedTextIndexes.map(i => ({
-        //     index: i,
-        //     x: textItems[i].x,
-        //     y: textItems[i].y,
-        //   }));
-        //   setInitialPositions(positions);
-        //   clickedOnText = true;
-        // }
-  
-  
+          setInitialPositions(positions);
   
         }
   
@@ -544,9 +552,89 @@ const removeSelectedText = () => {
   }
 
 
-  // updatePageItems('textItems', textItems)
-  // updatePageItems('imageItems', imageItems)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (!isTextBoxEditEnabled) {
+
+      // Selection square logic if TextBox Edit is disabled
+      let clickedOnText = false;
+      textItems.forEach((item, index) => {
+        if(item.index === activePage) {
+          const textWidth = ctx.measureText(item.text).width;
+          const textHeight = fontSize;
+
+          if (
+            offsetX >= item.x - boxPadding &&
+            offsetX <= item.x + textWidth + boxPadding &&
+            offsetY >= item.y - textHeight - boxPadding &&
+            offsetY <= item.y + boxPadding
+          ) {
+            setIsTextSelected(true);
+            setSelectedTextIndexes([index]);
+            setSelectedTextIndex(index);
+            setDragStart({ x: offsetX, y: offsetY });
+            setIsDragging(true);
+            clickedOnText = true;
+          }
+        }
+      });
+
+      if (!clickedOnText) {
+        setIsSelecting(true);
+        setSelectionStart({ x: offsetX, y: offsetY });
+        setSelectionEnd({ x: offsetX, y: offsetY });
+        setSelectedTextIndexes([]);
+        setSelectedTextIndex(null);
+        setIsTextSelected(false);
+      }
+    }
+
   };
+
+
+  const handleKeyPress = (e) => {
+    if (isTextBoxEditEnabled && textBox) {
+      let updatedText;
+  
+      if (e.key === 'Enter') {
+        updatedText = textBox.text + '\n'; // Add a newline
+      } else if (e.key === ' ') {
+        updatedText = textBox.text + ' '; // Add a space
+      } else if (e.key.length === 1) {
+        updatedText = textBox.text + e.key; // Add the character
+      } else {
+        return; // Ignore non-character keys
+      }
+  
+      // Wrap text based on maxWidth
+      const wrappedTextLines = wrapText(updatedText, textBox.width);
+  
+      // Combine wrapped lines into a single string with line breaks
+      const wrappedText = wrappedTextLines.map((line) => line.text).join('\n');
+  
+      // Update textBox state with wrapped text
+      setTextBox({ ...textBox, text: wrappedText });
+    }
+  };
+  useEffect(() => {
+    window.addEventListener('keyup', handleKeyPress);
+    return () => {
+      window.removeEventListener('keyup', handleKeyPress);
+    };
+  }, [isTextBoxEditEnabled, textBox]);
+
 
   const handleMouseMove = (e, index) => {
     setActivePage(index);
@@ -707,15 +795,16 @@ const removeSelectedText = () => {
      updatePageItems('imageItems', uI)
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e) => {
     //setSelectedImageIndex(null); setSelectedTextIndex(null); setSelectedTextIndexes([]);
+    const selectionRect = {
+      x: Math.min(selectionStart.x, selectionEnd.x),
+      y: Math.min(selectionStart.y, selectionEnd.y),
+      width: Math.abs(selectionEnd.x - selectionStart.x),
+      height: Math.abs(selectionEnd.y - selectionStart.y),
+    };
     if (isSelecting) {
-      const selectionRect = {
-        x: Math.min(selectionStart.x, selectionEnd.x),
-        y: Math.min(selectionStart.y, selectionEnd.y),
-        width: Math.abs(selectionEnd.x - selectionStart.x),
-        height: Math.abs(selectionEnd.y - selectionStart.y),
-      };
+
 
       const selectedIndexes = [];
       const ctx = canvasRefs.current[activePage].getContext('2d');
@@ -776,8 +865,24 @@ const removeSelectedText = () => {
     // //Deselect selection square while no text is selected
     // setIsTextSelected(true);
     // setIsSelecting(true);
-    setSelectionStart({});
-    setSelectionEnd({});
+
+    if(!isTextBoxEditEnabled) {
+      setSelectionStart({});
+      setSelectionEnd({});
+    } else {
+      const { offsetX, offsetY } = e.nativeEvent;
+      setTextBox({
+        x: offsetX,
+        y: offsetY,
+        width: selectionRect.x, // Default width
+        height: selectionRect.y, // Default height
+        text: '', // Initial text
+        index: activePage
+      });
+      setIsSelecting(false);
+      setIsTextBoxEditing(true);
+      setMaxWidth(offsetX - selectionRect.x);
+    }
 
 
     
@@ -832,6 +937,37 @@ const addTextToCanvas = () => {
 };
 
 
+
+
+// Function to handle adding new text to the canvas
+const addTextToCanvas2 = (text, maxW) => {
+  if (text.trim() !== '') {
+    const padding = newFontSize * 0.2; // Calculate dynamic padding (20% of font size)
+    let newItem = text;
+    const wrappedText = wrapText(newItem, maxW); // Wrap text based on maxWidth
+    newItem = [];
+    console.log(wrappedText);
+    wrappedText.forEach(e => newItem.push( { 
+      text: e.text, 
+      fontSize: newFontSize, 
+      boxPadding: padding, // Include dynamic box padding
+      x: e.x, 
+      y: e.y,
+      index: activePage
+    }))
+    const updatedItems = [...textItems, ...newItem];
+    setTextItems(updatedItems);
+    saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
+    setShowAddTextModal(false); // Close modal
+    setNewText(''); // Reset text input
+    setNewFontSize(fontSize); // Reset font size input
+    setMaxWidth(200); // Reset maxWidth input
+    updatePageItems('textItems', newItem)
+    drawCanvas(activePage); // Redraw canvas to show new text immediately
+  }
+};
+
+
 // Handle deleting the selected image
 const deleteSelectedImage = () => {
   if (selectedImageIndex !== null) {
@@ -845,35 +981,55 @@ const deleteSelectedImage = () => {
 };
 
 
-// Function to wrap text based on maxWidth
 const wrapText = (text, maxWidth) => {
   const ctx = canvasRefs.current[activePage].getContext('2d');
-  //ctx.font = `${fontSize}px Arial`;
-
-  const words = text.split(' ');
   const lines = [];
-  let currentLine = '';
-  let y = 50; // Default starting y-coordinate
+  const paragraphs = text.split('\n'); // Split text into paragraphs by newline
 
-  words.forEach((word) => {
-    const testLine = currentLine + word + ' ';
-    const testWidth = ctx.measureText(testLine).width;
+  paragraphs.forEach((paragraph) => {
+    const words = paragraph.split(' ');
+    let currentLine = '';
 
-    if (testWidth > maxWidth && currentLine) {
-      lines.push({ text: currentLine.trim(), x: 50, y }); // Add current line
-      currentLine = word + ' ';
-      y += fontSize + 5; // Move to next line
-    } else {
-      currentLine = testLine;
-    }
+    words.forEach((word, wordIndex) => {
+      let testLine = currentLine + (currentLine ? ' ' : '') + word;
+      let testWidth = ctx.measureText(testLine).width;
+
+      // If the word itself exceeds maxWidth, break it into smaller parts
+      if (ctx.measureText(word).width > maxWidth) {
+        for (let i = 0; i < word.length; i++) {
+          const testWordLine = currentLine + word[i];
+          const testWordWidth = ctx.measureText(testWordLine).width;
+
+          if (testWordWidth > maxWidth && currentLine) {
+            lines.push(currentLine); // Push the current line
+            currentLine = word[i]; // Start a new line with the current letter
+          } else {
+            currentLine += word[i]; // Add the letter to the current line
+          }
+        }
+        currentLine += ''; // Add a space after breaking the word
+      } else if (testWidth > maxWidth && currentLine) {
+        lines.push(currentLine); // Push the current line
+        currentLine = word; // Start a new line with the word
+      } else {
+        currentLine = testLine; // Continue adding words to the current line
+      }
+
+      // If it's the last word in the paragraph, push the current line
+      if (wordIndex === words.length - 1 && currentLine) {
+        lines.push(currentLine);
+        currentLine = '';
+      }
+    });
   });
 
-  if (currentLine) {
-    lines.push({ text: currentLine.trim(), x: 50, y }); // Add remaining text
-  }
-
-  return lines;
+  return lines.map((line, i) => ({
+    text: line,
+    x: 50, // Default starting x-coordinate
+    y: 50 + i * (fontSize + 5), // Adjust y-coordinate for each line
+  }));
 };
+
 
   const toggleGrid = () => {
     setShowGrid((prevShowGrid) => !prevShowGrid);
@@ -928,7 +1084,7 @@ const wrapText = (text, maxWidth) => {
 
   useEffect(() => {
     drawCanvas(activePage);
-  }, [textItems, showGrid, isTextSelected, pages, activePage]);
+  }, [textItems, showGrid, isTextSelected, pages, activePage, textBox]);
 
 
   // // Update textItems or imageItems on the current page
@@ -1061,6 +1217,18 @@ const closeEditModal = () => {
       onChange={handleAddImage}
       style={{ marginBottom: '10px' }}
     />
+    <button
+      onClick={() => {
+        setIsTextBoxEditEnabled((prev) => !prev);
+        if(textBox !== null ) {
+          addTextToCanvas2(textBox.text, maxWidth)
+         }
+        setTextBox(null); // Clear existing TextBox on toggle
+      }}
+      style={{ marginBottom: '10px' }}
+    >
+      {isTextBoxEditEnabled ? 'Disable TextBox Edit' : 'Enable TextBox Edit'}
+    </button>
     <button
       onClick={deleteSelectedImage}
       disabled={selectedImageIndex === null} // Disable button if no image is selected
