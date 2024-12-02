@@ -341,7 +341,7 @@ const removeSelectedText = () => {
 
 
 
-  if (isTextBoxEditEnabled && textBox) {
+  if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 1;
     const rectWidth = selectionEnd.x - selectionStart.x;
@@ -357,7 +357,7 @@ const removeSelectedText = () => {
       ctx.font = `${fontSize}px Arial`;
       const lines = textBox.text.split('\n');
       lines.forEach((line, index) => {
-       if(textBox.index === activePage) {
+       if(textBox.index === pageIndex && textBox.index === activePage) {
         ctx.fillText(line, textBox.x + 5, textBox.y + 20 + index * 20); // Adjust line spacing
        }
       });
@@ -467,6 +467,7 @@ const removeSelectedText = () => {
             index: i,
             x: textItems[i].x,
             y: textItems[i].y,
+            activePage: item.index
           }));
           setInitialPositions(positions);
   
@@ -566,40 +567,40 @@ const removeSelectedText = () => {
 
 
 
-    if (!isTextBoxEditEnabled) {
+    // if (!isTextBoxEditEnabled) {
 
-      // Selection square logic if TextBox Edit is disabled
-      let clickedOnText = false;
-      textItems.forEach((item, index) => {
-        if(item.index === activePage) {
-          const textWidth = ctx.measureText(item.text).width;
-          const textHeight = fontSize;
+    //   // Selection square logic if TextBox Edit is disabled
+    //   let clickedOnText = false;
+    //   textItems.forEach((item, index) => {
+    //     if(item.index === activePage) {
+    //       const textWidth = ctx.measureText(item.text).width;
+    //       const textHeight = fontSize;
 
-          if (
-            offsetX >= item.x - boxPadding &&
-            offsetX <= item.x + textWidth + boxPadding &&
-            offsetY >= item.y - textHeight - boxPadding &&
-            offsetY <= item.y + boxPadding
-          ) {
-            setIsTextSelected(true);
-            setSelectedTextIndexes([index]);
-            setSelectedTextIndex(index);
-            setDragStart({ x: offsetX, y: offsetY });
-            setIsDragging(true);
-            clickedOnText = true;
-          }
-        }
-      });
+    //       if (
+    //         offsetX >= item.x - boxPadding &&
+    //         offsetX <= item.x + textWidth + boxPadding &&
+    //         offsetY >= item.y - textHeight - boxPadding &&
+    //         offsetY <= item.y + boxPadding
+    //       ) {
+    //         setIsTextSelected(true);
+    //         setSelectedTextIndexes([index]);
+    //         setSelectedTextIndex(index);
+    //         setDragStart({ x: offsetX, y: offsetY });
+    //         setIsDragging(true);
+    //         clickedOnText = true;
+    //       }
+    //     }
+    //   });
 
-      if (!clickedOnText) {
-        setIsSelecting(true);
-        setSelectionStart({ x: offsetX, y: offsetY });
-        setSelectionEnd({ x: offsetX, y: offsetY });
-        setSelectedTextIndexes([]);
-        setSelectedTextIndex(null);
-        setIsTextSelected(false);
-      }
-    }
+    //   if (!clickedOnText) {
+    //     setIsSelecting(true);
+    //     setSelectionStart({ x: offsetX, y: offsetY });
+    //     setSelectionEnd({ x: offsetX, y: offsetY });
+    //     setSelectedTextIndexes([]);
+    //     setSelectedTextIndex(null);
+    //     setIsTextSelected(false);
+    //   }
+    // }
 
   };
 
@@ -669,7 +670,7 @@ const removeSelectedText = () => {
   
       // Check for snapping to any other text's vertical line
       textItems.forEach((item, index) => {
-        if (index !== selectedTextIndex) {
+        if (index !== selectedTextIndex && index===activePage) {
           const itemPadding = (item.fontSize || fontSize) * 0.2;
           const lineX = item.x - itemPadding;
   
@@ -685,7 +686,7 @@ const removeSelectedText = () => {
       });
   
       // Update position only if snapping occurred or text is moving normally
-      if (snapped || deltaX !== 0 || deltaY !== 0) {
+      if (snapped || deltaX !== 0 || deltaY !== 0 && index===activePage) {
          draggedItem.x = newX - deltaX;
          draggedItem.y = newY - deltaY;
   
@@ -700,18 +701,19 @@ const removeSelectedText = () => {
       const offsetX = e.nativeEvent.offsetX - dragStart.x;
       const offsetY = e.nativeEvent.offsetY - dragStart.y;
 
-      const updatedItems = [...textItems];
-
-
+      let updatedItems = [...textItems];
 
       if(initialPositions.length >= 2) {
         initialPositions.forEach((pos) => {
           const { index, x, y } = pos;
+
+          if(updatedItems[index].index === pos.activePage) {
           updatedItems[index] = {
             ...updatedItems[index],
             x: updatedItems[index].x + offsetX,
             y: updatedItems[index].y + offsetY,
           };
+          }
 
         });
         let temp = [];
@@ -833,6 +835,7 @@ const removeSelectedText = () => {
             index: index,
             x: item.x,
             y: item.y,
+            activePage: activePage
           }
           initialPositions.push(pos);
           
@@ -962,7 +965,7 @@ const addTextToCanvas2 = (text, maxW) => {
     setNewText(''); // Reset text input
     setNewFontSize(fontSize); // Reset font size input
     setMaxWidth(200); // Reset maxWidth input
-    updatePageItems('textItems', newItem)
+    updatePageItems('textItems', updatedItems)
     drawCanvas(activePage); // Redraw canvas to show new text immediately
   }
 };
