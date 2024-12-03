@@ -31,7 +31,7 @@ function App() {
   const [activePage, setActivePage] = useState(0); // Track the currently active page
   const canvasRefs = useRef([]); // Ref for all canvases
 
-
+  const [isResizing, setIsResizing] = useState(false);
 
 
 
@@ -232,7 +232,6 @@ const removeSelectedText = () => {
     //updatePageItems('textItems', updatedItems)
   }
   if(selectedTextIndexes.length >=1) {
-    console.log(selectedTextIndexes);
     // Remove the selected text item from the list
     let updatedItems = textItems.filter((e,i) => e.index === activePage && selectedTextIndexes.indexOf(i) > -1 ? false : true); // [1]
     
@@ -341,28 +340,45 @@ const removeSelectedText = () => {
 
 
 
-  if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
-    ctx.strokeStyle = 'black';
-    ctx.lineWidth = 1;
-    const rectWidth = selectionEnd.x - selectionStart.x;
-    const rectHeight = selectionEnd.y - selectionStart.y;
-    textBox.x = selectionStart.x;
-    textBox.y = selectionStart.y;
-    textBox.width = rectWidth;
-    textBox.height = rectHeight;
-    ctx.strokeRect(textBox.x, textBox.y, rectWidth, rectHeight); // Draw border
-
-    if(isSelecting === false) {
-
-      ctx.font = `${fontSize}px Arial`;
-      const lines = textBox.text.split('\n');
-      lines.forEach((line, index) => {
-       if(textBox.index === pageIndex && textBox.index === activePage) {
-        ctx.fillText(line, textBox.x + 5, textBox.y + 20 + index * 20); // Adjust line spacing
-       }
-      });
+    if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 1;
+    
+      // Calculate the selection rectangle
+      const rectWidth = selectionEnd.x - selectionStart.x;
+      const rectHeight = selectionEnd.y - selectionStart.y;
+    
+      // Update textBox dimensions based on selection
+      if (isSelecting) {
+        textBox.x = selectionStart.x;
+        textBox.y = selectionStart.y;
+        textBox.width = rectWidth;
+        textBox.height = rectHeight;
+      }
+    
+      // Draw the textBox border
+      ctx.strokeRect(textBox.x, textBox.y, textBox.width, textBox.height);
+    
+      // Draw the drag point (small square in the bottom-right corner)
+      const dragPointSize = 10;
+      ctx.fillStyle = 'dodgerblue';
+      ctx.fillRect(
+        textBox.x + textBox.width - dragPointSize,
+        textBox.y + textBox.height - dragPointSize,
+        dragPointSize,
+        dragPointSize
+      );
+    
+      // Draw text inside the textBox if not selecting
+      if (!isSelecting) {
+        ctx.fillStyle = 'black';
+        ctx.font = `${fontSize}px Arial`;
+        const lines = textBox.text.split('\n');
+        lines.forEach((line, index) => {
+          ctx.fillText(line, textBox.x + 5, textBox.y + 20 + index * 20); // Adjust line spacing
+        });
+      }
     }
-  }
 
   
   };
@@ -556,8 +572,27 @@ const removeSelectedText = () => {
 
 
 
+  const dragPointSize = 10;
 
+  if (
+    textBox &&
+    offsetX >= textBox.x + textBox.width - dragPointSize &&
+    offsetX <= textBox.x + textBox.width &&
+    offsetY >= textBox.y + textBox.height - dragPointSize &&
+    offsetY <= textBox.y + textBox.height
+  ) {
+    setIsResizing(true);
+    setIsSelecting(false); // Disable selection while resizing
+    return;
+  }
 
+  if (isTextBoxEditEnabled) {
+    // Start a selection
+    setIsSelecting(true);
+    setSelectionStart({ x: offsetX, y: offsetY });
+    setSelectionEnd({ x: offsetX, y: offsetY });
+    return;
+  }
 
 
 
@@ -639,6 +674,18 @@ const removeSelectedText = () => {
 
   const handleMouseMove = (e, index) => {
     setActivePage(index);
+
+    if (isResizing && textBox) {
+      // Update the width and height of the textBox while resizing
+      const newWidth = Math.max(50, e.nativeEvent.offsetX - textBox.x); // Minimum width: 50
+      const newHeight = Math.max(20, e.nativeEvent.offsetY - textBox.y); // Minimum height: 20
+  
+      setTextBox({ ...textBox, width: newWidth, height: newHeight });
+      drawCanvas(); // Redraw the canvas with updated dimensions
+      return;
+    }
+
+
     if (isSelecting) {
       setSelectionEnd({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
       drawCanvas(activePage);
@@ -669,8 +716,8 @@ const removeSelectedText = () => {
       const snappingThreshold = 3;
   
       // Check for snapping to any other text's vertical line
-      textItems.forEach((item, index) => {
-        if (index !== selectedTextIndex && index===activePage) {
+      textItems.forEach((item, i) => {
+        if (i !== selectedTextIndex && item.index===activePage) {
           const itemPadding = (item.fontSize || fontSize) * 0.2;
           const lineX = item.x - itemPadding;
   
@@ -805,6 +852,12 @@ const removeSelectedText = () => {
       width: Math.abs(selectionEnd.x - selectionStart.x),
       height: Math.abs(selectionEnd.y - selectionStart.y),
     };
+
+    if (isResizing) {
+      setIsResizing(false); // Stop resizing textBox edit
+    }
+
+
     if (isSelecting) {
 
 
@@ -869,23 +922,26 @@ const removeSelectedText = () => {
     // setIsTextSelected(true);
     // setIsSelecting(true);
 
-    if(!isTextBoxEditEnabled) {
-      setSelectionStart({});
-      setSelectionEnd({});
-    } else {
-      const { offsetX, offsetY } = e.nativeEvent;
+if (isResizing) {
+    setIsResizing(false); // Stop resizing
+  }
+
+  if (isSelecting) {
+    setIsSelecting(false); // Stop selecting
+    if (!textBox) {
+      // Create a new textBox after selection
+      const rectWidth = selectionEnd.x - selectionStart.x;
+      const rectHeight = selectionEnd.y - selectionStart.y;
+
       setTextBox({
-        x: offsetX,
-        y: offsetY,
-        width: selectionRect.x, // Default width
-        height: selectionRect.y, // Default height
-        text: '', // Initial text
-        index: activePage
+        x: selectionStart.x,
+        y: selectionStart.y,
+        width: rectWidth,
+        height: rectHeight,
+        text: '', // Initialize with empty text
       });
-      setIsSelecting(false);
-      setIsTextBoxEditing(true);
-      setMaxWidth(offsetX - selectionRect.x);
     }
+  }
 
 
     
@@ -943,19 +999,18 @@ const addTextToCanvas = () => {
 
 
 // Function to handle adding new text to the canvas
-const addTextToCanvas2 = (text, maxW) => {
-  if (text.trim() !== '') {
+const addTextToCanvas2 = (textBox, maxW) => {
+  if (textBox.text.trim() !== '') {
     const padding = newFontSize * 0.2; // Calculate dynamic padding (20% of font size)
-    let newItem = text;
+    let newItem = textBox.text;
     const wrappedText = wrapText(newItem, maxW); // Wrap text based on maxWidth
     newItem = [];
-    console.log(wrappedText);
-    wrappedText.forEach(e => newItem.push( { 
+    wrappedText.forEach((e,i) => newItem.push( { 
       text: e.text, 
       fontSize: newFontSize, 
       boxPadding: padding, // Include dynamic box padding
-      x: e.x, 
-      y: e.y,
+      x: textBox.x +5, 
+      y: textBox.y + 20 + i * 20,
       index: activePage
     }))
     const updatedItems = [...textItems, ...newItem];
@@ -1224,13 +1279,13 @@ const closeEditModal = () => {
       onClick={() => {
         setIsTextBoxEditEnabled((prev) => !prev);
         if(textBox !== null ) {
-          addTextToCanvas2(textBox.text, maxWidth)
+          addTextToCanvas2(textBox, maxWidth)
          }
         setTextBox(null); // Clear existing TextBox on toggle
       }}
       style={{ marginBottom: '10px' }}
     >
-      {isTextBoxEditEnabled ? 'Disable TextBox Edit' : 'Enable TextBox Edit'}
+      {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
     </button>
     <button
       onClick={deleteSelectedImage}
