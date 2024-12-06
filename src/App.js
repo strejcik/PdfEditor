@@ -1,10 +1,17 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { PDFDocument, rgb } from 'pdf-lib';
+import axios from 'axios';
 let runOnce = false;
 function App() {
+  const [selectedFile, setSelectedFile] = useState(null);
   let fontSize = 20;
   const cellSize = 20;
   const boxPadding = 10;
+
+  const canvasWidth = 1024;
+  const canvasHeight = 768;
+  const pdfWidth = 1024;
+  const pdfHeight = 768;
 
   const [textItems, setTextItems] = useState([]); // List of text items on the canvas
   const [isDragging, setIsDragging] = useState(false);
@@ -112,6 +119,25 @@ const handleAddImage = (e) => {
 };
 
 
+const convertToPdfCoordinates = (xCanvas, yCanvas) => {
+  const xPdf = xCanvas; // Direct mapping since dimensions are identical
+  const yPdf = pdfHeight - yCanvas; // Flipping Y-axis for PDF coordinates
+  return { x: xPdf, y: yPdf };
+};
+
+// Function to convert all textItems to PDF coordinates
+const convertTextItemsToPdfCoordinates = (textItems) => {
+  return textItems.map((item) => {
+    let { x, y } = convertToPdfCoordinates(item.x, item.y);
+    
+    return {
+      ...item,
+      xPdf: x,
+      yPdf: y,
+    };
+  });
+};
+
 useEffect(() => {
   const handleMouseMove = (e) => {
     const canvas = canvasRefs.current[activePage];
@@ -125,7 +151,6 @@ useEffect(() => {
       e.clientY > rect.bottom;
 
     if (isOutside) {
-      console.log('Mouse is outside the canvas!');
       setIsDragging(false); // Stop dragging
       setDraggedImageIndex(null)
       setResizingImageIndex(null);
@@ -141,19 +166,6 @@ useEffect(() => {
   };
 }, [activePage, canvasRefs]);
 
-
-
-  // useEffect(() => {
-  //   const storedTextItems = localStorage.getItem('textItems');
-  //   if (storedTextItems) {
-  //     setTextItems(JSON.parse(storedTextItems));
-  //   }
-  // }, []);
-
-
-  // useEffect(() => {
-  //   saveImageItemsToLocalStorage(imageItems);
-  // }, [imageItems]);
   
 
   // Load images and text items from local storage on mount
@@ -235,7 +247,6 @@ const removeSelectedText = () => {
     // Remove the selected text item from the list
     let updatedItems = textItems.filter((e,i) => e.index === activePage && selectedTextIndexes.indexOf(i) > -1 ? false : true); // [1]
     
-    console.log(updatedItems);
 
     // Update state and localStorage
     setTextItems(updatedItems);
@@ -257,8 +268,8 @@ const removeSelectedText = () => {
     const canvas = canvasRefs.current[pageIndex];
     if (!canvas) return; // Ensure the canvas exists before proceeding
     const ctx = canvas.getContext('2d');
-    canvas.width = 1024;
-    canvas.height = 768;
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -594,48 +605,6 @@ const removeSelectedText = () => {
     return;
   }
 
-
-
-
-
-
-
-
-
-    // if (!isTextBoxEditEnabled) {
-
-    //   // Selection square logic if TextBox Edit is disabled
-    //   let clickedOnText = false;
-    //   textItems.forEach((item, index) => {
-    //     if(item.index === activePage) {
-    //       const textWidth = ctx.measureText(item.text).width;
-    //       const textHeight = fontSize;
-
-    //       if (
-    //         offsetX >= item.x - boxPadding &&
-    //         offsetX <= item.x + textWidth + boxPadding &&
-    //         offsetY >= item.y - textHeight - boxPadding &&
-    //         offsetY <= item.y + boxPadding
-    //       ) {
-    //         setIsTextSelected(true);
-    //         setSelectedTextIndexes([index]);
-    //         setSelectedTextIndex(index);
-    //         setDragStart({ x: offsetX, y: offsetY });
-    //         setIsDragging(true);
-    //         clickedOnText = true;
-    //       }
-    //     }
-    //   });
-
-    //   if (!clickedOnText) {
-    //     setIsSelecting(true);
-    //     setSelectionStart({ x: offsetX, y: offsetY });
-    //     setSelectionEnd({ x: offsetX, y: offsetY });
-    //     setSelectedTextIndexes([]);
-    //     setSelectedTextIndex(null);
-    //     setIsTextSelected(false);
-    //   }
-    // }
 
   };
 
@@ -997,6 +966,47 @@ const addTextToCanvas = () => {
 
 
 
+const addTextToCanvas3 = (textArray = []) => {
+  if (newText.trim() !== '' || textArray.length > 0) {
+    const padding = newFontSize * 0.2; // Calculate dynamic padding (20% of font size)
+    let itemsToAdd = convertTextItemsToPdfCoordinates(textArray);
+    
+    if (textArray.length > 0) {
+      // If textArray is provided, use it to create items
+      itemsToAdd = itemsToAdd.map((item) => ({
+        text: item.text,
+        fontSize: newFontSize,
+        boxPadding: padding,
+        x: item.xPdf,
+        y: item.yPdf-5,
+        index: activePage,
+      }));
+    } else {
+      // Default behavior for adding a single new text item
+      const wrappedText = wrapText(newText, maxWidth); // Wrap text based on maxWidth
+      itemsToAdd = wrappedText.map((e) => ({
+        text: e.text,
+        fontSize: newFontSize,
+        boxPadding: padding,
+        x: e.x,
+        y: e.y,
+        index: activePage,
+      }));
+    }
+
+    const updatedItems = [...textItems, ...itemsToAdd];
+    setTextItems(updatedItems);
+    saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
+    setShowAddTextModal(false); // Close modal
+    setNewText(''); // Reset text input
+    setNewFontSize(fontSize); // Reset font size input
+    setMaxWidth(200); // Reset maxWidth input
+    updatePageItems('textItems', itemsToAdd);
+    drawCanvas(activePage); // Redraw canvas to show new text immediately
+  }
+};
+
+
 
 // Function to handle adding new text to the canvas
 const addTextToCanvas2 = (textBox, maxW) => {
@@ -1232,9 +1242,46 @@ const closeEditModal = () => {
   setEditingIndex(null);
 };
 
+
+  // Handle file upload
+  const uploadPdfToServer = async () => {
+    if (!selectedFile) {
+      alert("No file selected. Please select a PDF file to upload.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("pdf", selectedFile);
+
+    try {
+      const response = await axios.post("http://localhost:5000/upload-pdf", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+      });
+      alert("PDF uploaded successfully:");
+      addTextToCanvas3(response.data);
+    } catch (error) {
+      console.error("Error uploading PDF:", error);
+      alert("Failed to upload PDF. Please try again.");
+    }
+  };
+
+  //Handle file selection
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (file && file.type === "application/pdf") {
+      setSelectedFile(file);
+    } else {
+      alert("Please select a valid PDF file.");
+    }
+  };
+
   return (
     <div style={{ padding: '20px' }}>
       <h1>PdfEditor //not_finished</h1>
+      {/* {console.log(convertTextItemsToPdfCoordinates(textItems))} */}
       {pages.map((_, index) => (
           <canvas
           key={index}
@@ -1250,6 +1297,13 @@ const closeEditModal = () => {
           onClick={() => setActivePage(index)}
         />
         ))}
+      <input
+        type="file"
+        accept="application/pdf"
+        onChange={handleFileChange}
+        style={{ marginBottom: "10px" }}
+      />
+      <button onClick={uploadPdfToServer}>Upload PDF</button>
         <button onClick={addNewPage} style={{ marginBottom: '10px' }}>
           Add New Page
         </button>
@@ -1270,10 +1324,10 @@ const closeEditModal = () => {
         {isSelectingModeEnabled ? 'Disable Selecting' : 'Enable Selecting'}
       </button>
       <input
-      type="file"
-      accept="image/*"
-      onChange={handleAddImage}
-      style={{ marginBottom: '10px' }}
+        type="file"
+        accept="image/*"
+        onChange={handleAddImage}
+        style={{ marginBottom: '10px' }}
     />
     <button
       onClick={() => {
