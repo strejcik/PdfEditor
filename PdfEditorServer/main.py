@@ -40,7 +40,7 @@ def upload_pdf():
         filename = f"{int(os.path.getmtime(os.path.abspath(__file__)))}-{file.filename}"
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
         pdf_data = []
-
+        i = 0
         # Parse the PDF file
         for page_layout in extract_pages('uploads/' + filename):
             for element in page_layout:
@@ -51,8 +51,10 @@ def upload_pdf():
                             "text": text,               # Full text from the box
                             "x": element.x0,            # X-coordinate of the text box
                             "y": element.y0,            # Y-coordinate of the text box
+                            "index": i
                         }
                         pdf_data.append(block_data)
+            i=i+1
         return jsonify(pdf_data), 200
     else:
         return jsonify({'message': 'Invalid file type. Only PDF files are allowed.'}), 400

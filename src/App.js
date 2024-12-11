@@ -61,6 +61,8 @@ const [editingFontSize, setEditingFontSize] = useState(fontSize); // Default fon
 // State for new text and font size
 const [newFontSize, setNewFontSize] = useState(fontSize); // Default font size
 
+
+const [isPdfDownloaded, setIsPdfDownloaded] = useState(false);
 // Function to toggle selecting mode
 const toggleSelectingMode = () => {
   setIsSelectingModeEnabled((prevMode) => !prevMode);
@@ -979,7 +981,7 @@ const addTextToCanvas3 = (textArray = []) => {
         boxPadding: padding,
         x: item.xPdf,
         y: item.yPdf-5,
-        index: activePage,
+        index: item.index,
       }));
     } else {
       // Default behavior for adding a single new text item
@@ -990,7 +992,7 @@ const addTextToCanvas3 = (textArray = []) => {
         boxPadding: padding,
         x: e.x,
         y: e.y,
-        index: activePage,
+        index: e.index,
       }));
     }
 
@@ -1001,7 +1003,6 @@ const addTextToCanvas3 = (textArray = []) => {
     setNewText(''); // Reset text input
     setNewFontSize(fontSize); // Reset font size input
     setMaxWidth(200); // Reset maxWidth input
-    updatePageItems('textItems', itemsToAdd);
     drawCanvas(activePage); // Redraw canvas to show new text immediately
   }
 };
@@ -1186,6 +1187,40 @@ const wrapText = (text, maxWidth) => {
   };
 
 
+  useEffect(() => {
+    if(isPdfDownloaded === true) { 
+
+      const occurrences = textItems.reduce((acc, item) => {
+        if (!acc[item.index]) {
+          acc[item.index] = [];
+        }
+        acc[item.index].push(item);
+        return acc;
+      }, {});
+  
+      // Format result
+      const result = Object.entries(occurrences).map(([index, texts]) => ({
+        index: Number(index),
+        texts,
+        occurrence: texts.length
+      }));
+
+      
+      let updatedPages = pages;
+      for(let i=0; i< result.length; i++) {
+        updatedPages[i] = {
+          "textItems": result[i].texts,
+          "imageItems": []
+        }
+        setActivePage(i);
+      }
+      setPages(updatedPages);
+    }
+    setIsPdfDownloaded(false);
+  }, [isPdfDownloaded])
+
+
+
 
 
 
@@ -1261,6 +1296,7 @@ const closeEditModal = () => {
         },
       });
       alert("PDF uploaded successfully:");
+      setIsPdfDownloaded(true);
       addTextToCanvas3(response.data);
     } catch (error) {
       console.error("Error uploading PDF:", error);
