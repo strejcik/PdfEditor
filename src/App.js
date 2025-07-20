@@ -1,6 +1,22 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { PDFDocument, rgb } from 'pdf-lib';
 import axios from 'axios';
+import './App.css'
+
+const btnStyle = {
+  display: 'block',
+  width: '100%',
+  padding: '10px 12px',
+  marginBottom: '8px',
+  backgroundColor: '#007BFF',
+  color: '#fff',
+  border: 'none',
+  borderRadius: '4px',
+  fontSize: '14px',
+  cursor: 'pointer',
+  transition: 'background-color 0.2s ease',
+};
+
 let runOnce = false;
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -26,9 +42,8 @@ function App() {
   const [selectionStart, setSelectionStart] = useState({ x: 0, y: 0 });
   const [selectionEnd, setSelectionEnd] = useState({ x: 0, y: 0 });
   const [initialPositions, setInitialPositions] = useState([]);
-  const [isSelectingModeEnabled, setIsSelectingModeEnabled] = useState(true);     // State to track whether selecting mode is enabled
   const [maxWidth, setMaxWidth] = useState(200); // Max width input for the modal
-
+  const [shouldClearSelectionBox, setShouldClearSelectionBox] = useState(false);
 
   const [isTextBoxEditEnabled, setIsTextBoxEditEnabled] = useState(false); // Track TextBox Edit mode
   const [textBox, setTextBox] = useState(null); // Store TextBox properties (position, size, content)
@@ -63,10 +78,7 @@ const [newFontSize, setNewFontSize] = useState(fontSize); // Default font size
 
 
 const [isPdfDownloaded, setIsPdfDownloaded] = useState(false);
-// Function to toggle selecting mode
-const toggleSelectingMode = () => {
-  setIsSelectingModeEnabled((prevMode) => !prevMode);
-};
+
 
  // Load pages from localStorage on mount
  useEffect(() => {
@@ -222,43 +234,47 @@ const createImageElement = (data) => {
 
   useEffect(() => {
     // Add keydown event listener for moving text with arrow keys
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleTextMove);
+    return () => window.removeEventListener('keydown', handleTextMove);
   }, [isTextSelected, selectedTextIndex, textItems]);
 
 
 
   // Function to remove selected text
 const removeSelectedText = () => {
-  if (selectedTextIndex !== null) {
-    // Remove the selected text item from the list
-    const updatedItems = textItems.filter((_, index) => index !== selectedTextIndex);
+  let updatedItems = [...textItems];
 
-    
-    // Update state and localStorage
+  // === Remove Multiple Selected Texts ===
+  if (selectedTextIndexes.length > 0) {
+    // Filter out all selected indexes
+    updatedItems = updatedItems.filter((_, i) => !selectedTextIndexes.includes(i));
+
     setTextItems(updatedItems);
     saveTextItemsToLocalStorage(updatedItems);
 
-    // Reset selection
+    // Update only visible page's text items
+    const visibleItems = updatedItems.filter((item) => item.index === activePage);
+    updatePageItems('textItems', visibleItems);
+
+    // Clear selection
+    setSelectedTextIndexes([]);
     setIsTextSelected(false);
     setSelectedTextIndex(null);
-
-    //updatePageItems('textItems', updatedItems)
+    return; // prevent running single delete block
   }
-  if(selectedTextIndexes.length >=1) {
-    // Remove the selected text item from the list
-    let updatedItems = textItems.filter((e,i) => e.index === activePage && selectedTextIndexes.indexOf(i) > -1 ? false : true); // [1]
-    
 
-    // Update state and localStorage
+  // === Remove Single Selected Text ===
+  if (selectedTextIndex !== null) {
+    updatedItems = updatedItems.filter((_, i) => i !== selectedTextIndex);
+
     setTextItems(updatedItems);
     saveTextItemsToLocalStorage(updatedItems);
-    updatePageItems('textItems', updatedItems)
-    // Reset selection
+
+    const visibleItems = updatedItems.filter((item) => item.index === activePage);
+    updatePageItems('textItems', visibleItems);
+
     setIsTextSelected(false);
     setSelectedTextIndex(null);
-
-    //updatePageItems('textItems', updatedItems)
   }
 };
 
@@ -266,6 +282,76 @@ const removeSelectedText = () => {
     localStorage.setItem('textItems', JSON.stringify(items));
   };
 
+const wrapTextPreservingNewlinesResponsive = (text, ctx, initialWidth, fontSize, padding = 10) => {
+  const paragraphs = text.split('\n');
+  const lines = [];
+
+  let maxLineWidth = 0;
+
+  paragraphs.forEach(paragraph => {
+    const words = paragraph.split(' ');
+    let currentLine = '';
+
+    words.forEach((word, index) => {
+      const testLine = currentLine ? currentLine + ' ' + word : word;
+      const testWidth = ctx.measureText(testLine).width;
+
+      if (testWidth + padding * 2 > initialWidth) {
+        if (currentLine) lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+
+      // If last word, push it
+      if (index === words.length - 1 && currentLine) {
+        lines.push(currentLine);
+      }
+
+      maxLineWidth = Math.max(maxLineWidth, ctx.measureText(currentLine).width);
+    });
+  });
+
+  const lineHeight = fontSize + 4;
+  const totalHeight = lines.length * lineHeight;
+
+  return {
+    lines,
+    width: maxLineWidth + padding * 2,
+    height: totalHeight + padding * 2
+  };
+};
+
+
+const wrapTextResponsive = (text, maxWidth, ctx) => {
+  const paragraphs = text.split('\n');
+  const lines = [];
+
+  paragraphs.forEach((paragraph) => {
+    const words = paragraph.trim().split(/\s+/);
+    let currentLine = '';
+
+    words.forEach((word, index) => {
+      const testLine = currentLine ? currentLine + ' ' + word : word;
+      const testWidth = ctx.measureText(testLine).width;
+
+      if (testWidth <= maxWidth) {
+        currentLine = testLine;
+      } else {
+        if (currentLine) lines.push(currentLine);
+        currentLine = word;
+      }
+
+      // Push remaining line after the last word
+      if (index === words.length - 1 && currentLine) {
+        lines.push(currentLine);
+        currentLine = '';
+      }
+    });
+  });
+
+  return lines;
+};
   const drawCanvas = (pageIndex) => {
     const canvas = canvasRefs.current[pageIndex];
     if (!canvas) return; // Ensure the canvas exists before proceeding
@@ -280,40 +366,47 @@ const removeSelectedText = () => {
 
     if (showGrid) drawGrid(ctx);
 
-    textItems.forEach((item, index) => {
-      if(item.index === pageIndex) {
-        ctx.font = `${item.fontSize}px Arial`;
-      const textWidth = ctx.measureText(item.text).width;
-      const textHeight = ctx.measureText(item.text);
-      let actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent
-      if (selectedTextIndexes.includes(index)) {
-        ctx.strokeStyle = 'rgba(30, 144, 255, 0.7)'; // Dodgerblue for selected bounding box
-        ctx.lineWidth = 1;
-        ctx.strokeRect(
-          item.x - item.boxPadding,
-          item.y - actualHeight - item.boxPadding,
-          textWidth + item.boxPadding,
-          actualHeight + item.boxPadding
-        );
-      }
 
 
 
-      // Draw vertical dotted line for selected text
-      ctx.beginPath();
-      ctx.setLineDash([5, 5]); // Dotted line pattern
-      ctx.strokeStyle = 'dodgerblue';
-      ctx.moveTo(item.x - item.boxPadding, 0);
-      ctx.lineTo(item.x - item.boxPadding, canvas.height);
-      ctx.stroke();
-      ctx.setLineDash([]); // Reset line dash
 
 
+textItems.forEach((item, index) => {
+  if (item.index === pageIndex) {
+    ctx.font = `${item.fontSize}px Arial`; // ← set before measurement
 
-      ctx.fillStyle = 'black';
-      ctx.fillText(item.text, item.x, item.y);
-      }
-    });
+    const textMetrics = ctx.measureText(item.text);
+    const actualHeight = textMetrics.actualBoundingBoxAscent + textMetrics.actualBoundingBoxDescent;
+    const textWidth = textMetrics.width;
+
+    const textRect = {
+      x: item.x - item.boxPadding,
+      y: item.y - actualHeight - item.boxPadding,
+      width: textWidth + item.boxPadding * 2,
+      height: actualHeight + item.boxPadding * 2,
+    };
+
+    // Draw bounding box if selected
+    if (selectedTextIndexes.includes(index)) {
+      ctx.strokeStyle = 'rgba(30, 144, 255, 0.7)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(textRect.x, textRect.y, textRect.width, textRect.height);
+    }
+
+    // Draw dotted guide
+    ctx.beginPath();
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = 'dodgerblue';
+    ctx.moveTo(item.x - item.boxPadding, 0);
+    ctx.lineTo(item.x - item.boxPadding, canvas.height);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw the actual text
+    ctx.fillStyle = 'black';
+    ctx.fillText(item.text, item.x, item.y);
+  }
+});
 
     // Draw image items
     imageItems.forEach((item) => {
@@ -341,7 +434,11 @@ const removeSelectedText = () => {
     });
 
     // Draw the selection square if selecting
-    if (isSelecting && activePage === pageIndex) {
+    if (isSelecting &&
+  selectionStart &&
+  selectionEnd &&
+  (selectionStart.x !== selectionEnd.x || selectionStart.y !== selectionEnd.y) &&
+  activePage === pageIndex) {
       const rectWidth = selectionEnd.x - selectionStart.x;
       const rectHeight = selectionEnd.y - selectionStart.y;
       ctx.strokeStyle = 'dodgerblue';
@@ -353,48 +450,46 @@ const removeSelectedText = () => {
 
 
 
-    if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
-      ctx.strokeStyle = 'black';
-      ctx.lineWidth = 1;
-    
-      // Calculate the selection rectangle
-      const rectWidth = selectionEnd.x - selectionStart.x;
-      const rectHeight = selectionEnd.y - selectionStart.y;
-    
-      // Update textBox dimensions based on selection
-      if (isSelecting) {
-        textBox.x = selectionStart.x;
-        textBox.y = selectionStart.y;
-        textBox.width = rectWidth;
-        textBox.height = rectHeight;
-      }
-    
-      // Draw the textBox border
-      ctx.strokeRect(textBox.x, textBox.y, textBox.width, textBox.height);
-    
-      // Draw the drag point (small square in the bottom-right corner)
-      const dragPointSize = 10;
-      ctx.fillStyle = 'dodgerblue';
-      ctx.fillRect(
-        textBox.x + textBox.width - dragPointSize,
-        textBox.y + textBox.height - dragPointSize,
-        dragPointSize,
-        dragPointSize
-      );
-    
-      // Draw text inside the textBox if not selecting
-      if (!isSelecting) {
-        ctx.fillStyle = 'black';
-        ctx.font = `${fontSize}px Arial`;
-        const lines = textBox.text.split('\n');
-        lines.forEach((line, index) => {
-          ctx.fillText(line, textBox.x + 5, textBox.y + 20 + index * 20); // Adjust line spacing
-        });
-      }
-    }
+if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
+const ctx = canvas.getContext('2d');
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(textBox.x, textBox.y, textBox.width, textBox.height);
 
-  
-  };
+  // Drag handle
+  const dragPointSize = 10;
+  ctx.fillStyle = 'dodgerblue';
+  ctx.fillRect(
+    textBox.x + textBox.width - dragPointSize,
+    textBox.y + textBox.height - dragPointSize,
+    dragPointSize,
+    dragPointSize
+  );
+
+  ctx.fillStyle = 'black';
+  ctx.font = `${textBox.fontSize || fontSize}px Arial`;
+
+  const wrapped = wrapTextPreservingNewlinesResponsive(textBox.text, ctx, textBox.width, fontSize, textBox.boxPadding || 10);
+  wrapped.lines.forEach((line, idx) => {
+    ctx.fillText(line, textBox.x + (textBox.boxPadding || 10), textBox.y + (idx + 1) * (fontSize + 4));
+  });
+}
+};
+
+useEffect(() => {
+  if (isTextBoxEditEnabled && textBox && canvasRefs.current[activePage]) {
+    const ctx = canvasRefs.current[activePage].getContext('2d');
+    const innerWidth = textBox.width - (textBox.boxPadding || 5) * 2;
+
+    const wrappedLines = wrapTextResponsive(textBox.text.replace(/\s+/g, ' '), innerWidth, ctx);
+    const newText = wrappedLines.join('\n');
+
+    if (newText !== textBox.text) {
+      setTextBox({ ...textBox, text: newText });
+    }
+  }
+}, [textBox?.width]);  // Reacts to textBox width resize
+
 
    // Add a new page
    const addNewPage = () => {
@@ -403,47 +498,47 @@ const removeSelectedText = () => {
   };
 
 
-  // Function to remove the current page
-  const removePage = () => {
-    if (pages.length <= 1) {
-      alert('Cannot remove the last page.');
-      return;
-    }
-    let updatedPages = pages.filter((_, index) => index !== activePage);
-    let updatedTextItems = [];
-    let updatedImageItems = [];
-    updatedPages.forEach(e =>{
-      e["textItems"].forEach((e, index) =>{
-        if(activePage > 1) {
-          return;
-        } else {
-          e.index = Math.max(0, e.index - 1)
-        }
-      });
-      e["imageItems"].forEach((e, index) =>{
-        if(activePage > 1) {
-          return;
-        } else {
-          e.index = Math.max(0, e.index - 1)
-        }
-      });
-    });
-    updatedPages.forEach(e =>{
-      
-      e["textItems"].forEach((e, index) =>{
-        updatedTextItems.push(e);
-      });
-      e["imageItems"].forEach((e, index) =>{
-        updatedImageItems.push(e);
-      });
-    })
 
-    setTextItems(updatedTextItems); // update textItems state
-    saveTextItemsToLocalStorage(updatedTextItems);
-    setImageItems(updatedImageItems);
-    saveImageItemsToLocalStorage(updatedImageItems);
-    setPages(updatedPages); // Update pages state
-  };
+//changed removePage functions
+const removePage = () => {
+  if (pages.length <= 1) {
+    alert('Cannot remove the last page.');
+    return;
+  }
+
+  // Remove the active page from the pages array
+  const updatedPages = pages.filter((_, index) => index !== activePage);
+
+  // Remove text and image items belonging to the deleted page,
+  // and re-index remaining items whose index > activePage
+  const updatedTextItems = textItems
+    .filter(item => item.index !== activePage)
+    .map(item => ({
+      ...item,
+      index: item.index > activePage ? item.index - 1 : item.index
+    }));
+
+  const updatedImageItems = imageItems
+    .filter(item => item.index !== activePage)
+    .map(item => ({
+      ...item,
+      index: item.index > activePage ? item.index - 1 : item.index
+    }));
+
+  // Set updated state
+  setPages(updatedPages);
+  setTextItems(updatedTextItems);
+  setImageItems(updatedImageItems);
+  saveTextItemsToLocalStorage(updatedTextItems);
+  saveImageItemsToLocalStorage(updatedImageItems);
+
+  // Update active page to previous one or first one
+  const newActivePage = Math.max(0, activePage - 1);
+  setActivePage(newActivePage);
+
+  // Redraw the canvas to reflect the changes
+  drawCanvas(newActivePage);
+};
 
 
 
@@ -465,72 +560,84 @@ const removeSelectedText = () => {
     ctx.stroke();
   };
 
-  const handleMouseDown = (e) => {
-    if (!isSelectingModeEnabled) return; // Exit if selecting mode is disabled
-    const { offsetX, offsetY } = e.nativeEvent;
-    const ctx = canvasRefs.current[activePage].getContext('2d');
-    //ctx.font = `${fontSize}px Arial`;
-    //let { textItems, imageItems } = pages[activePage];
-    let clickedOnText = false;
 
-    textItems.forEach((item, index) => {
-      if(item.index === activePage) {
-        const textWidth = ctx.measureText(item.text).width;
-        const textHeight = ctx.measureText(item.text);
-        let actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent
-  
-        // Check if the click is within the bounding box of any text item
-        if (
-          offsetX >= item.x - boxPadding &&
-          offsetX <= item.x + textWidth + boxPadding &&
-          offsetY >= item.y - actualHeight - boxPadding &&
-          offsetY <= item.y + boxPadding && item.index === activePage
-        ) {
-          setIsTextSelected(true);
-          setSelectedTextIndexes([index]);
-          setSelectedTextIndex(index);
-          setDragStart({ x: offsetX, y: offsetY });
-          setIsDragging(true);
-          clickedOnText = true;
-          const positions = selectedTextIndexes.map(i => ({
-            index: i,
-            x: textItems[i].x,
-            y: textItems[i].y,
-            activePage: item.index
-          }));
-          setInitialPositions(positions);
-  
-        }
-  
+
+const handleMouseDown = (e) => {
+  const { offsetX, offsetY } = e.nativeEvent;
+  const ctx = canvasRefs.current[activePage].getContext('2d');
+  let clickedOnText = false;
+
+  // === Check for text clicks ===
+  for (let index = 0; index < textItems.length; index++) {
+    const item = textItems[index];
+    if (item.index !== activePage) continue;
+    ctx.font = `${item.fontSize}px Arial`; // always before measuring
+    const metrics = ctx.measureText(item.text);
+    const textWidth = metrics.width;
+    const actualHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+
+    const textRect = {
+      x: item.x - item.boxPadding,
+      y: item.y - actualHeight - item.boxPadding,
+      width: textWidth + item.boxPadding * 2,
+      height: actualHeight + item.boxPadding * 2,
+    };
+
+    const isInside =
+      offsetX >= textRect.x &&
+      offsetX <= textRect.x + textRect.width &&
+      offsetY >= textRect.y &&
+      offsetY <= textRect.y + textRect.height;
+
+    if (isInside) {
+      clickedOnText = true;
+      setIsTextSelected(true);
+      setSelectedTextIndex(index);
+
+      let newSelectedIndexes = selectedTextIndexes.includes(index)
+        ? [...selectedTextIndexes]
+        : [index];
+
+      // If clicked on one of the selected ones, preserve group
+      if (selectedTextIndexes.includes(index)) {
+        newSelectedIndexes = [...selectedTextIndexes];
       }
 
-    });
+      setSelectedTextIndexes(newSelectedIndexes);
+      setIsDragging(true);
+      setDragStart({ x: offsetX, y: offsetY });
 
-    // Only set up selection square if click is outside any text bounding box
-    if (!clickedOnText) {
-      setIsSelecting(true);
-      setSelectionStart({ x: offsetX, y: offsetY });
-      setSelectionEnd({ x: offsetX, y: offsetY });
-      setSelectedTextIndexes([]);
-      setSelectedTextIndex(null);
-      setIsTextSelected(false);
+      const init = newSelectedIndexes.map((i) => ({
+        index: i,
+        x: textItems[i].x,
+        y: textItems[i].y,
+        activePage,
+      }));
+
+      setInitialPositions(init);
+      break;
     }
+  }
 
+  // === Not clicked on text — start selection ===
+  if (!clickedOnText) {
+    setIsTextSelected(false);
+    setSelectedTextIndex(null);
+    setSelectedTextIndexes([]);
+    setIsDragging(false);
+    setInitialPositions([]);
+    setIsSelecting(true);
+    setSelectionStart({ x: offsetX, y: offsetY });
+    setSelectionEnd({ x: offsetX, y: offsetY });
+  }
 
-
-
-  let imageClicked = false;
+  // === Image Resize Handle ===
   let resizing = false;
+  for (let index = 0; index < imageItems.length; index++) {
+    const item = imageItems[index];
+    if (item.index !== activePage) continue;
 
-
-
-
-
-
-   // Check for resizing handle clicks
-   imageItems.forEach((item, index) => {
     const handleSize = 10;
-
     const handleX = item.x + item.width - handleSize / 2;
     const handleY = item.y + item.height - handleSize / 2;
 
@@ -538,55 +645,52 @@ const removeSelectedText = () => {
       offsetX >= handleX &&
       offsetX <= handleX + handleSize &&
       offsetY >= handleY &&
-      offsetY <= handleY + handleSize && item.index === activePage
+      offsetY <= handleY + handleSize
     ) {
       setResizingImageIndex(index);
       setResizeStart({ x: offsetX, y: offsetY });
       resizing = true;
+      break;
     }
-  });
+  }
 
   if (resizing) {
-    setIsSelecting(false); // Disable selection square during resizing
+    setIsSelecting(false);
     return;
   }
 
+  // === Image Dragging ===
+  let imageClicked = false;
+  for (let index = 0; index < imageItems.length; index++) {
+    const item = imageItems[index];
+    if (item.index !== activePage) continue;
 
-  imageItems.forEach((item, index) => {
     if (
       offsetX >= item.x &&
       offsetX <= item.x + item.width &&
       offsetY >= item.y &&
-      offsetY <= item.y + item.height && item.index === activePage
+      offsetY <= item.y + item.height
     ) {
-      setSelectedImageIndex(item.index); // Set the clicked image as selected
-      setIsImageDragging(true);
+      setSelectedImageIndex(index);
       setDraggedImageIndex(index);
+      setIsImageDragging(true);
       setDragStart({ x: offsetX, y: offsetY });
       imageClicked = true;
-      
-      
+      break;
     }
-  });
+  }
 
-  
-  if (!imageClicked) {
+  if (imageClicked) {
+    setIsSelecting(false);
+    return;
+  } else {
     setIsImageDragging(false);
     setResizingImageIndex(null);
     setSelectedImageIndex(null);
   }
 
-  if (imageClicked) {
-    setIsSelecting(false); // Disable selection square if an image is being dragged
-    return; // Exit to prevent triggering selection logic
-  }
-
-
-
-
-
+  // === TextBox Resize Handle ===
   const dragPointSize = 10;
-
   if (
     textBox &&
     offsetX >= textBox.x + textBox.width - dragPointSize &&
@@ -595,312 +699,265 @@ const removeSelectedText = () => {
     offsetY <= textBox.y + textBox.height
   ) {
     setIsResizing(true);
-    setIsSelecting(false); // Disable selection while resizing
+    setIsSelecting(false);
     return;
   }
 
+  // === Create selection for TextBox mode ===
   if (isTextBoxEditEnabled) {
-    // Start a selection
     setIsSelecting(true);
     setSelectionStart({ x: offsetX, y: offsetY });
     setSelectionEnd({ x: offsetX, y: offsetY });
     return;
   }
+};
 
 
-  };
 
 
-  const handleKeyPress = (e) => {
-    if (isTextBoxEditEnabled && textBox) {
-      let updatedText;
-  
-      if (e.key === 'Enter') {
-        updatedText = textBox.text + '\n'; // Add a newline
-      } else if (e.key === ' ') {
-        updatedText = textBox.text + ' '; // Add a space
-      } else if (e.key.length === 1) {
-        updatedText = textBox.text + e.key; // Add the character
-      } else {
-        return; // Ignore non-character keys
-      }
-  
-      // Wrap text based on maxWidth
-      const wrappedTextLines = wrapText(updatedText, textBox.width);
-  
-      // Combine wrapped lines into a single string with line breaks
-      const wrappedText = wrappedTextLines.map((line) => line.text).join('\n');
-  
-      // Update textBox state with wrapped text
-      setTextBox({ ...textBox, text: wrappedText });
-    }
-  };
-  useEffect(() => {
-    window.addEventListener('keyup', handleKeyPress);
-    return () => {
-      window.removeEventListener('keyup', handleKeyPress);
-    };
-  }, [isTextBoxEditEnabled, textBox]);
 
 
-  const handleMouseMove = (e, index) => {
-    setActivePage(index);
 
-    if (isResizing && textBox) {
-      // Update the width and height of the textBox while resizing
-      const newWidth = Math.max(50, e.nativeEvent.offsetX - textBox.x); // Minimum width: 50
-      const newHeight = Math.max(20, e.nativeEvent.offsetY - textBox.y); // Minimum height: 20
-  
-      setTextBox({ ...textBox, width: newWidth, height: newHeight });
-      drawCanvas(); // Redraw the canvas with updated dimensions
+
+const handleMouseMove = (e) => {
+  const { offsetX, offsetY } = e.nativeEvent;
+
+  // === TEXTBOX RESIZING ===
+if (isResizing && textBox) {
+  const newWidth = Math.max(50, offsetX - textBox.x);
+  const newHeight = Math.max(20, offsetY - textBox.y);
+
+  const ctx = canvasRefs.current[activePage].getContext('2d');
+  const padding = textBox.boxPadding || 5;
+  const innerWidth = newWidth - padding * 2;
+
+  const wrappedLines = wrapTextResponsive(textBox.text, innerWidth, ctx);
+  const recombinedText = wrappedLines.join('\n');
+
+  setTextBox({
+    ...textBox,
+    width: newWidth,
+    height: newHeight,
+    text: recombinedText, // 🔁 Update to reflect real wrapping
+  });
+
+  drawCanvas(activePage);
+  return;
+}
+
+  // === SELECTION RECTANGLE ===
+  if (isSelecting) {
+    setSelectionEnd({ x: offsetX, y: offsetY });
+    drawCanvas(activePage);
+    return;
+  }
+
+  // === IMAGE RESIZING ===
+  if (resizingImageIndex !== null) {
+    const updatedItems = [...imageItems];
+    const item = updatedItems[resizingImageIndex];
+    if (!item) return;
+
+    const deltaX = offsetX - resizeStart.x;
+    const deltaY = offsetY - resizeStart.y;
+
+    item.width = Math.max(10, item.width + deltaX);
+    item.height = Math.max(10, item.height + deltaY);
+
+    setImageItems(updatedItems);
+    saveImageItemsToLocalStorage(updatedItems);
+    setResizeStart({ x: offsetX, y: offsetY });
+    drawCanvas(activePage);
+    return;
+  }
+
+  // === IMAGE DRAGGING ===
+  if (isImageDragging && draggedImageIndex !== null) {
+    const updatedItems = [...imageItems];
+    const item = updatedItems[draggedImageIndex];
+    if (!item) return;
+
+    const deltaX = offsetX - dragStart.x;
+    const deltaY = offsetY - dragStart.y;
+
+    item.x += deltaX;
+    item.y += deltaY;
+
+    setImageItems(updatedItems);
+    saveImageItemsToLocalStorage(updatedItems);
+    updatePageItems('imageItems', updatedItems.filter(i => i.index === activePage));
+    setDragStart({ x: offsetX, y: offsetY });
+    drawCanvas(activePage);
+    return;
+  }
+
+  // === TEXT DRAGGING ===
+  if (isDragging && dragStart && initialPositions.length > 0) {
+    const deltaX = offsetX - dragStart.x;
+    const deltaY = offsetY - dragStart.y;
+    const updatedItems = [...textItems];
+
+    // === MULTIPLE ITEMS DRAG ===
+    if (selectedTextIndexes.length > 1 && initialPositions.length === selectedTextIndexes.length) {
+      initialPositions.forEach((pos) => {
+        const item = updatedItems[pos.index];
+        if (item && item.index === activePage) {
+          item.x = pos.x + deltaX;
+          item.y = pos.y + deltaY;
+        }
+      });
+
+      setTextItems(updatedItems);
+      updatePageItems('textItems', updatedItems.filter(i => i.index === activePage));
+      saveTextItemsToLocalStorage(updatedItems);
+      drawCanvas(activePage);
       return;
     }
 
+    // === SINGLE ITEM DRAG (WITH SNAPPING) ===
+    if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
+      const selIdx = selectedTextIndexes[0];
+      const item = updatedItems[selIdx];
+      const initPos = initialPositions[0];
 
-    if (isSelecting) {
-      setSelectionEnd({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
-      drawCanvas(activePage);
-    }
+      if (!item || item.index !== activePage) return;
 
+      let newX = initPos.x + deltaX;
+      let newY = initPos.y + deltaY;
 
+      const padding = (item.fontSize || fontSize) * 0.2;
+      const draggedLeft = newX - padding;
+      const snapThreshold = 4;
 
+      // Snap to nearby vertical edge
+      for (let i = 0; i < textItems.length; i++) {
+        if (i === selIdx) continue;
+        const other = textItems[i];
+        if (other.index !== activePage) continue;
 
+        const otherPadding = (other.fontSize || fontSize) * 0.2;
+        const otherLeft = other.x - otherPadding;
 
-
-
-    if (isDragging) {
-      const { offsetX, offsetY } = e.nativeEvent;
-  
-      const deltaX = offsetX - dragStart.x;
-      const deltaY = offsetY - dragStart.y;
-  
-      const updatedItems = [...textItems];
-      const draggedItem = updatedItems[selectedTextIndex];
-  
-      // Calculate new position for the dragged text
-      let newX = draggedItem.x + deltaX;
-      let newY = draggedItem.y + deltaY;
-  
-      let snapped = false; // Track whether snapping has occurred
-  
-      // Snapping threshold
-      const snappingThreshold = 3;
-  
-      // Check for snapping to any other text's vertical line
-      textItems.forEach((item, i) => {
-        if (i !== selectedTextIndex && item.index===activePage) {
-          const itemPadding = (item.fontSize || fontSize) * 0.2;
-          const lineX = item.x - itemPadding;
-  
-          // Check if the dragged text's left edge is near the current item's line
-          const draggedPadding = (draggedItem.fontSize || fontSize) * 0.2;
-          const draggedLeftEdge = newX - draggedPadding;
-  
-          if (Math.abs(draggedLeftEdge - lineX) < snappingThreshold) {
-            newX = lineX + draggedPadding; // Snap dragged text to the line
-            snapped = true;
-          }
+        if (Math.abs(draggedLeft - otherLeft) < snapThreshold) {
+          newX = otherLeft + padding;
+          break;
         }
-      });
-  
-      // Update position only if snapping occurred or text is moving normally
-      if (snapped || deltaX !== 0 || deltaY !== 0 && index===activePage) {
-         draggedItem.x = newX - deltaX;
-         draggedItem.y = newY - deltaY;
-  
-        setTextItems(updatedItems);
-        saveTextItemsToLocalStorage(updatedItems); // Save updated position in localStorage
-        setDragStart({ x: offsetX, y: offsetY }); // Update drag start position
-        drawCanvas(activePage);
       }
-    }
 
-    if (isDragging) {
-      const offsetX = e.nativeEvent.offsetX - dragStart.x;
-      const offsetY = e.nativeEvent.offsetY - dragStart.y;
-
-      let updatedItems = [...textItems];
-
-      if(initialPositions.length >= 2) {
-        initialPositions.forEach((pos) => {
-          const { index, x, y } = pos;
-
-          if(updatedItems[index].index === pos.activePage) {
-          updatedItems[index] = {
-            ...updatedItems[index],
-            x: updatedItems[index].x + offsetX,
-            y: updatedItems[index].y + offsetY,
-          };
-          }
-
-        });
-        let temp = [];
-        updatedItems.forEach(e => {
-          if(e.index === activePage) {
-            temp.push(e);
-          }
-        })
-        updatePageItems('textItems', temp)
-      } else {
-      selectedTextIndexes.forEach((index) => {
-        updatedItems[index] = {
-          ...updatedItems[index],
-          x: updatedItems[index].x + offsetX,
-          y: updatedItems[index].y + offsetY,
-        };
-      });
-      let temp = [];
-      updatedItems.forEach(e => {
-        if(e.index === activePage) {
-          temp.push(e);
-        }
-      })
-      updatePageItems('textItems', temp)
-      }
+      item.x = newX;
+      item.y = newY;
 
       setTextItems(updatedItems);
+      updatePageItems('textItems', updatedItems.filter(i => i.index === activePage));
       saveTextItemsToLocalStorage(updatedItems);
-      setDragStart({ x: e.nativeEvent.offsetX, y: e.nativeEvent.offsetY });
       drawCanvas(activePage);
+      return;
     }
 
-    if (resizingImageIndex !== null) {
-      const { offsetX, offsetY } = e.nativeEvent;
-  
-      const updatedItems = [...imageItems];
-      const item = updatedItems[resizingImageIndex];
-  
-      // Calculate new width and height based on mouse movement
-      const deltaX = offsetX - resizeStart.x;
-      const deltaY = offsetY - resizeStart.y;
-  
-      item.width = Math.max(10, item.width + deltaX); // Minimum width is 10px
-      item.height = Math.max(10, item.height + deltaY); // Minimum height is 10px
-  
-      setImageItems(updatedItems);
-      saveImageItemsToLocalStorage(updatedItems); // Persist changes
-      setResizeStart({ x: offsetX, y: offsetY }); // Update resize start position
-      drawCanvas(activePage);
-    }
+    // === FALLBACK: JUST MOVE ALL SELECTED ===
+    selectedTextIndexes.forEach((selIdx) => {
+      const item = updatedItems[selIdx];
+      const initPos = initialPositions.find(p => p.index === selIdx);
+      if (item && initPos && item.index === activePage) {
+        item.x = initPos.x + deltaX;
+        item.y = initPos.y + deltaY;
+      }
+    });
 
-
-
-
-    if (isImageDragging && draggedImageIndex !== null) {
-      const { offsetX, offsetY } = e.nativeEvent;
-      const deltaX = offsetX - dragStart.x;
-      const deltaY = offsetY - dragStart.y;
-  
-      const updatedItems = [...imageItems];
-      updatedItems[draggedImageIndex].x += deltaX;
-      updatedItems[draggedImageIndex].y += deltaY;
-  
-      setImageItems(updatedItems);
-
-
-      const uI = imageItems.filter((_, index) => _.index === activePage);
-      setImageItems(updatedItems); // Update state
-
-      ///////////////////////////////////
-      // HERE //
-      ///////////////////////////////////
-
-      saveImageItemsToLocalStorage(updatedItems); // Save updated positions to localStorage
-      updatePageItems('imageItems', uI)
-      setDragStart({ x: offsetX, y: offsetY });
-      drawCanvas(activePage);
-    }
-    
-    const uI = imageItems.filter((_, index) => _.index === activePage);
-     updatePageItems('imageItems', uI)
-  };
-
-  const handleMouseUp = (e) => {
-    //setSelectedImageIndex(null); setSelectedTextIndex(null); setSelectedTextIndexes([]);
-    const selectionRect = {
-      x: Math.min(selectionStart.x, selectionEnd.x),
-      y: Math.min(selectionStart.y, selectionEnd.y),
-      width: Math.abs(selectionEnd.x - selectionStart.x),
-      height: Math.abs(selectionEnd.y - selectionStart.y),
-    };
-
-    if (isResizing) {
-      setIsResizing(false); // Stop resizing textBox edit
-    }
-
-
-    if (isSelecting) {
-
-
-      const selectedIndexes = [];
-      const ctx = canvasRefs.current[activePage].getContext('2d');
-      //ctx.font = `${fontSize}px Arial`;
-
-      textItems.forEach((item, index) => {
-        const textWidth = ctx.measureText(item.text).width;
-        const textHeight = ctx.measureText(item.text);
-        let actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent
-        const textRect = {
-          x: item.x - item.boxPadding,
-          y: item.y - actualHeight - item.boxPadding,
-          width: textWidth + item.boxPadding,
-          height: actualHeight + item.boxPadding,
-        };
-
-        if (
-          selectionRect.x < textRect.x + textRect.width &&
-          selectionRect.x + selectionRect.width > textRect.x &&
-          selectionRect.y < textRect.y + textRect.height &&
-          selectionRect.y + selectionRect.height > textRect.y
-        ) {
-          selectedIndexes.push(index);
-
-          const pos = {
-            index: index,
-            x: item.x,
-            y: item.y,
-            activePage: activePage
-          }
-          initialPositions.push(pos);
-          
-        }
-      });
-
-      setSelectedTextIndexes(selectedIndexes);
-      setInitialPositions(initialPositions);
-      setIsTextSelected(selectedIndexes.length > 0);
-    }
-
-    if (isDragging) {
-      setIsDragging(false);
-      setInitialPositions([]);
-      setDragStart({ x: 0, y: 0 });
-    }
-
-    if (resizingImageIndex !== null) {
-      setResizingImageIndex(null);
-    }
-
-    if (isImageDragging) {
-      setIsImageDragging(false);
-      setDraggedImageIndex(null);
-      setDragStart({ x: 0, y: 0 });
-    }
-
-
-
-    // //Deselect selection square while no text is selected
-    // setIsTextSelected(true);
-    // setIsSelecting(true);
-
-if (isResizing) {
-    setIsResizing(false); // Stop resizing
+    setTextItems(updatedItems);
+    updatePageItems('textItems', updatedItems.filter(t => t.index === activePage));
+    saveTextItemsToLocalStorage(updatedItems);
+    drawCanvas(activePage);
   }
 
+};
+
+useEffect(() => {
+  if (shouldClearSelectionBox) {
+    setSelectionStart(null);
+    setSelectionEnd(null);
+    setShouldClearSelectionBox(false);
+    drawCanvas(activePage);
+  }
+}, [shouldClearSelectionBox]);
+
+
+const handleMouseUp = (e) => {
+  const selectionRect = {
+    x: Math.min(selectionStart?.x || 0, selectionEnd?.x || 0),
+    y: Math.min(selectionStart?.y || 0, selectionEnd?.y || 0),
+    width: Math.abs((selectionEnd?.x || 0) - (selectionStart?.x || 0)),
+    height: Math.abs((selectionEnd?.y || 0) - (selectionStart?.y || 0)),
+  };
+
+  // === Stop Resizing ===
+  if (isResizing) setIsResizing(false);
+
+  // === Stop Dragging ===
+  if (isDragging) {
+    setIsDragging(false);
+    setInitialPositions([]);
+    setDragStart({ x: 0, y: 0 });
+  }
+
+  if (resizingImageIndex !== null) setResizingImageIndex(null);
+  if (isImageDragging) {
+    setIsImageDragging(false);
+    setDraggedImageIndex(null);
+    setDragStart({ x: 0, y: 0 });
+  }
+
+  // === Selection Handling ===
   if (isSelecting) {
-    setIsSelecting(false); // Stop selecting
-    if (!textBox) {
-      // Create a new textBox after selection
+    const ctx = canvasRefs.current[activePage].getContext('2d');
+    const selectedIndexes = [];
+    const updatedInitialPositions = [];
+
+    textItems.forEach((item, index) => {
+      if (item.index !== activePage) return;
+
+      const textWidth = ctx.measureText(item.text).width;
+      const textHeight = ctx.measureText(item.text);
+      const actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent;
+
+      const textRect = {
+        x: item.x - item.boxPadding,
+        y: item.y - actualHeight - item.boxPadding,
+        width: textWidth + item.boxPadding * 2,
+        height: actualHeight + item.boxPadding * 2,
+      };
+
+      const intersects =
+        selectionRect.x < textRect.x + textRect.width &&
+        selectionRect.x + selectionRect.width > textRect.x &&
+        selectionRect.y < textRect.y + textRect.height &&
+        selectionRect.y + selectionRect.height > textRect.y;
+
+      if (intersects) {
+        selectedIndexes.push(index);
+        updatedInitialPositions.push({
+          index,
+          x: item.x,
+          y: item.y,
+          activePage,
+        });
+      }
+    });
+
+    if (selectedIndexes.length > 0) {
+      // Texts selected
+      setSelectedTextIndexes(selectedIndexes);
+      setInitialPositions(updatedInitialPositions);
+      setIsTextSelected(true);
+    } else {
+      // No texts selected
+      setSelectedTextIndexes([]);
+      setSelectedTextIndex(null);
+      setIsTextSelected(false);
+    }
+
+    // TextBox mode creates a new box
+    if (isTextBoxEditEnabled && !textBox) {
       const rectWidth = selectionEnd.x - selectionStart.x;
       const rectHeight = selectionEnd.y - selectionStart.y;
 
@@ -909,21 +966,63 @@ if (isResizing) {
         y: selectionStart.y,
         width: rectWidth,
         height: rectHeight,
-        text: '', // Initialize with empty text
+        text: '',
       });
     }
+
+   setIsSelecting(false);
+   setShouldClearSelectionBox(true);
   }
 
+  // === Always clear selection rectangle ===
+  setSelectionStart(null);
+  setSelectionEnd(null);
+  drawCanvas(activePage); // Redraw canvas
+};
 
-    
+
+ const handleKeyDown = (e) => {
+if (isTextBoxEditEnabled && textBox) {
+    let updatedText = textBox.text;
+
+    if (e.key === 'Enter') {
+      updatedText += '\n';
+    } else if (e.key === 'Backspace') {
+      updatedText = updatedText.slice(0, -1);
+    } else if (e.key.length === 1) {
+      updatedText += e.key;
+    } else {
+      return;
+    }
+
+    const ctx = canvasRefs.current[activePage].getContext('2d');
+    ctx.font = `${textBox.fontSize || fontSize}px Arial`;
+
+    const result = wrapTextPreservingNewlinesResponsive(updatedText, ctx, textBox.width, fontSize, textBox.boxPadding || 10);
+
+    setTextBox({
+      ...textBox,
+      text: updatedText,
+      width: result.width,
+      height: result.height
+    });
+  }
   };
+useEffect(() => {
 
-  const handleKeyDown = (e) => {
-    //e.preventDefault();
+
+  window.addEventListener('keydown', handleKeyDown); // changed from keyup
+  return () => {
+    window.removeEventListener('keydown', handleKeyDown);
+  };
+}, [isTextBoxEditEnabled, textBox, activePage]);
+
+  const handleTextMove = (e) => {
+    
     if (isTextSelected && selectedTextIndex !== null) {
       const updatedItems = [...textItems];
       const selectedItem = updatedItems[selectedTextIndex];
-      
+      //e.preventDefault();
       // Move the selected text item based on the arrow key pressed
       if (e.key === 'ArrowUp') selectedItem.y -= 1;
       if (e.key === 'ArrowDown') selectedItem.y += 1;
@@ -937,7 +1036,11 @@ if (isResizing) {
       setTextItems(updatedItems);
       saveTextItemsToLocalStorage(updatedItems); // Save updated position in localStorage
     }
+
   };
+
+
+  
 
 // Function to handle adding new text to the canvas
 const addTextToCanvas = () => {
@@ -1009,30 +1112,29 @@ const addTextToCanvas3 = (textArray = []) => {
 
 
 
-// Function to handle adding new text to the canvas
-const addTextToCanvas2 = (textBox, maxW) => {
-  if (textBox.text.trim() !== '') {
-    const padding = newFontSize * 0.2; // Calculate dynamic padding (20% of font size)
-    let newItem = textBox.text;
-    const wrappedText = wrapText(newItem, maxW); // Wrap text based on maxWidth
-    newItem = [];
-    wrappedText.forEach((e,i) => newItem.push( { 
-      text: e.text, 
-      fontSize: newFontSize, 
-      boxPadding: padding, // Include dynamic box padding
-      x: textBox.x +5, 
-      y: textBox.y + 20 + i * 20,
-      index: activePage
-    }))
-    const updatedItems = [...textItems, ...newItem];
+const addTextToCanvas2 = (textBox) => {
+    if (textBox?.text?.trim()) {
+    const padding = newFontSize * 0.2;
+    const ctx = canvasRefs.current[activePage].getContext('2d');
+    const innerWidth = textBox.width - padding * 2;
+    const lines = wrapTextResponsive(textBox.text, innerWidth, ctx);
+    const lineHeight = newFontSize + 5;
+
+    const textItemsToAdd = lines.map((line, i) => ({
+      text: line,
+      fontSize: newFontSize,
+      boxPadding: padding,
+      x: textBox.x + padding,
+      y: textBox.y + 20 + i * lineHeight,
+      index: activePage,
+    }));
+
+    const updatedItems = [...textItems, ...textItemsToAdd];
     setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
-    setShowAddTextModal(false); // Close modal
-    setNewText(''); // Reset text input
-    setNewFontSize(fontSize); // Reset font size input
-    setMaxWidth(200); // Reset maxWidth input
-    updatePageItems('textItems', updatedItems)
-    drawCanvas(activePage); // Redraw canvas to show new text immediately
+    saveTextItemsToLocalStorage(updatedItems);
+    updatePageItems('textItems', updatedItems);
+    setTextBox(null);
+    drawCanvas(activePage);
   }
 };
 
@@ -1040,12 +1142,17 @@ const addTextToCanvas2 = (textBox, maxW) => {
 // Handle deleting the selected image
 const deleteSelectedImage = () => {
   if (selectedImageIndex !== null) {
-    const updatedItems = imageItems.filter((_, index) => index !== selectedImageIndex);
-    setImageItems(updatedItems); // Update state
-    saveImageItemsToLocalStorage(updatedItems); // Save to localStorage
-    setSelectedImageIndex(null); // Reset selected image
-    drawCanvas(activePage); // Redraw canvas without the deleted image
-    updatePageItems('textItems', updatedItems)
+    const filteredItems = imageItems.filter((item, index) => {
+      if (item.index !== activePage) return true; // keep images from other pages
+      const pageImages = imageItems.filter(i => i.index === activePage);
+      const targetItem = pageImages[selectedImageIndex];
+      return item !== targetItem; // remove only the matched item from current page
+    });
+
+    setImageItems(filteredItems);
+    saveImageItemsToLocalStorage(filteredItems);
+    setSelectedImageIndex(null);
+    drawCanvas(activePage);
   }
 };
 
@@ -1156,22 +1263,6 @@ const wrapText = (text, maxWidth) => {
   }, [textItems, showGrid, isTextSelected, pages, activePage, textBox]);
 
 
-  // // Update textItems or imageItems on the current page
-  // const updatePageItems = (type, items) => {
-  //   const updatedPages = pages.map((page, index) => {
-  //     // Update only the active page, keep others unchanged
-  //     if (index === activePage) {
-  //       return {
-  //         ...page,
-  //         [type]: items, // Update the specific type (textItems or imageItems)
-  //       };
-  //     }
-  //     return page;
-  //   });
-  
-  //   setPages(updatedPages); // Update state with the new pages array
-  // };
-
 
   const updatePageItems = (type, items) => {
     const updatedPages = [...pages];
@@ -1229,27 +1320,42 @@ const wrapText = (text, maxWidth) => {
 
 
 
-// Function to handle double-click on a text
 const handleDoubleClick = (e) => {
   const { offsetX, offsetY } = e.nativeEvent;
   const ctx = canvasRefs.current[activePage].getContext('2d');
-  //ctx.font = `${fontSize}px Arial`;
 
   textItems.forEach((item, index) => {
-    const textWidth = ctx.measureText(item.text).width;
-    const textHeight = ctx.measureText(item.text);
-    let actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent
-    // Check if the double-click is within the bounding box of a text
-    if (
-      offsetX >= item.x - item.boxPadding &&
-      offsetX <= item.x + textWidth + item.boxPadding &&
-      offsetY >= item.y - actualHeight - item.boxPadding &&
-      offsetY <= item.y + item.boxPadding
-    ) {
-      setIsEditing(true); // Enter editing mode
-      setEditingText(item.text); // Pre-fill the modal with the current text
-      setEditingFontSize(item.fontSize || fontSize); // Pre-fill with the current font size
-      setEditingIndex(index); // Track the index of the text being edited
+    if (item.index !== activePage) return;
+
+    // Set font size for the item before measuring
+    const fontSize = item.fontSize || 16;
+    ctx.font = `${fontSize}px Arial`;
+
+    // Recalculate padding dynamically if not stored
+    const boxPadding = item.boxPadding ?? (fontSize * 0.2);
+
+    const metrics = ctx.measureText(item.text);
+    const textWidth = metrics.width;
+    const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+
+    const textRect = {
+      x: item.x - boxPadding,
+      y: item.y - textHeight - boxPadding,
+      width: textWidth + boxPadding * 2,
+      height: textHeight + boxPadding * 2,
+    };
+
+    const isInside =
+      offsetX >= textRect.x &&
+      offsetX <= textRect.x + textRect.width &&
+      offsetY >= textRect.y &&
+      offsetY <= textRect.y + textRect.height;
+
+    if (isInside) {
+      setIsEditing(true);
+      setEditingText(item.text);
+      setEditingFontSize(item.fontSize);
+      setEditingIndex(index);
     }
   });
 };
@@ -1262,11 +1368,13 @@ const saveEditedText = () => {
       ...updatedItems[editingIndex],
       text: editingText, // Update the text
       fontSize: editingFontSize, // Update the font size
-      index: activePage
+      index: activePage,
+      boxPadding: editingFontSize * 0.2,
     };
     setTextItems(updatedItems);
     saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
     closeEditModal(); // Close the modal
+    drawCanvas(activePage);
   }
 };
 
@@ -1314,91 +1422,127 @@ const closeEditModal = () => {
     }
   };
 
-  return (
-    <div style={{ padding: '20px' }}>
-      <h1>PdfEditor //not_finished</h1>
-      {/* {console.log(convertTextItemsToPdfCoordinates(textItems))} */}
-      {pages.map((_, index) => (
-          <canvas
-          key={index}
-          ref={(el) => (canvasRefs.current[index] = el)}
-          style={{
-            border: activePage === index ? '1px solid dodgerblue' : '1px solid black',
-            marginBottom: '20px',
-          }}
-          onMouseDown={(e) => handleMouseDown(e)}
-          onMouseMove={(e) => handleMouseMove(e, index)}
-          onMouseUp={handleMouseUp}
-          onDoubleClick={handleDoubleClick}
-          onClick={() => setActivePage(index)}
-        />
-        ))}
+return (
+<div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif' }}>
+  {/* Sidebar */}
+  <div style={{
+    width: '260px',
+    backgroundColor: '#f4f6f8',
+    padding: '20px',
+    borderRight: '1px solid #ddd',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+    boxShadow: '2px 0 6px rgba(0,0,0,0.05)'
+  }}>
+    <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>PdfEditor</h2>
+
+    {/* PDF Controls */}
+    <div>
+      <h4 style={{ marginBottom: '10px', color: '#666' }}>PDF</h4>
       <input
         type="file"
         accept="application/pdf"
         onChange={handleFileChange}
-        style={{ marginBottom: "10px" }}
+        style={{ marginBottom: '10px', width: '100%' }}
       />
-      <button onClick={uploadPdfToServer}>Upload PDF</button>
-        <button onClick={addNewPage} style={{ marginBottom: '10px' }}>
-          Add New Page
-        </button>
-        <button onClick={removePage} style={{ marginBottom: '10px' }}>
-          Remove Page
-        </button>
-      <button onClick={() => setShowAddTextModal(true)}>Add Text</button>
-      <button onClick={toggleGrid} style={{ marginLeft: '10px' }}>
+      <button style={btnStyle} onClick={uploadPdfToServer}>Upload PDF</button>
+      <button style={btnStyle} onClick={saveAllPagesAsPDF}>Save as PDF</button>
+    </div>
+
+    {/* Page Controls */}
+    <div>
+      <h4 style={{ marginBottom: '10px', color: '#666' }}>Pages</h4>
+      <button style={btnStyle} onClick={addNewPage}>Add Page</button>
+      <button style={btnStyle} onClick={removePage}>Remove Page</button>
+    </div>
+
+    {/* Text Controls */}
+    <div>
+      <h4 style={{ marginBottom: '10px', color: '#666' }}>Text</h4>
+      <button style={btnStyle} onClick={() => setShowAddTextModal(true)}>Add Text</button>
+      <button
+        style={{ ...btnStyle, opacity: selectedTextIndex === null && selectedTextIndexes.length < 1 ? 0.5 : 1 }}
+        onClick={removeSelectedText}
+        disabled={selectedTextIndex === null && selectedTextIndexes.length < 1}
+      >
+        Remove Text
+      </button>
+      <button style={btnStyle} onClick={toggleGrid}>
         {showGrid ? 'Hide Grid' : 'Show Grid'}
       </button>
-      <button onClick={saveAllPagesAsPDF} style={{ marginTop: '10px' }}>
-          Save as PDF
-        </button>
-      <button onClick={removeSelectedText}  disabled={selectedTextIndex === null && selectedTextIndexes.length < 1} style={{ marginLeft: '10px' }}>
-          Remove Text
-      </button>
-      <button onClick={toggleSelectingMode} style={{ marginLeft: '10px' }}>
-        {isSelectingModeEnabled ? 'Disable Selecting' : 'Enable Selecting'}
-      </button>
+    </div>
+
+ {/* Image Controls */}
+    <div>
+      <h4 style={{ marginBottom: '10px', color: '#666' }}>Images</h4>
       <input
         type="file"
         accept="image/*"
         onChange={handleAddImage}
-        style={{ marginBottom: '10px' }}
-    />
-    <button
-      onClick={() => {
-        setIsTextBoxEditEnabled((prev) => !prev);
-        if(textBox !== null ) {
-          addTextToCanvas2(textBox, maxWidth)
-         }
-        setTextBox(null); // Clear existing TextBox on toggle
-      }}
-      style={{ marginBottom: '10px' }}
-    >
-      {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
-    </button>
-    <button
-      onClick={deleteSelectedImage}
-      disabled={selectedImageIndex === null} // Disable button if no image is selected
-      style={{ marginLeft: '10px' }}
-    >
-      Delete Image
-    </button>
-      {
-  showAddTextModal && (
-    <div
-      style={{
-        position: 'fixed',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        backgroundColor: 'white',
-        padding: '20px',
-        border: '1px solid #ccc',
-        boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
-        zIndex: 1000,
-      }}
-    >
+        style={{ marginBottom: '10px', width: '100%' }}
+      />
+      <button
+        style={{ ...btnStyle, opacity: selectedImageIndex === null ? 0.5 : 1 }}
+        onClick={deleteSelectedImage}
+        disabled={selectedImageIndex === null}
+      >
+        Delete Image
+      </button>
+    </div>
+
+    {/* TextBox Controls */}
+    <div>
+      <h4 style={{ marginBottom: '10px', color: '#666' }}>TextBox</h4>
+      <button
+        style={btnStyle}
+        onClick={() => {
+          setIsTextBoxEditEnabled(prev => !prev);
+          if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
+          setTextBox(null);
+        }}
+      >
+        {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
+      </button>
+    </div>
+
+    
+  </div>
+
+  {/* Canvas Area */}
+  <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
+    {pages.map((_, index) => (
+      <canvas
+        key={index}
+        ref={(el) => (canvasRefs.current[index] = el)}
+        style={{
+          border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
+          marginBottom: '20px',
+          backgroundColor: 'white'
+        }}
+        onMouseDown={(e) => handleMouseDown(e)}
+        onMouseMove={(e) => handleMouseMove(e, index)}
+        onMouseUp={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        onClick={() => setActivePage(index)}
+      />
+    ))}
+  </div>
+
+  {/* Modal for Add Text */}
+
+  {showAddTextModal && (
+    <div style={{
+      position: 'fixed',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      backgroundColor: 'white',
+      padding: '20px',
+      border: '1px solid #ccc',
+      boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
+      zIndex: 1000
+    }}>
       <h2>Add New Text</h2>
       <input
         type="text"
@@ -1414,7 +1558,7 @@ const closeEditModal = () => {
         placeholder="Font Size"
         style={{ marginBottom: '10px', display: 'block', width: '100%' }}
       />
-       <input
+      <input
         type="number"
         value={maxWidth}
         onChange={(e) => setMaxWidth(parseInt(e.target.value, 10))}
@@ -1436,24 +1580,21 @@ const closeEditModal = () => {
         </button>
       </div>
     </div>
-  )
-}
+  )}
 
-{
-  isEditing && (
-    <div
-      style={{
-        position: 'fixed',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        backgroundColor: 'white',
-        padding: '20px',
-        border: '1px solid #ccc',
-        boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
-        zIndex: 1000,
-      }}
-    >
+{/* Edit Text Modal */}
+  {isEditing && (
+    <div style={{
+      position: 'fixed',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      backgroundColor: 'white',
+      padding: '20px',
+      border: '1px solid #ccc',
+      boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
+      zIndex: 1000
+    }}>
       <h2>Edit Text</h2>
       <input
         type="text"
@@ -1476,10 +1617,9 @@ const closeEditModal = () => {
         </button>
       </div>
     </div>
-  )
-}
-    </div>
-  );
+  )}
+</div>
+);
 }
 
 export default App;
