@@ -79,6 +79,36 @@ const [newFontSize, setNewFontSize] = useState(fontSize); // Default font size
 
 const [isPdfDownloaded, setIsPdfDownloaded] = useState(false);
 
+const [undoStack, setUndoStack] = useState({});
+const [redoStack, setRedoStack] = useState({});
+
+
+
+const pushSnapshotToUndo = (page) => {
+  setUndoStack((prevUndo) => {
+    // IMPORTANT: Read current items *inside* the setter
+    const currentTextItems = [...textItems].filter(item => item.index === page);
+    const currentImageItems = [...imageItems].filter(item => item.index === page);
+
+    const stack = prevUndo[page] || [];
+    const snapshot = {
+      textItems: currentTextItems.map(item => ({ ...item })), // Deep copy
+      imageItems: currentImageItems.map(item => ({ ...item }))
+    };
+
+    const updated = [...stack, snapshot];
+    const newState = { ...prevUndo, [page]: updated };
+    localStorage.setItem('undoStack', JSON.stringify(newState));
+    return newState;
+  });
+
+  setRedoStack((prevRedo) => {
+    const newRedo = { ...prevRedo, [page]: [] };
+    localStorage.setItem('redoStack', JSON.stringify(newRedo));
+    return newRedo;
+  });
+};
+
 
  // Load pages from localStorage on mount
  useEffect(() => {
@@ -100,6 +130,8 @@ const [isPdfDownloaded, setIsPdfDownloaded] = useState(false);
     }
   }
 }, [pages]);
+
+
 
 
 // Function to handle file input change
@@ -186,7 +218,7 @@ useEffect(() => {
   useEffect(() => {
     const storedTextItems = localStorage?.getItem('textItems');
     const storedImageItems = localStorage?.getItem('imageItems');
-  
+    
     if (storedTextItems?.length > 0) {
       setTextItems(JSON.parse(storedTextItems));
     }
@@ -594,6 +626,8 @@ const handleMouseDown = (e) => {
       setIsTextSelected(true);
       setSelectedTextIndex(index);
 
+
+
       let newSelectedIndexes = selectedTextIndexes.includes(index)
         ? [...selectedTextIndexes]
         : [index];
@@ -711,6 +745,150 @@ const handleMouseDown = (e) => {
     return;
   }
 };
+
+useEffect(() => {
+  const u = JSON.parse(localStorage.getItem('undoStack') || '{}');
+  const r = JSON.parse(localStorage.getItem('redoStack') || '{}');
+  setUndoStack(u);
+  setRedoStack(r);
+}, []);
+
+// useEffect(() => {
+//   drawCanvas(activePage);
+//   console.log('asdasdasdasd');
+// }, [undoStack, redoStack]);
+const snapshotsEqual = (a, b) => {
+  const serialize = (obj) => JSON.stringify(
+    obj.map(item =>
+      Object.keys(item).sort().reduce((acc, key) => {
+        acc[key] = item[key];
+        return acc;
+      }, {})
+    )
+  );
+
+  return serialize(a.textItems) === serialize(b.textItems) &&
+         serialize(a.imageItems) === serialize(b.imageItems);
+};
+
+const applySnapshotToPage = (snapshot) => {
+  const newTextItems = snapshot.textItems.map(item => ({ ...item }));
+  const newImageItems = snapshot.imageItems.map(item => ({ ...item }));
+
+  // Update global textItems
+  const updatedTextItems = textItems
+    .filter(item => item.index !== activePage)
+    .concat(newTextItems);
+
+  setTextItems(updatedTextItems);
+  saveTextItemsToLocalStorage(updatedTextItems);
+
+  // Update global imageItems
+  const updatedImageItems = imageItems
+    .filter(item => item.index !== activePage)
+    .concat(newImageItems);
+
+  setImageItems(updatedImageItems);
+  saveImageItemsToLocalStorage(updatedImageItems);
+
+  // Update the corresponding page
+  const updatedPages = [...pages];
+  updatedPages[activePage] = {
+    ...updatedPages[activePage],
+    textItems: newTextItems,
+    imageItems: newImageItems
+  };
+  setPages(updatedPages);
+  localStorage.setItem('pages', JSON.stringify(updatedPages));
+};
+
+
+
+
+const handleUndo = () => {
+  setUndoStack(prev => {
+    const stack = prev[activePage] || [];
+    if (stack.length === 0) return prev;
+
+    const lastSnapshot = stack[stack.length - 1];
+    const newStack = stack.slice(0, -1);
+
+setRedoStack(rPrev => {
+  const redoList = rPrev[activePage] || [];
+  const currentSnapshot = {
+    textItems: textItems.filter(item => item.index === activePage),
+    imageItems: imageItems.filter(item => item.index === activePage),
+  };
+
+  // Prevent duplicate pushes
+  if (redoList.length > 0 && snapshotsEqual(redoList[redoList.length - 1], currentSnapshot)) {
+    return rPrev;
+  }
+
+  const updatedRedo = [...redoList, currentSnapshot];
+  const newRedoState = { ...rPrev, [activePage]: updatedRedo };
+  localStorage.setItem('redoStack', JSON.stringify(newRedoState));
+  return newRedoState;
+});
+
+    // Deep copy snapshot before applying
+    const snapshotCopy = {
+      textItems: lastSnapshot.textItems.map(item => ({ ...item })),
+      imageItems: lastSnapshot.imageItems.map(item => ({ ...item }))
+    };
+
+    applySnapshotToPage(snapshotCopy);
+
+    const newUndoState = { ...prev, [activePage]: newStack };
+    localStorage.setItem('undoStack', JSON.stringify(newUndoState));
+    return newUndoState;
+  });
+};
+
+
+
+const handleRedo = () => {
+  setRedoStack(prev => {
+    const stack = prev[activePage] || [];
+    if (stack.length === 0) return prev;
+
+    const nextSnapshot = stack[stack.length - 1];
+    const newStack = stack.slice(0, -1);
+
+setUndoStack(uPrev => {
+  const undoList = uPrev[activePage] || [];
+  const currentSnapshot = {
+    textItems: textItems.filter(item => item.index === activePage),
+    imageItems: imageItems.filter(item => item.index === activePage),
+  };
+
+  // Prevent duplicate pushes
+  if (undoList.length > 0 && snapshotsEqual(undoList[undoList.length - 1], currentSnapshot)) {
+    return uPrev;
+  }
+
+  const updatedUndo = [...undoList, currentSnapshot];
+  const newUndoState = { ...uPrev, [activePage]: updatedUndo };
+  localStorage.setItem('undoStack', JSON.stringify(newUndoState));
+  return newUndoState;
+});
+
+    // Deep copy before applying
+    const snapshotCopy = {
+      textItems: nextSnapshot.textItems.map(item => ({ ...item })),
+      imageItems: nextSnapshot.imageItems.map(item => ({ ...item }))
+    };
+
+    applySnapshotToPage(snapshotCopy);
+
+    const newRedoState = { ...prev, [activePage]: newStack };
+    localStorage.setItem('redoStack', JSON.stringify(newRedoState));
+    return newRedoState;
+  });
+};
+
+
+
 
 
 
@@ -898,6 +1076,8 @@ const handleMouseUp = (e) => {
     setIsDragging(false);
     setInitialPositions([]);
     setDragStart({ x: 0, y: 0 });
+        //undo-redo
+    pushSnapshotToUndo(activePage);
   }
 
   if (resizingImageIndex !== null) setResizingImageIndex(null);
@@ -1041,32 +1221,49 @@ useEffect(() => {
 
 
   
-
 // Function to handle adding new text to the canvas
 const addTextToCanvas = () => {
-  if (newText.trim() !== '') {
-    const padding = newFontSize * 0.2; // Calculate dynamic padding (20% of font size)
-    let newItem = newText;
-    const wrappedText = wrapText(newItem, maxWidth); // Wrap text based on maxWidth
-    newItem = [];
-    wrappedText.forEach(e => newItem.push( { 
-      text: e.text, 
-      fontSize: newFontSize, 
-      boxPadding: padding, // Include dynamic box padding
-      x: e.x, 
-      y: e.y,
-      index: activePage
-    }))
-    const updatedItems = [...textItems, ...newItem];
-    setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
-    setShowAddTextModal(false); // Close modal
-    setNewText(''); // Reset text input
-    setNewFontSize(fontSize); // Reset font size input
-    setMaxWidth(200); // Reset maxWidth input
-    updatePageItems('textItems', newItem)
-    drawCanvas(activePage); // Redraw canvas to show new text immediately
-  }
+  if (newText.trim() === '') return;
+
+  const fontSizeToUse = newFontSize || fontSize;
+  const padding = fontSizeToUse * 0.2; // 20% padding
+  const ctx = canvasRefs.current[activePage]?.getContext('2d');
+  const font = `${fontSizeToUse}px Arial`;
+
+  if (!ctx) return;
+
+  ctx.font = font;
+
+  // Ensure maxWidth is valid and usable
+  const measuredTextWidth = ctx.measureText(newText).width;
+  const effectiveMaxWidth = maxWidth && maxWidth > fontSizeToUse
+    ? maxWidth
+    : measuredTextWidth + 20;
+
+  // Use corrected wrapText logic
+  const wrappedText = wrapText(newText, effectiveMaxWidth, ctx, 100, 100, fontSizeToUse);
+
+  // Construct new textItems array
+  const newItems = wrappedText.map((line) => ({
+    text: line.text,
+    x: line.x,
+    y: line.y,
+    fontSize: fontSizeToUse,
+    boxPadding: padding,
+    index: activePage
+  }));
+
+  const updatedItems = [...textItems, ...newItems];
+  setTextItems(updatedItems);
+  saveTextItemsToLocalStorage(updatedItems);
+  updatePageItems('textItems', newItems);
+  drawCanvas(activePage);
+
+  // Reset modal state
+  setShowAddTextModal(false);
+  setNewText('');
+  setNewFontSize(fontSize);
+  setMaxWidth(200);
 };
 
 
@@ -1211,6 +1408,8 @@ const wrapText = (text, maxWidth) => {
     setShowGrid((prevShowGrid) => !prevShowGrid);
     drawCanvas(activePage);
   };
+
+
 
     // Save all pages as PDF
   const saveAllPagesAsPDF = async () => {
@@ -1432,13 +1631,15 @@ return (
     borderRight: '1px solid #ddd',
     display: 'flex',
     flexDirection: 'column',
-    gap: '20px',
-    boxShadow: '2px 0 6px rgba(0,0,0,0.05)'
+    overflowY: 'auto',
+    height: '100vh',
+    boxShadow: '2px 0 6px rgba(0,0,0,0.05)',
+    scrollbarWidth: 'thin', // Firefox
   }}>
     <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>PdfEditor</h2>
 
-    {/* PDF Controls */}
-    <div>
+    {/* Each section retains margin and header styling */}
+    <div style={{ marginTop: '20px' }}>
       <h4 style={{ marginBottom: '10px', color: '#666' }}>PDF</h4>
       <input
         type="file"
@@ -1450,15 +1651,13 @@ return (
       <button style={btnStyle} onClick={saveAllPagesAsPDF}>Save as PDF</button>
     </div>
 
-    {/* Page Controls */}
-    <div>
+    <div style={{ marginTop: '20px' }}>
       <h4 style={{ marginBottom: '10px', color: '#666' }}>Pages</h4>
       <button style={btnStyle} onClick={addNewPage}>Add Page</button>
       <button style={btnStyle} onClick={removePage}>Remove Page</button>
     </div>
 
-    {/* Text Controls */}
-    <div>
+    <div style={{ marginTop: '20px' }}>
       <h4 style={{ marginBottom: '10px', color: '#666' }}>Text</h4>
       <button style={btnStyle} onClick={() => setShowAddTextModal(true)}>Add Text</button>
       <button
@@ -1473,63 +1672,7 @@ return (
       </button>
     </div>
 
- {/* Image Controls */}
-    <div>
-      <h4 style={{ marginBottom: '10px', color: '#666' }}>Images</h4>
-      <input
-        type="file"
-        accept="image/*"
-        onChange={handleAddImage}
-        style={{ marginBottom: '10px', width: '100%' }}
-      />
-      <button
-        style={{ ...btnStyle, opacity: selectedImageIndex === null ? 0.5 : 1 }}
-        onClick={deleteSelectedImage}
-        disabled={selectedImageIndex === null}
-      >
-        Delete Image
-      </button>
-    </div>
-
-    {/* TextBox Controls */}
-    <div>
-      <h4 style={{ marginBottom: '10px', color: '#666' }}>TextBox</h4>
-      <button
-        style={btnStyle}
-        onClick={() => {
-          setIsTextBoxEditEnabled(prev => !prev);
-          if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
-          setTextBox(null);
-        }}
-      >
-        {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
-      </button>
-    </div>
-
-    
-  </div>
-
-  {/* Canvas Area */}
-  <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
-    {pages.map((_, index) => (
-      <canvas
-        key={index}
-        ref={(el) => (canvasRefs.current[index] = el)}
-        style={{
-          border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
-          marginBottom: '20px',
-          backgroundColor: 'white'
-        }}
-        onMouseDown={(e) => handleMouseDown(e)}
-        onMouseMove={(e) => handleMouseMove(e, index)}
-        onMouseUp={handleMouseUp}
-        onDoubleClick={handleDoubleClick}
-        onClick={() => setActivePage(index)}
-      />
-    ))}
-  </div>
-
-  {/* Modal for Add Text */}
+    {/* Modal for Add Text */}
 
   {showAddTextModal && (
     <div style={{
@@ -1582,7 +1725,65 @@ return (
     </div>
   )}
 
-{/* Edit Text Modal */}
+    <div style={{ marginTop: '20px' }}>
+      <h4 style={{ marginBottom: '10px', color: '#666' }}>Images</h4>
+      <input
+        type="file"
+        accept="image/*"
+        onChange={handleAddImage}
+        style={{ marginBottom: '10px', width: '100%' }}
+      />
+      <button
+        style={{ ...btnStyle, opacity: selectedImageIndex === null ? 0.5 : 1 }}
+        onClick={deleteSelectedImage}
+        disabled={selectedImageIndex === null}
+      >
+        Delete Image
+      </button>
+    </div>
+
+    <div style={{ marginTop: '20px' }}>
+      <h4 style={{ marginBottom: '10px', color: '#666' }}>TextBox</h4>
+      <button
+        style={btnStyle}
+        onClick={() => {
+          setIsTextBoxEditEnabled(prev => !prev);
+          if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
+          setTextBox(null);
+        }}
+      >
+        {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
+      </button>
+    </div>
+
+    <div style={{ marginTop: '20px' }}>
+      <h4 style={{ marginBottom: '10px', color: '#666' }}>History</h4>
+      <button style={btnStyle} onClick={handleUndo}>Undo</button>
+      <button style={btnStyle} onClick={handleRedo}>Redo</button>
+    </div>
+  </div>
+
+  {/* Canvas Area */}
+  <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
+    {pages.map((_, index) => (
+      <canvas
+        key={index}
+        ref={(el) => (canvasRefs.current[index] = el)}
+        style={{
+          border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
+          marginBottom: '20px',
+          backgroundColor: 'white'
+        }}
+        onMouseDown={(e) => handleMouseDown(e)}
+        onMouseMove={(e) => handleMouseMove(e, index)}
+        onMouseUp={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        onClick={() => setActivePage(index)}
+      />
+    ))}
+  </div>
+
+  {/* Edit Text Modal */}
   {isEditing && (
     <div style={{
       position: 'fixed',
@@ -1619,6 +1820,10 @@ return (
     </div>
   )}
 </div>
+
+
+
+
 );
 }
 

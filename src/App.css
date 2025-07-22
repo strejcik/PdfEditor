@@ -1,3 +1,17 @@
 button:hover {
   background-color: #0056b3 !important;
 }
+
+/* Optional: custom scrollbars for sidebar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #bbb;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: #f4f4f4;
+}
