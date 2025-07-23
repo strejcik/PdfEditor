@@ -17,9 +17,23 @@ const btnStyle = {
   transition: 'background-color 0.2s ease',
 };
 
+
 let runOnce = false;
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
+
+  const [openSections, setOpenSections] = useState({
+  PDF: true,
+  Pages: true,
+  Text: true,
+  Images: true,
+  TextBox: true,
+  History: true,
+});
+
+
+
+
   let fontSize = 20;
   const cellSize = 20;
   const boxPadding = 10;
@@ -81,6 +95,7 @@ const [isPdfDownloaded, setIsPdfDownloaded] = useState(false);
 
 const [undoStack, setUndoStack] = useState({});
 const [redoStack, setRedoStack] = useState({});
+
 
 
 
@@ -1621,59 +1636,171 @@ const closeEditModal = () => {
     }
   };
 
+
+
+
 return (
 <div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif' }}>
   {/* Sidebar */}
-  <div style={{
-    width: '260px',
-    backgroundColor: '#f4f6f8',
-    padding: '20px',
-    borderRight: '1px solid #ddd',
-    display: 'flex',
-    flexDirection: 'column',
-    overflowY: 'auto',
-    height: '100vh',
-    boxShadow: '2px 0 6px rgba(0,0,0,0.05)',
-    scrollbarWidth: 'thin', // Firefox
-  }}>
-    <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>PdfEditor</h2>
+  <div
+    style={{
+      width: '260px',
+      backgroundColor: '#f4f6f8',
+      padding: '20px 10px',
+      borderRight: '1px solid #ddd',
+      display: 'flex',
+      flexDirection: 'column',
+      overflowY: 'auto',
+      height: '100vh',
+      boxShadow: '2px 0 6px rgba(0,0,0,0.05)',
+      scrollbarWidth: 'thin'
+    }}
+  >
+    <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>📄 PdfEditor</h2>
 
-    {/* Each section retains margin and header styling */}
-    <div style={{ marginTop: '20px' }}>
-      <h4 style={{ marginBottom: '10px', color: '#666' }}>PDF</h4>
-      <input
-        type="file"
-        accept="application/pdf"
-        onChange={handleFileChange}
-        style={{ marginBottom: '10px', width: '100%' }}
+    {[
+      {
+        title: 'PDF',
+        icon: '📂',
+        content: (
+          <>
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={handleFileChange}
+              style={{ marginBottom: '10px', width: '100%' }}
+            />
+            <button style={btnStyle} onClick={uploadPdfToServer}>Upload PDF</button>
+            <button style={btnStyle} onClick={saveAllPagesAsPDF}>Save as PDF</button>
+          </>
+        )
+      },
+      {
+        title: 'Pages',
+        icon: '📄',
+        content: (
+          <>
+            <button style={btnStyle} onClick={addNewPage}>Add Page</button>
+            <button style={btnStyle} onClick={removePage}>Remove Page</button>
+          </>
+        )
+      },
+      {
+        title: 'Text',
+        icon: '🔤',
+        content: (
+          <>
+            <button style={btnStyle} onClick={() => setShowAddTextModal(true)}>Add Text</button>
+            <button
+              style={{
+                ...btnStyle,
+                opacity: selectedTextIndex === null && selectedTextIndexes.length < 1 ? 0.5 : 1
+              }}
+              onClick={removeSelectedText}
+              disabled={selectedTextIndex === null && selectedTextIndexes.length < 1}
+            >
+              Remove Text
+            </button>
+            <button style={btnStyle} onClick={toggleGrid}>
+              {showGrid ? 'Hide Grid' : 'Show Grid'}
+            </button>
+          </>
+        )
+      },
+      {
+        title: 'Images',
+        icon: '🖼️',
+        content: (
+          <>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleAddImage}
+              style={{ marginBottom: '10px', width: '100%' }}
+            />
+            <button
+              style={{ ...btnStyle, opacity: selectedImageIndex === null ? 0.5 : 1 }}
+              onClick={deleteSelectedImage}
+              disabled={selectedImageIndex === null}
+            >
+              Delete Image
+            </button>
+          </>
+        )
+      },
+      {
+        title: 'TextBox',
+        icon: '📝',
+        content: (
+          <button
+            style={btnStyle}
+            onClick={() => {
+              setIsTextBoxEditEnabled(prev => !prev);
+              if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
+              setTextBox(null);
+            }}
+          >
+            {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
+          </button>
+        )
+      },
+      {
+        title: 'History',
+        icon: '⏪',
+        content: (
+          <>
+            <button style={btnStyle} onClick={handleUndo}>Undo</button>
+            <button style={btnStyle} onClick={handleRedo}>Redo</button>
+          </>
+        )
+      }
+    ].map((section, index) => (
+      <div key={index} style={{ marginTop: '20px' }}>
+        <h4
+          style={{
+            marginBottom: '10px',
+            color: '#333',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            cursor: 'pointer'
+          }}
+          onClick={() =>
+            setOpenSections(prev => ({
+              ...prev,
+              [section.title]: !prev[section.title]
+            }))
+          }
+        >
+          <span>{section.icon}</span>
+          <span>{section.title}</span>
+        </h4>
+        {openSections[section.title] && <div style={{ paddingLeft: '8px' }}>{section.content}</div>}
+      </div>
+    ))}
+  </div>
+
+  {/* Canvas Area */}
+  <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
+    {pages.map((_, index) => (
+      <canvas
+        key={index}
+        ref={(el) => (canvasRefs.current[index] = el)}
+        style={{
+          border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
+          marginBottom: '20px',
+          backgroundColor: 'white'
+        }}
+        onMouseDown={(e) => handleMouseDown(e)}
+        onMouseMove={(e) => handleMouseMove(e, index)}
+        onMouseUp={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        onClick={() => setActivePage(index)}
       />
-      <button style={btnStyle} onClick={uploadPdfToServer}>Upload PDF</button>
-      <button style={btnStyle} onClick={saveAllPagesAsPDF}>Save as PDF</button>
-    </div>
+    ))}
+  </div>
 
-    <div style={{ marginTop: '20px' }}>
-      <h4 style={{ marginBottom: '10px', color: '#666' }}>Pages</h4>
-      <button style={btnStyle} onClick={addNewPage}>Add Page</button>
-      <button style={btnStyle} onClick={removePage}>Remove Page</button>
-    </div>
-
-    <div style={{ marginTop: '20px' }}>
-      <h4 style={{ marginBottom: '10px', color: '#666' }}>Text</h4>
-      <button style={btnStyle} onClick={() => setShowAddTextModal(true)}>Add Text</button>
-      <button
-        style={{ ...btnStyle, opacity: selectedTextIndex === null && selectedTextIndexes.length < 1 ? 0.5 : 1 }}
-        onClick={removeSelectedText}
-        disabled={selectedTextIndex === null && selectedTextIndexes.length < 1}
-      >
-        Remove Text
-      </button>
-      <button style={btnStyle} onClick={toggleGrid}>
-        {showGrid ? 'Hide Grid' : 'Show Grid'}
-      </button>
-    </div>
-
-    {/* Modal for Add Text */}
-
+  {/* Add Text Modal */}
   {showAddTextModal && (
     <div style={{
       position: 'fixed',
@@ -1725,63 +1852,6 @@ return (
     </div>
   )}
 
-    <div style={{ marginTop: '20px' }}>
-      <h4 style={{ marginBottom: '10px', color: '#666' }}>Images</h4>
-      <input
-        type="file"
-        accept="image/*"
-        onChange={handleAddImage}
-        style={{ marginBottom: '10px', width: '100%' }}
-      />
-      <button
-        style={{ ...btnStyle, opacity: selectedImageIndex === null ? 0.5 : 1 }}
-        onClick={deleteSelectedImage}
-        disabled={selectedImageIndex === null}
-      >
-        Delete Image
-      </button>
-    </div>
-
-    <div style={{ marginTop: '20px' }}>
-      <h4 style={{ marginBottom: '10px', color: '#666' }}>TextBox</h4>
-      <button
-        style={btnStyle}
-        onClick={() => {
-          setIsTextBoxEditEnabled(prev => !prev);
-          if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
-          setTextBox(null);
-        }}
-      >
-        {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
-      </button>
-    </div>
-
-    <div style={{ marginTop: '20px' }}>
-      <h4 style={{ marginBottom: '10px', color: '#666' }}>History</h4>
-      <button style={btnStyle} onClick={handleUndo}>Undo</button>
-      <button style={btnStyle} onClick={handleRedo}>Redo</button>
-    </div>
-  </div>
-
-  {/* Canvas Area */}
-  <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
-    {pages.map((_, index) => (
-      <canvas
-        key={index}
-        ref={(el) => (canvasRefs.current[index] = el)}
-        style={{
-          border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
-          marginBottom: '20px',
-          backgroundColor: 'white'
-        }}
-        onMouseDown={(e) => handleMouseDown(e)}
-        onMouseMove={(e) => handleMouseMove(e, index)}
-        onMouseUp={handleMouseUp}
-        onDoubleClick={handleDoubleClick}
-        onClick={() => setActivePage(index)}
-      />
-    ))}
-  </div>
 
   {/* Edit Text Modal */}
   {isEditing && (
@@ -1820,10 +1890,6 @@ return (
     </div>
   )}
 </div>
-
-
-
-
 );
 }
 
