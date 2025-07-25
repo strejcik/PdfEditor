@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useLayoutEffect } from 'react';
 import { PDFDocument, rgb } from 'pdf-lib';
 import axios from 'axios';
 import './App.css'
@@ -98,6 +98,16 @@ const [redoStack, setRedoStack] = useState({});
 
 
 
+
+const getMousePosOnCanvas = (e, index) => {
+  const canvas = canvasRefs.current[index];
+  if (!canvas) return { offsetX: 0, offsetY: 0 };
+  const rect = canvas.getBoundingClientRect();
+  return {
+    offsetX: e.clientX - rect.left,
+    offsetY: e.clientY - rect.top,
+  };
+};
 
 const pushSnapshotToUndo = (page) => {
   setUndoStack((prevUndo) => {
@@ -199,33 +209,33 @@ const convertTextItemsToPdfCoordinates = (textItems) => {
   });
 };
 
-useEffect(() => {
-  const handleMouseMove = (e) => {
-    const canvas = canvasRefs.current[activePage];
-    if (!canvas) return;
+// useEffect(() => {
+//   const handleMouseMove = (e) => {
+//     const canvas = canvasRefs.current[activePage];
+//     if (!canvas) return;
 
-    const rect = canvas.getBoundingClientRect();
-    const isOutside =
-      e.clientX < rect.left ||
-      e.clientX > rect.right ||
-      e.clientY < rect.top ||
-      e.clientY > rect.bottom;
+//     const rect = canvas.getBoundingClientRect();
+//     const isOutside =
+//       e.clientX < rect.left ||
+//       e.clientX > rect.right ||
+//       e.clientY < rect.top ||
+//       e.clientY > rect.bottom;
 
-    if (isOutside) {
-      setIsDragging(false); // Stop dragging
-      setDraggedImageIndex(null)
-      setResizingImageIndex(null);
-    }
-  };
+//     if (isOutside) {
+//       setIsDragging(false); // Stop dragging
+//       setDraggedImageIndex(null)
+//       setResizingImageIndex(null);
+//     }
+//   };
 
-  // Attach the event listener
-  window.addEventListener('mousemove', handleMouseMove);
+//   // Attach the event listener
+//   window.addEventListener('mousemove', handleMouseMove);
 
-  // Cleanup event listener on unmount or when activePage changes
-  return () => {
-    window.removeEventListener('mousemove', handleMouseMove);
-  };
-}, [activePage, canvasRefs]);
+//   // Cleanup event listener on unmount or when activePage changes
+//   return () => {
+//     window.removeEventListener('mousemove', handleMouseMove);
+//   };
+// }, [activePage, canvasRefs]);
 
   
 
@@ -399,38 +409,39 @@ const wrapTextResponsive = (text, maxWidth, ctx) => {
 
   return lines;
 };
-  const drawCanvas = (pageIndex) => {
-    const canvas = canvasRefs.current[pageIndex];
-    if (!canvas) return; // Ensure the canvas exists before proceeding
-    const ctx = canvas.getContext('2d');
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+const drawCanvas = (pageIndex) => {
+  const canvas = canvasRefs.current[pageIndex];
+  if (!canvas) return;
 
-    //const { textItems, imageItems } = pages[pageIndex];
+  // === Cross-Browser: Set canvas internal resolution to match CSS size ===
+  const rect = canvas.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
 
+  canvas.width = rect.width * scale;
+  canvas.height = rect.height * scale;
 
-    if (showGrid) drawGrid(ctx);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale); // scale all drawing to match visual size
+  ctx.clearRect(0, 0, rect.width, rect.height);
 
+  if (showGrid) drawGrid(ctx, rect.width, rect.height);
 
+  // === DRAW TEXT ITEMS ===
+  textItems.forEach((item, index) => {
+    if (item.index !== pageIndex) return;
 
+    ctx.font = `${item.fontSize}px Arial`;
+    const metrics = ctx.measureText(item.text);
+    const textWidth = metrics.width;
+    const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
 
-
-
-textItems.forEach((item, index) => {
-  if (item.index === pageIndex) {
-    ctx.font = `${item.fontSize}px Arial`; // ← set before measurement
-
-    const textMetrics = ctx.measureText(item.text);
-    const actualHeight = textMetrics.actualBoundingBoxAscent + textMetrics.actualBoundingBoxDescent;
-    const textWidth = textMetrics.width;
-
+    const padding = item.boxPadding || 5;
     const textRect = {
-      x: item.x - item.boxPadding,
-      y: item.y - actualHeight - item.boxPadding,
-      width: textWidth + item.boxPadding * 2,
-      height: actualHeight + item.boxPadding * 2,
+      x: item.x - padding,
+      y: item.y - textHeight - padding,
+      width: textWidth + padding * 2,
+      height: textHeight + padding * 2,
     };
 
     // Draw bounding box if selected
@@ -440,88 +451,112 @@ textItems.forEach((item, index) => {
       ctx.strokeRect(textRect.x, textRect.y, textRect.width, textRect.height);
     }
 
-    // Draw dotted guide
+    // Draw vertical guide line
     ctx.beginPath();
     ctx.setLineDash([5, 5]);
     ctx.strokeStyle = 'dodgerblue';
-    ctx.moveTo(item.x - item.boxPadding, 0);
-    ctx.lineTo(item.x - item.boxPadding, canvas.height);
+    ctx.moveTo(item.x - padding, 0);
+    ctx.lineTo(item.x - padding, rect.height);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Draw the actual text
     ctx.fillStyle = 'black';
     ctx.fillText(item.text, item.x, item.y);
-  }
-});
-
-    // Draw image items
-    imageItems.forEach((item) => {
-    if(item.index === pageIndex) {
-      
-      ctx.drawImage(item.image, item.x, item.y, item.width, item.height);
-
-      // Draw resizing handle (bottom-right corner)
-      ctx.fillStyle = 'dodgerblue';
-      const handleSize = 10;
-      ctx.fillRect(
-        item.x + item.width - handleSize / 2,
-        item.y + item.height - handleSize / 2,
-        handleSize,
-        handleSize
-      );
-
-      // Draw a 1px border around the image
-      ctx.strokeStyle = 'black'; // Border color
-      ctx.lineWidth = 1; // Border width
-      ctx.strokeRect(item.x, item.y, item.width, item.height);
-    }
-
-
-    });
-
-    // Draw the selection square if selecting
-    if (isSelecting &&
-  selectionStart &&
-  selectionEnd &&
-  (selectionStart.x !== selectionEnd.x || selectionStart.y !== selectionEnd.y) &&
-  activePage === pageIndex) {
-      const rectWidth = selectionEnd.x - selectionStart.x;
-      const rectHeight = selectionEnd.y - selectionStart.y;
-      ctx.strokeStyle = 'dodgerblue';
-      ctx.fillStyle = 'rgba(30, 144, 255, 0.3)'; // Transparent dodgerblue
-      ctx.lineWidth = 1;
-      ctx.strokeRect(selectionStart.x, selectionStart.y, rectWidth, rectHeight);
-      ctx.fillRect(selectionStart.x, selectionStart.y, rectWidth, rectHeight);
-    }
-
-
-
-if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
-const ctx = canvas.getContext('2d');
-  ctx.strokeStyle = 'black';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(textBox.x, textBox.y, textBox.width, textBox.height);
-
-  // Drag handle
-  const dragPointSize = 10;
-  ctx.fillStyle = 'dodgerblue';
-  ctx.fillRect(
-    textBox.x + textBox.width - dragPointSize,
-    textBox.y + textBox.height - dragPointSize,
-    dragPointSize,
-    dragPointSize
-  );
-
-  ctx.fillStyle = 'black';
-  ctx.font = `${textBox.fontSize || fontSize}px Arial`;
-
-  const wrapped = wrapTextPreservingNewlinesResponsive(textBox.text, ctx, textBox.width, fontSize, textBox.boxPadding || 10);
-  wrapped.lines.forEach((line, idx) => {
-    ctx.fillText(line, textBox.x + (textBox.boxPadding || 10), textBox.y + (idx + 1) * (fontSize + 4));
   });
-}
+
+  // === DRAW IMAGE ITEMS ===
+  imageItems.forEach((item) => {
+    if (item.index !== pageIndex) return;
+
+    ctx.drawImage(item.image, item.x, item.y, item.width, item.height);
+
+    const handleSize = 10;
+    ctx.fillStyle = 'dodgerblue';
+    ctx.fillRect(
+      item.x + item.width - handleSize / 2,
+      item.y + item.height - handleSize / 2,
+      handleSize,
+      handleSize
+    );
+
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(item.x, item.y, item.width, item.height);
+  });
+
+  // === DRAW SELECTION RECT ===
+  if (
+    isSelecting &&
+    selectionStart &&
+    selectionEnd &&
+    activePage === pageIndex &&
+    (selectionStart.x !== selectionEnd.x || selectionStart.y !== selectionEnd.y)
+  ) {
+    const width = selectionEnd.x - selectionStart.x;
+    const height = selectionEnd.y - selectionStart.y;
+
+    ctx.strokeStyle = 'dodgerblue';
+    ctx.fillStyle = 'rgba(30, 144, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(selectionStart.x, selectionStart.y, width, height);
+    ctx.fillRect(selectionStart.x, selectionStart.y, width, height);
+  }
+
+  // === DRAW TEXTBOX ===
+  if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
+    const padding = textBox.boxPadding || 10;
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(textBox.x, textBox.y, textBox.width, textBox.height);
+
+    // Drag handle
+    const dragPointSize = 10;
+    ctx.fillStyle = 'dodgerblue';
+    ctx.fillRect(
+      textBox.x + textBox.width - dragPointSize,
+      textBox.y + textBox.height - dragPointSize,
+      dragPointSize,
+      dragPointSize
+    );
+
+    // Text
+    ctx.fillStyle = 'black';
+    ctx.font = `${textBox.fontSize || fontSize}px Arial`;
+
+    const wrapped = wrapTextPreservingNewlinesResponsive(
+      textBox.text,
+      ctx,
+      textBox.width,
+      fontSize,
+      padding
+    );
+
+    wrapped.lines.forEach((line, idx) => {
+      ctx.fillText(line, textBox.x + padding, textBox.y + (idx + 1) * (fontSize + 4));
+    });
+  }
 };
+
+useLayoutEffect(() => {
+  const canvas = canvasRefs.current[activePage];
+  if (canvas) {
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    drawCanvas(activePage);
+  }
+}, [activePage]);
+
+
+useLayoutEffect(() => {
+  const canvas = canvasRefs.current[activePage];
+  if (canvas) {
+    drawCanvas(activePage);
+  }
+}, [activePage, textItems, imageItems, isSelecting, selectionStart, selectionEnd]);
+
+
+
+
 
 useEffect(() => {
   if (isTextBoxEditEnabled && textBox && canvasRefs.current[activePage]) {
@@ -610,78 +645,14 @@ const removePage = () => {
 
 
 const handleMouseDown = (e) => {
-  const { offsetX, offsetY } = e.nativeEvent;
+  if(editingIndex !== null) {
+  e.preventDefault();
+  }
+
+  const { offsetX, offsetY } = getMousePosOnCanvas(e, activePage);
   const ctx = canvasRefs.current[activePage].getContext('2d');
-  let clickedOnText = false;
 
-  // === Check for text clicks ===
-  for (let index = 0; index < textItems.length; index++) {
-    const item = textItems[index];
-    if (item.index !== activePage) continue;
-    ctx.font = `${item.fontSize}px Arial`; // always before measuring
-    const metrics = ctx.measureText(item.text);
-    const textWidth = metrics.width;
-    const actualHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-
-    const textRect = {
-      x: item.x - item.boxPadding,
-      y: item.y - actualHeight - item.boxPadding,
-      width: textWidth + item.boxPadding * 2,
-      height: actualHeight + item.boxPadding * 2,
-    };
-
-    const isInside =
-      offsetX >= textRect.x &&
-      offsetX <= textRect.x + textRect.width &&
-      offsetY >= textRect.y &&
-      offsetY <= textRect.y + textRect.height;
-
-    if (isInside) {
-      clickedOnText = true;
-      setIsTextSelected(true);
-      setSelectedTextIndex(index);
-
-
-
-      let newSelectedIndexes = selectedTextIndexes.includes(index)
-        ? [...selectedTextIndexes]
-        : [index];
-
-      // If clicked on one of the selected ones, preserve group
-      if (selectedTextIndexes.includes(index)) {
-        newSelectedIndexes = [...selectedTextIndexes];
-      }
-
-      setSelectedTextIndexes(newSelectedIndexes);
-      setIsDragging(true);
-      setDragStart({ x: offsetX, y: offsetY });
-
-      const init = newSelectedIndexes.map((i) => ({
-        index: i,
-        x: textItems[i].x,
-        y: textItems[i].y,
-        activePage,
-      }));
-
-      setInitialPositions(init);
-      break;
-    }
-  }
-
-  // === Not clicked on text — start selection ===
-  if (!clickedOnText) {
-    setIsTextSelected(false);
-    setSelectedTextIndex(null);
-    setSelectedTextIndexes([]);
-    setIsDragging(false);
-    setInitialPositions([]);
-    setIsSelecting(true);
-    setSelectionStart({ x: offsetX, y: offsetY });
-    setSelectionEnd({ x: offsetX, y: offsetY });
-  }
-
-  // === Image Resize Handle ===
-  let resizing = false;
+  // ======== Check if resizing image ========
   for (let index = 0; index < imageItems.length; index++) {
     const item = imageItems[index];
     if (item.index !== activePage) continue;
@@ -698,18 +669,12 @@ const handleMouseDown = (e) => {
     ) {
       setResizingImageIndex(index);
       setResizeStart({ x: offsetX, y: offsetY });
-      resizing = true;
-      break;
+      setIsSelecting(false);
+      return; // ⛔ Prevent further action
     }
   }
 
-  if (resizing) {
-    setIsSelecting(false);
-    return;
-  }
-
-  // === Image Dragging ===
-  let imageClicked = false;
+  // ======== Check if clicked on image ========
   for (let index = 0; index < imageItems.length; index++) {
     const item = imageItems[index];
     if (item.index !== activePage) continue;
@@ -724,21 +689,59 @@ const handleMouseDown = (e) => {
       setDraggedImageIndex(index);
       setIsImageDragging(true);
       setDragStart({ x: offsetX, y: offsetY });
-      imageClicked = true;
-      break;
+      setIsSelecting(false);
+      return; // ⛔ Prevent further action
     }
   }
 
-  if (imageClicked) {
-    setIsSelecting(false);
-    return;
-  } else {
-    setIsImageDragging(false);
-    setResizingImageIndex(null);
-    setSelectedImageIndex(null);
+  // ======== Check if clicked on text ========
+  for (let index = 0; index < textItems.length; index++) {
+    const item = textItems[index];
+    if (item.index !== activePage) continue;
+
+    ctx.font = `${item.fontSize}px Arial`;
+    const metrics = ctx.measureText(item.text);
+    const textWidth = metrics.width;
+    const actualHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+
+    const textRect = {
+      x: item.x - item.boxPadding,
+      y: item.y - actualHeight - item.boxPadding,
+      width: textWidth + item.boxPadding * 2,
+      height: actualHeight + item.boxPadding * 2,
+    };
+
+    if (
+      offsetX >= textRect.x &&
+      offsetX <= textRect.x + textRect.width &&
+      offsetY >= textRect.y &&
+      offsetY <= textRect.y + textRect.height
+    ) {
+      setIsTextSelected(true);
+      setSelectedTextIndex(index);
+
+      const newSelectedIndexes = selectedTextIndexes.includes(index)
+        ? [...selectedTextIndexes]
+        : [index];
+
+      setSelectedTextIndexes(newSelectedIndexes);
+      setIsDragging(true);
+      setDragStart({ x: offsetX, y: offsetY });
+
+      const init = newSelectedIndexes.map((i) => ({
+        index: i,
+        x: textItems[i].x,
+        y: textItems[i].y,
+        activePage,
+      }));
+
+      setInitialPositions(init);
+      setIsSelecting(false);
+      return; // ⛔ Prevent further action
+    }
   }
 
-  // === TextBox Resize Handle ===
+  // ======== TextBox Resize Handle ========
   const dragPointSize = 10;
   if (
     textBox &&
@@ -749,16 +752,22 @@ const handleMouseDown = (e) => {
   ) {
     setIsResizing(true);
     setIsSelecting(false);
-    return;
+    return; // ⛔ Prevent further action
   }
 
-  // === Create selection for TextBox mode ===
-  if (isTextBoxEditEnabled) {
-    setIsSelecting(true);
-    setSelectionStart({ x: offsetX, y: offsetY });
-    setSelectionEnd({ x: offsetX, y: offsetY });
-    return;
-  }
+  // ======== Default: Start Selection ========
+  setIsTextSelected(false);
+  setSelectedTextIndex(null);
+  setSelectedTextIndexes([]);
+  setIsDragging(false);
+  setInitialPositions([]);
+  setIsImageDragging(false);
+  setResizingImageIndex(null);
+  setSelectedImageIndex(null);
+
+  setIsSelecting(true);
+  setSelectionStart({ x: offsetX, y: offsetY });
+  setSelectionEnd({ x: offsetX, y: offsetY });
 };
 
 useEffect(() => {
@@ -913,7 +922,10 @@ setUndoStack(uPrev => {
 
 
 const handleMouseMove = (e) => {
-  const { offsetX, offsetY } = e.nativeEvent;
+    if(editingIndex !== null) {
+  e.preventDefault();
+  }
+  const { offsetX, offsetY } = getMousePosOnCanvas(e, activePage);
 
   // === TEXTBOX RESIZING ===
 if (isResizing && textBox) {
@@ -940,9 +952,39 @@ if (isResizing && textBox) {
 
   // === SELECTION RECTANGLE ===
   if (isSelecting) {
-    setSelectionEnd({ x: offsetX, y: offsetY });
-    drawCanvas(activePage);
-    return;
+  setSelectionEnd({ x: offsetX, y: offsetY });
+
+  // Optional live preview: evaluate which text/image items fall inside the selection rectangle.
+  const minX = Math.min(selectionStart.x, offsetX);
+  const maxX = Math.max(selectionStart.x, offsetX);
+  const minY = Math.min(selectionStart.y, offsetY);
+  const maxY = Math.max(selectionStart.y, offsetY);
+
+  const ctx = canvasRefs.current[activePage].getContext('2d');
+  const selected = [];
+
+  for (let i = 0; i < textItems.length; i++) {
+    const item = textItems[i];
+    if (item.index !== activePage) continue;
+
+    ctx.font = `${item.fontSize}px Arial`;
+    const metrics = ctx.measureText(item.text);
+    const width = metrics.width;
+    const height = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+
+    const x = item.x - item.boxPadding;
+    const y = item.y - height - item.boxPadding;
+    const w = width + item.boxPadding * 2;
+    const h = height + item.boxPadding * 2;
+
+    if (x + w >= minX && x <= maxX && y + h >= minY && y <= maxY) {
+      selected.push(i);
+    }
+  }
+
+  setSelectedTextIndexes(selected);
+  drawCanvas(activePage);
+  return;
   }
 
   // === IMAGE RESIZING ===
@@ -1076,6 +1118,9 @@ useEffect(() => {
 
 
 const handleMouseUp = (e) => {
+    if(editingIndex !== null) {
+  e.preventDefault();
+  }
   const selectionRect = {
     x: Math.min(selectionStart?.x || 0, selectionEnd?.x || 0),
     y: Math.min(selectionStart?.y || 0, selectionEnd?.y || 0),
@@ -1152,18 +1197,25 @@ const handleMouseUp = (e) => {
     }
 
     // TextBox mode creates a new box
-    if (isTextBoxEditEnabled && !textBox) {
-      const rectWidth = selectionEnd.x - selectionStart.x;
-      const rectHeight = selectionEnd.y - selectionStart.y;
+if (isTextBoxEditEnabled && !textBox) {
+  const startX = selectionStart.x;
+  const startY = selectionStart.y;
+  const endX = selectionEnd.x;
+  const endY = selectionEnd.y;
 
-      setTextBox({
-        x: selectionStart.x,
-        y: selectionStart.y,
-        width: rectWidth,
-        height: rectHeight,
-        text: '',
-      });
-    }
+  const x = Math.min(startX, endX);
+  const y = Math.min(startY, endY);
+  const width = Math.abs(endX - startX);
+  const height = Math.abs(endY - startY);
+
+  setTextBox({
+    x,
+    y,
+    width,
+    height,
+    text: '',
+  });
+}
 
    setIsSelecting(false);
    setShouldClearSelectionBox(true);
@@ -1535,7 +1587,7 @@ const wrapText = (text, maxWidth) => {
 
 
 const handleDoubleClick = (e) => {
-  const { offsetX, offsetY } = e.nativeEvent;
+  const { offsetX, offsetY } = getMousePosOnCanvas(e, activePage);
   const ctx = canvasRefs.current[activePage].getContext('2d');
 
   textItems.forEach((item, index) => {
@@ -1640,7 +1692,7 @@ const closeEditModal = () => {
 
 
 return (
-<div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif' }}>
+<div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif', position: 'relative'}}>
   {/* Sidebar */}
   <div
     style={{
@@ -1787,9 +1839,16 @@ return (
         key={index}
         ref={(el) => (canvasRefs.current[index] = el)}
         style={{
+          display: 'block',
+          width: canvasWidth,
+          height: canvasHeight,
           border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
-          marginBottom: '20px',
-          backgroundColor: 'white'
+          backgroundColor: 'white',
+          pointerEvents: 'auto',     // enforce pointer control
+          userSelect: 'none',        // disallow text selection
+          MozUserSelect: 'none',
+          WebkitUserSelect: 'none',
+          marginBottom: '20px'
         }}
         onMouseDown={(e) => handleMouseDown(e)}
         onMouseMove={(e) => handleMouseMove(e, index)}
