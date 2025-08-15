@@ -1,0 +1,258 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UndoRedoState, TextItem, ImageItem } from "../types/editor";
+import { remapStacksAfterPageRemoval } from "../utils/history/remapStacksAfterPageRemoval";
+import { useTextItems } from "../hooks/useTextItems";
+type Snapshot = { textItems?: TextItem[]; imageItems?: ImageItem[] };
+
+const MAX_SNAPSHOTS = 100;
+
+const save = (k: string, v: any) => {
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+};
+const load = (k: string): UndoRedoState => {
+  try {
+    const raw = localStorage.getItem(k);
+    const obj = raw ? JSON.parse(raw) : {};
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [Number(k), v])) as UndoRedoState;
+  } catch { return {}; }
+};
+
+// ---------- deepClone (robust) ----------
+export const deepClone = <T,>(input: T): T => {
+  if (typeof structuredClone === "function") {
+    try { return structuredClone(input); } catch {}
+  }
+  return cloneFallback(input, new WeakMap()) as T;
+};
+function cloneFallback(value: any, seen: WeakMap<any, any>): any {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+
+  if (value instanceof Date) return new Date(value.getTime());
+  if (value instanceof RegExp) { const re = new RegExp(value.source, value.flags); re.lastIndex = value.lastIndex; return re; }
+  if (value instanceof Map) { const out = new Map(); seen.set(value, out); value.forEach((v, k) => out.set(cloneFallback(k, seen), cloneFallback(v, seen))); return out; }
+  if (value instanceof Set) { const out = new Set(); seen.set(value, out); value.forEach(v => out.add(cloneFallback(v, seen))); return out; }
+  if (value instanceof ArrayBuffer) return value.slice(0);
+  if (ArrayBuffer.isView(value)) return new (value.constructor as any)(value as any);
+  if (typeof File !== "undefined" && value instanceof File) return new File([value], value.name, { type: value.type, lastModified: value.lastModified });
+  if (typeof Blob !== "undefined" && value instanceof Blob) return value.slice(0, value.size, value.type);
+  if (typeof URL  !== "undefined" && value instanceof URL) return new URL(value.toString());
+  if (Array.isArray(value)) { const arr: any[] = []; seen.set(value, arr); for (const i of value) arr.push(cloneFallback(i, seen)); return arr; }
+
+  const proto = Object.getPrototypeOf(value);
+  const out = Object.create(proto);
+  seen.set(value, out);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const [k, d] of Object.entries(descriptors)) {
+    if ("value" in d) (d as PropertyDescriptor).value = cloneFallback((d as PropertyDescriptor).value, seen);
+    Object.defineProperty(out, k, d);
+  }
+  return out;
+}
+
+// ---------- helpers ----------
+const belongsToPage = (it: any, page: number) => {
+  if (typeof it?.index === "number") return it.index === page;
+  if (typeof it?.page === "number") return it.page === page;
+  if (typeof it?.pageIndex === "number") return it.pageIndex === page;
+  return false;
+};
+
+type SetItems<T> = (next: T[] | ((prev: T[]) => T[])) => void;
+type TextSliceLike = { textItems: TextItem[]; setTextItems: SetItems<TextItem> };
+type ImageSliceLike = { imageItems: ImageItem[]; setImageItems: SetItems<ImageItem> };
+
+export function useHistory() {
+  const [undoStack, setUndoStack] = useState<UndoRedoState>({});
+  const [redoStack, setRedoStack] = useState<UndoRedoState>({});
+  const text = useTextItems();
+  const textRef = useRef(text);
+  // Bound sources (getters + setters) stored in refs
+  const getTextItemsRef = useRef<() => TextItem[]>(() => []);
+  const getImageItemsRef = useRef<() => ImageItem[]>(() => []);
+  const setTextItemsRef = useRef<SetItems<TextItem> | null>(null);
+  const setImageItemsRef = useRef<SetItems<ImageItem> | null>(null);
+  const isBoundRef = useRef(false);
+
+  useEffect(() => {
+    setUndoStack(load("undoStack"));
+    setRedoStack(load("redoStack"));
+  }, []);
+
+  // Low-level binder (pass functions)
+  const bindSources = useCallback((
+    getTextItems: () => TextItem[],
+    getImageItems: () => ImageItem[],
+    setTextItems?: SetItems<TextItem>,
+    setImageItems?: SetItems<ImageItem>,
+  ) => {
+    getTextItemsRef.current = getTextItems;
+    getImageItemsRef.current = getImageItems;
+    if (setTextItems) setTextItemsRef.current = setTextItems;
+    if (setImageItems) setImageItemsRef.current = setImageItems;
+    isBoundRef.current = true;
+  }, []);
+
+// ✅ HIGH-LEVEL: bind directly from the actual slices you already created in Provider
+const bindFromSlices = useCallback((text: TextSliceLike, images: ImageSliceLike) => {
+  // Store slices in closures that always read the latest values
+  getTextItemsRef.current = () => text.textItems;
+  getImageItemsRef.current = () => images.imageItems;
+  setTextItemsRef.current = text.setTextItems;
+  setImageItemsRef.current = images.setImageItems;
+  isBoundRef.current = true;
+}, []);
+
+  const takeCurrentPageSnapshot = useCallback((page: number): Snapshot => {
+    if (!isBoundRef.current) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[history] Not bound yet. Call history.bindFromSlices(text, images) in your Provider.");
+      }
+      return { textItems: [], imageItems: [] };
+    }
+    const textItems = getTextItemsRef.current();
+    const imageItems = getImageItemsRef.current();
+
+    const textOnPage = (textItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
+    const imgsOnPage  = (imageItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
+
+    if (process.env.NODE_ENV !== "production") {
+      if ((textItems?.length ?? 0) > 0 && textOnPage.length === 0) {
+        console.warn(`[history] No textItems matched page ${page}. Ensure items carry {index|page|pageIndex}.`);
+      }
+      if ((imageItems?.length ?? 0) > 0 && imgsOnPage.length === 0) {
+        console.warn(`[history] No imageItems matched page ${page}. Ensure items carry {index|page|pageIndex}.`);
+      }
+    }
+
+    return { textItems: textOnPage, imageItems: imgsOnPage };
+  }, []);
+
+  const applyPageSnapshot = useCallback((page: number, snap?: Snapshot) => {
+    if (!snap) return;
+    const setText = setTextItemsRef.current;
+    const setImage = setImageItemsRef.current;
+    if (!setText || !setImage) {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("[history] Setters not bound. Call bindFromSlices or bindSources with setters.");
+      }
+      return;
+    }
+    const currentText = getTextItemsRef.current();
+    const currentImgs = getImageItemsRef.current();
+
+    const nextText = [
+      ...currentText.filter(it => !belongsToPage(it, page)),
+      ...((snap.textItems || []).map(deepClone)),
+    ];
+    const nextImgs = [
+      ...currentImgs.filter(it => !belongsToPage(it, page)),
+      ...((snap.imageItems || []).map(deepClone)),
+    ];
+
+    setText(nextText);
+    setImage(nextImgs);
+  }, []);
+
+  // Capture snapshot and clear redo for that page
+  const pushSnapshotToUndo = useCallback((page: number) => {
+    const snap = takeCurrentPageSnapshot(page);
+    setUndoStack(prev => {
+      const stack = (prev as any)[page] || [];
+      const updated = [...stack, snap];
+      if (updated.length > MAX_SNAPSHOTS) updated.shift();
+      const next = { ...(prev as any), [page]: updated };
+      save("undoStack", next);
+      return next;
+    });
+    setRedoStack(prev => {
+      const next = { ...(prev as any), [page]: [] };
+      save("redoStack", next);
+      return next;
+    });
+  }, [takeCurrentPageSnapshot]);
+
+  // UNDO: pop from undo → push current to redo → apply popped snapshot
+  const fnUndoStack = useCallback((page: number) => {
+    const pageUndo: Snapshot[] = (undoStack as any)[page] || [];
+    if (pageUndo.length === 0) return false;
+
+    const currentSnap = takeCurrentPageSnapshot(page);
+    const snapToApply = pageUndo[pageUndo.length - 1];
+
+    setRedoStack(prev => {
+      const stack: Snapshot[] = (prev as any)[page] || [];
+      const updated = [...stack, currentSnap];
+      const next = { ...(prev as any), [page]: updated };
+      save("redoStack", next);
+      return next;
+    });
+
+    setUndoStack(prev => {
+      const stack: Snapshot[] = (prev as any)[page] || [];
+      const updated = stack.slice(0, -1);
+      const next = { ...(prev as any), [page]: updated };
+      save("undoStack", next);
+      return next;
+    });
+
+    applyPageSnapshot(page, snapToApply);
+    return true;
+  }, [undoStack, takeCurrentPageSnapshot, applyPageSnapshot]);
+
+  // REDO: pop from redo → push current to undo → apply popped snapshot
+  const fnRedoStack = useCallback((page: number) => {
+    const pageRedo: Snapshot[] = (redoStack as any)[page] || [];
+    if (pageRedo.length === 0) return false;
+
+    const currentSnap = takeCurrentPageSnapshot(page);
+    const snapToApply = pageRedo[pageRedo.length - 1];
+
+    setUndoStack(prev => {
+      const stack: Snapshot[] = (prev as any)[page] || [];
+      const updated = [...stack, currentSnap];
+      const next = { ...(prev as any), [page]: updated };
+      save("undoStack", next);
+      return next;
+    });
+
+    setRedoStack(prev => {
+      const stack: Snapshot[] = (prev as any)[page] || [];
+      const updated = stack.slice(0, -1);
+      const next = { ...(prev as any), [page]: updated };
+      save("redoStack", next);
+      return next;
+    });
+
+    applyPageSnapshot(page, snapToApply);
+    return true;
+  }, [redoStack, takeCurrentPageSnapshot, applyPageSnapshot]);
+
+  const purgeUndoRedoForRemovedPage = useCallback((removedPage: number) => {
+    setUndoStack(prev => {
+      const rebuilt = remapStacksAfterPageRemoval(prev, removedPage);
+      save("undoStack", rebuilt);
+      return rebuilt;
+    });
+    setRedoStack(prev => {
+      const rebuilt = remapStacksAfterPageRemoval(prev, removedPage);
+      save("redoStack", rebuilt);
+      return rebuilt;
+    });
+  }, []);
+
+  const api = useMemo(() => ({
+    undoStack,
+    redoStack,
+    bindSources,      // low-level (functions)
+    bindFromSlices,   // high-level (pass slices)
+    pushSnapshotToUndo,
+    purgeUndoRedoForRemovedPage,
+    fnUndoStack,
+    fnRedoStack,
+    setUndoStack,
+    setRedoStack,
+  }), [undoStack, redoStack, bindSources, bindFromSlices, pushSnapshotToUndo, purgeUndoRedoForRemovedPage, fnUndoStack, fnRedoStack]);
+
+  return api;
+}

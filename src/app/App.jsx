@@ -1,8 +1,10 @@
-import React, { useRef, useEffect, useState, useLayoutEffect } from 'react';
+import { useRef, useEffect, useState, useLayoutEffect} from 'react';
 import { PDFDocument, rgb } from 'pdf-lib';
 import axios from 'axios';
 import './App.css'
-
+import { DEFAULT_FONT_SIZE, CELL_SIZE, BOX_PADDING, CANVAS_WIDTH, CANVAS_HEIGHT, PDF_WIDTH, PDF_HEIGHT } from "../config/constants";
+import { getMousePosOnCanvas } from "../utils/canvas/getMousePosOnCanvas";
+import { useEditor } from "../context/EditorProvider";
 const btnStyle = {
   display: 'block',
   width: '100%',
@@ -19,150 +21,114 @@ const btnStyle = {
 
 
 let runOnce = false;
-function App() {
-  const [selectedFile, setSelectedFile] = useState(null);
+const App = () => {
+  const runOnceRef = useRef(false);
+  const fontSize = DEFAULT_FONT_SIZE;
+  const cellSize = CELL_SIZE;
+  const boxPadding = BOX_PADDING;
 
-  const [openSections, setOpenSections] = useState({
-  PDF: true,
-  Pages: true,
-  Text: true,
-  Images: true,
-  TextBox: true,
-  History: true,
-});
+  const canvasWidth = CANVAS_WIDTH;
+  const canvasHeight = CANVAS_HEIGHT;
+  const pdfWidth = PDF_WIDTH;
+  const pdfHeight = PDF_HEIGHT;
+  const {
+    ui: { openSections, setOpenSections },
 
+    history: {
+       undoStack,
+    redoStack,
+    bindSources,      // low-level (functions)
+    bindFromSlices,   // high-level (pass slices)
+    pushSnapshotToUndo,
+    purgeUndoRedoForRemovedPage,
+    fnUndoStack,
+    fnRedoStack,
+    setUndoStack,
+    setRedoStack,
+    },
+    // alias the slice's "pageList" to avoid name clash
+    pages: {
+      pages: pageList,     // <-- pageList array
+      setPages,            // if you need to mutate it
+      activePage,
+      setActivePage,
+      canvasRefs,
+    },
 
+    text: {     
+    textItems, setTextItems,
+    isTextSelected, setIsTextSelected,
+    selectedTextIndex, setSelectedTextIndex,
+    selectedTextIndexes, setSelectedTextIndexes,
+    showAddTextModal, setShowAddTextModal,
+    newText, setNewText,
+    maxWidth, setMaxWidth,
+    isEditing, setIsEditing,
+    editingText, setEditingText,
+    editingIndex, setEditingIndex,
+    editingFontSize, setEditingFontSize,
+    newFontSize, setNewFontSize,
+    },
 
+    images: { imageItems, setImageItems,
+    isImageDragging, setIsImageDragging,
+    draggedImageIndex, setDraggedImageIndex,
+    selectedImageIndex, setSelectedImageIndex,
+    resizingImageIndex, setResizingImageIndex,
+    resizeStart, setResizeStart},
 
-  let fontSize = 20;
-  const cellSize = 20;
-  const boxPadding = 10;
+    selection: {
+      showGrid, setShowGrid,
+      isSelecting, setIsSelecting,
+      selectionStart, setSelectionStart,
+      selectionEnd, setSelectionEnd,
+      initialPositions, setInitialPositions,
+      shouldClearSelectionBox, setShouldClearSelectionBox,
+      isDragging, setIsDragging,
+      dragStart, setDragStart,
+      isResizing, setIsResizing
+    },
 
-  const canvasWidth = 1024;
-  const canvasHeight = 768;
-  const pdfWidth = 1024;
-  const pdfHeight = 768;
+    textBox: {
+      isTextBoxEditEnabled, setIsTextBoxEditEnabled, 
+      textBox, setTextBox, 
+      isTextBoxEditing, setIsTextBoxEditing
+    },
 
-  const [textItems, setTextItems] = useState([]); // List of text items on the canvas
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [showGrid, setShowGrid] = useState(false);
-  const [isTextSelected, setIsTextSelected] = useState(false);
-  const [selectedTextIndex, setSelectedTextIndex] = useState(null); // Track the selected text
-  const [showAddTextModal, setShowAddTextModal] = useState(false); // Control modal visibility
-  const [newText, setNewText] = useState(''); // Text input for the modal
-  const [selectedTextIndexes, setSelectedTextIndexes] = useState([]); // Store indexes of selected texts
-  const [isSelecting, setIsSelecting] = useState(false);
-  const [selectionStart, setSelectionStart] = useState({ x: 0, y: 0 });
-  const [selectionEnd, setSelectionEnd] = useState({ x: 0, y: 0 });
-  const [initialPositions, setInitialPositions] = useState([]);
-  const [maxWidth, setMaxWidth] = useState(200); // Max width input for the modal
-  const [shouldClearSelectionBox, setShouldClearSelectionBox] = useState(false);
-
-  const [isTextBoxEditEnabled, setIsTextBoxEditEnabled] = useState(false); // Track TextBox Edit mode
-  const [textBox, setTextBox] = useState(null); // Store TextBox properties (position, size, content)
-  const [isTextBoxEditing, setIsTextBoxEditing] = useState(false);
-
-  const [pages, setPages] = useState([]); // Pages state, each page is a canvas with text/image data
-  const [activePage, setActivePage] = useState(0); // Track the currently active page
-  const canvasRefs = useRef([]); // Ref for all canvases
-
-  const [isResizing, setIsResizing] = useState(false);
-
-
-
-  const [imageItems, setImageItems] = useState([]); // State to hold images added to the canvas
-  const [isImageDragging, setIsImageDragging] = useState(false);
-  const [draggedImageIndex, setDraggedImageIndex] = useState(null);
-  const [selectedImageIndex, setSelectedImageIndex] = useState(null);   // State to track the selected image
-  const [resizingImageIndex, setResizingImageIndex] = useState(null); // Track image being resized
-  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0 }); // Track start of resizing
-
-  // State to track editing mode and the text being edited
-  const [isEditing, setIsEditing] = useState(false);
-  const [editingText, setEditingText] = useState('');
-  const [editingIndex, setEditingIndex] = useState(null);
-
-  // State to track the font size being edited
-const [editingFontSize, setEditingFontSize] = useState(fontSize); // Default font size
-
-
-// State for new text and font size
-const [newFontSize, setNewFontSize] = useState(fontSize); // Default font size
-
-
-const [isPdfDownloaded, setIsPdfDownloaded] = useState(false);
-
-const [undoStack, setUndoStack] = useState({});
-const [redoStack, setRedoStack] = useState({});
-
-
+    pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
+  } = useEditor(); // ✅ correct
 
 
-// Stable, DPI-aware canvas coords for multi-page canvasRefs
-const getMousePosOnCanvas = (e, index) => {
-  const canvas = canvasRefs.current?.[index];
-  if (!canvas) return { offsetX: 0, offsetY: 0 };
-
-  const evt = e?.nativeEvent ?? e;            // support React synthetic events
-  const rect = canvas.getBoundingClientRect();
-
-  // Map CSS pixels to internal canvas pixels (fixes drift on HiDPI / CSS scaling)
-  const scaleX = canvas.width  / rect.width;
-  const scaleY = canvas.height / rect.height;
-
-  return {
-    offsetX: (evt.clientX - rect.left) * scaleX,
-    offsetY: (evt.clientY - rect.top)  * scaleY,
-  };
-};
-
-const pushSnapshotToUndo = (page) => {
-  setUndoStack((prevUndo) => {
-    // IMPORTANT: Read current items *inside* the setter
-    const currentTextItems = [...textItems].filter(item => item.index === page);
-    const currentImageItems = [...imageItems].filter(item => item.index === page);
-
-    const stack = prevUndo[page] || [];
-    const snapshot = {
-      textItems: currentTextItems.map(item => ({ ...item })), // Deep copy
-      imageItems: currentImageItems.map(item => ({ ...item }))
-    };
-
-    const updated = [...stack, snapshot];
-    const newState = { ...prevUndo, [page]: updated };
-    localStorage.setItem('undoStack', JSON.stringify(newState));
-    return newState;
-  });
-
-  setRedoStack((prevRedo) => {
-    const newRedo = { ...prevRedo, [page]: [] };
-    localStorage.setItem('redoStack', JSON.stringify(newRedo));
-    return newRedo;
-  });
-};
 
 
- // Load pages from localStorage on mount
- useEffect(() => {
-  let storedPages = localStorage?.getItem('pages');
-  if(storedPages) {
-    setPages(JSON.parse(storedPages));
-  } else {
-    setPages([{textItems:[], imageItems:[]}])
+// Redraw all pages whenever items change or pages are (re)hydrated
+  useLayoutEffect(() => {
+    if (!pageList || pageList.length === 0) return;
+
+    // Wait until refs are attached
+    requestAnimationFrame(() => {
+      pageList.forEach((_, i) => {
+        // optionally: set canvas DPR scaling here if you don't already do it inside drawCanvas
+        // const canvas = canvasRefs.current[i];
+        // if (canvas) { /* set width/height*dpr and ctx.setTransform(dpr,0,0,dpr,0,0) */ }
+        drawCanvas(i);
+      });
+    });
+  }, [pageList, textItems, imageItems /* + any other draw deps */]);
+
+
+
+ // Save pageList to localStorage whenever they change
+useEffect(() => {
+  if (!pageList || pageList.length === 0) return;
+
+  try { localStorage.setItem("pages", JSON.stringify(pageList)); } catch {}
+
+  if (!runOnceRef.current) {
+    setActivePage(pageList.length - 1); // or 0 if you prefer first page
+    runOnceRef.current = true;
   }
-}, []);
-
- // Save pages to localStorage whenever they change
- useEffect(() => {
-  if(pages?.length > 0) {
-    localStorage.setItem('pages', JSON.stringify(pages));
-    if(runOnce === false) {
-      pages.forEach((e, i) => setActivePage(i));
-      runOnce = true;
-    }
-  }
-}, [pages]);
+}, [pageList, setActivePage]);
 
 
 
@@ -584,49 +550,50 @@ useEffect(() => {
    // Add a new page
    const addNewPage = () => {
     setPages((prev) => [...prev, { textItems: [], imageItems: [] }]);
-    setActivePage(pages.length); // Switch to the new page
+    setActivePage(pageList.length); // Switch to the new page
   };
 
 
 
-//changed removePage functions
+// changed removePage function (with undo/redo purge)
 const removePage = () => {
-  if (pages.length <= 1) {
+  if (pageList.length <= 1) {
     alert('Cannot remove the last page.');
     return;
   }
 
-  // Remove the active page from the pages array
-  const updatedPages = pages.filter((_, index) => index !== activePage);
+  const removedPage = activePage;
 
-  // Remove text and image items belonging to the deleted page,
-  // and re-index remaining items whose index > activePage
-  const updatedTextItems = textItems
-    .filter(item => item.index !== activePage)
-    .map(item => ({
-      ...item,
-      index: item.index > activePage ? item.index - 1 : item.index
-    }));
+  // Remove page
+  const updatedPages = pageList.filter((_, index) => index !== removedPage);
 
-  const updatedImageItems = imageItems
-    .filter(item => item.index !== activePage)
-    .map(item => ({
-      ...item,
-      index: item.index > activePage ? item.index - 1 : item.index
-    }));
+  // Reindex live items
+  const reindex = (arr) =>
+    arr
+      .filter(it => it.index !== removedPage)
+      .map(it => ({
+        ...it,
+        index: it.index > removedPage ? it.index - 1 : it.index
+      }));
 
-  // Set updated state
+  const updatedTextItems  = reindex(textItems);
+  const updatedImageItems = reindex(imageItems);
+
   setPages(updatedPages);
   setTextItems(updatedTextItems);
   setImageItems(updatedImageItems);
   saveTextItemsToLocalStorage(updatedTextItems);
   saveImageItemsToLocalStorage(updatedImageItems);
 
-  // Update active page to previous one or first one
-  const newActivePage = Math.max(0, activePage - 1);
+  // Purge and reindex undo/redo stacks for the removed page
+  purgeUndoRedoForRemovedPage(removedPage);
+
+  // Move active page
+  const newActivePage = Math.max(0, removedPage - 1);
   setActivePage(newActivePage);
 
-  // Redraw the canvas to reflect the changes
+  // Optional: clear selections/drag state here if they referenced the removed page
+
   drawCanvas(newActivePage);
 };
 
@@ -656,8 +623,8 @@ const handleMouseDown = (e) => {
   if(editingIndex !== null) {
   e.preventDefault();
   }
-
-  const { offsetX, offsetY } = getMousePosOnCanvas(e, activePage);
+  const canvas = canvasRefs.current[activePage];
+  const { offsetX, offsetY } = getMousePosOnCanvas(e, canvas);
   const ctx = canvasRefs.current[activePage].getContext('2d');
 
   // ======== Check if resizing image ========
@@ -792,17 +759,20 @@ for (let index = 0; index < imageItems.length; index++) {
   setSelectionEnd({ x: offsetX, y: offsetY });
 };
 
-useEffect(() => {
-  const u = JSON.parse(localStorage.getItem('undoStack') || '{}');
-  const r = JSON.parse(localStorage.getItem('redoStack') || '{}');
-  setUndoStack(u);
-  setRedoStack(r);
-}, []);
+// useEffect(() => {
+//   const u = JSON.parse(localStorage.getItem('undoStack') || '{}');
+//   const r = JSON.parse(localStorage.getItem('redoStack') || '{}');
+//   setUndoStack(u);
+//   setRedoStack(r);
+// }, []);
 
 // useEffect(() => {
 //   drawCanvas(activePage);
-//   console.log('asdasdasdasd');
 // }, [undoStack, redoStack]);
+
+useEffect(() => { drawCanvas(activePage); }, [activePage, textItems, imageItems]);
+
+
 const snapshotsEqual = (a, b) => {
   const serialize = (obj) => JSON.stringify(
     obj.map(item =>
@@ -817,120 +787,48 @@ const snapshotsEqual = (a, b) => {
          serialize(a.imageItems) === serialize(b.imageItems);
 };
 
-const applySnapshotToPage = (snapshot) => {
-  const newTextItems = snapshot.textItems.map(item => ({ ...item }));
-  const newImageItems = snapshot.imageItems.map(item => ({ ...item }));
+// const applySnapshotToPage = (snapshot) => {
+//   const newTextItems = snapshot.textItems.map(item => ({ ...item }));
+//   const newImageItems = snapshot.imageItems.map(item => ({ ...item }));
 
-  // Update global textItems
-  const updatedTextItems = textItems
-    .filter(item => item.index !== activePage)
-    .concat(newTextItems);
+//   // Update global textItems
+//   const updatedTextItems = textItems
+//     .filter(item => item.index !== activePage)
+//     .concat(newTextItems);
 
-  setTextItems(updatedTextItems);
-  saveTextItemsToLocalStorage(updatedTextItems);
+//   setTextItems(updatedTextItems);
+//   saveTextItemsToLocalStorage(updatedTextItems);
 
-  // Update global imageItems
-  const updatedImageItems = imageItems
-    .filter(item => item.index !== activePage)
-    .concat(newImageItems);
+//   // Update global imageItems
+//   const updatedImageItems = imageItems
+//     .filter(item => item.index !== activePage)
+//     .concat(newImageItems);
 
-  setImageItems(updatedImageItems);
-  saveImageItemsToLocalStorage(updatedImageItems);
+//   setImageItems(updatedImageItems);
+//   saveImageItemsToLocalStorage(updatedImageItems);
 
-  // Update the corresponding page
-  const updatedPages = [...pages];
-  updatedPages[activePage] = {
-    ...updatedPages[activePage],
-    textItems: newTextItems,
-    imageItems: newImageItems
-  };
-  setPages(updatedPages);
-  localStorage.setItem('pages', JSON.stringify(updatedPages));
-};
+//   // Update the corresponding page
+//   const updatedPages = [...pageList];
+//   updatedPages[activePage] = {
+//     ...updatedPages[activePage],
+//     textItems: newTextItems,
+//     imageItems: newImageItems
+//   };
+//   setPages(updatedPages);
+//   localStorage.setItem('pages', JSON.stringify(updatedPages));
+// };
 
 
 
 
 const handleUndo = () => {
-  setUndoStack(prev => {
-    const stack = prev[activePage] || [];
-    if (stack.length === 0) return prev;
-
-    const lastSnapshot = stack[stack.length - 1];
-    const newStack = stack.slice(0, -1);
-
-setRedoStack(rPrev => {
-  const redoList = rPrev[activePage] || [];
-  const currentSnapshot = {
-    textItems: textItems.filter(item => item.index === activePage),
-    imageItems: imageItems.filter(item => item.index === activePage),
-  };
-
-  // Prevent duplicate pushes
-  if (redoList.length > 0 && snapshotsEqual(redoList[redoList.length - 1], currentSnapshot)) {
-    return rPrev;
-  }
-
-  const updatedRedo = [...redoList, currentSnapshot];
-  const newRedoState = { ...rPrev, [activePage]: updatedRedo };
-  localStorage.setItem('redoStack', JSON.stringify(newRedoState));
-  return newRedoState;
-});
-
-    // Deep copy snapshot before applying
-    const snapshotCopy = {
-      textItems: lastSnapshot.textItems.map(item => ({ ...item })),
-      imageItems: lastSnapshot.imageItems.map(item => ({ ...item }))
-    };
-
-    applySnapshotToPage(snapshotCopy);
-
-    const newUndoState = { ...prev, [activePage]: newStack };
-    localStorage.setItem('undoStack', JSON.stringify(newUndoState));
-    return newUndoState;
-  });
+  fnUndoStack(activePage)
 };
 
 
 
 const handleRedo = () => {
-  setRedoStack(prev => {
-    const stack = prev[activePage] || [];
-    if (stack.length === 0) return prev;
-
-    const nextSnapshot = stack[stack.length - 1];
-    const newStack = stack.slice(0, -1);
-
-setUndoStack(uPrev => {
-  const undoList = uPrev[activePage] || [];
-  const currentSnapshot = {
-    textItems: textItems.filter(item => item.index === activePage),
-    imageItems: imageItems.filter(item => item.index === activePage),
-  };
-
-  // Prevent duplicate pushes
-  if (undoList.length > 0 && snapshotsEqual(undoList[undoList.length - 1], currentSnapshot)) {
-    return uPrev;
-  }
-
-  const updatedUndo = [...undoList, currentSnapshot];
-  const newUndoState = { ...uPrev, [activePage]: updatedUndo };
-  localStorage.setItem('undoStack', JSON.stringify(newUndoState));
-  return newUndoState;
-});
-
-    // Deep copy before applying
-    const snapshotCopy = {
-      textItems: nextSnapshot.textItems.map(item => ({ ...item })),
-      imageItems: nextSnapshot.imageItems.map(item => ({ ...item }))
-    };
-
-    applySnapshotToPage(snapshotCopy);
-
-    const newRedoState = { ...prev, [activePage]: newStack };
-    localStorage.setItem('redoStack', JSON.stringify(newRedoState));
-    return newRedoState;
-  });
+  fnRedoStack(activePage);
 };
 
 
@@ -947,7 +845,8 @@ const handleMouseMove = (e) => {
     if(editingIndex !== null) {
   e.preventDefault();
   }
-  const { offsetX, offsetY } = getMousePosOnCanvas(e, activePage);
+  const canvas = canvasRefs.current[activePage];
+  const { offsetX, offsetY } = getMousePosOnCanvas(e, canvas);
 
 
   // === TEXTBOX RESIZING ===
@@ -1192,7 +1091,7 @@ const handleMouseUp = (e) => {
     setInitialPositions([]);
     setDragStart({ x: 0, y: 0 });
         //undo-redo
-    pushSnapshotToUndo(activePage);
+    pushSnapshotToUndo(activePage)
   }
 
   if (resizingImageIndex !== null) setResizingImageIndex(null);
@@ -1346,7 +1245,6 @@ useEffect(() => {
 // Function to handle adding new text to the canvas
 const addTextToCanvas = () => {
   if (newText.trim() === '') return;
-
   const fontSizeToUse = newFontSize || fontSize;
   const padding = fontSizeToUse * 0.2; // 20% padding
   const ctx = canvasRefs.current[activePage]?.getContext('2d');
@@ -1379,6 +1277,7 @@ const addTextToCanvas = () => {
   setTextItems(updatedItems);
   saveTextItemsToLocalStorage(updatedItems);
   updatePageItems('textItems', newItems);
+  //history.pushSnapshotToUndo(activePage);
   drawCanvas(activePage);
 
   // Reset modal state
@@ -1462,7 +1361,7 @@ const addTextToCanvas2 = (textBox) => {
 const deleteSelectedImage = () => {
   if (selectedImageIndex !== null) {
     const filteredItems = imageItems.filter((item, index) => {
-      if (item.index !== activePage) return true; // keep images from other pages
+      if (item.index !== activePage) return true; // keep images from other pageList
       const pageImages = imageItems.filter(i => i.index === activePage);
       const targetItem = pageImages[selectedImageIndex];
       return item !== targetItem; // remove only the matched item from current page
@@ -1533,60 +1432,80 @@ const wrapText = (text, maxWidth) => {
 
 
 
-    // Save all pages as PDF
-  const saveAllPagesAsPDF = async () => {
-    const pdfDoc = await PDFDocument.create();
+const saveAllPagesAsPDF = async () => {
+  const pdfDoc = await PDFDocument.create();
 
-    for (const page of pages) {
-      let i = 0;
-      const pageCanvas = canvasRefs.current[pages.indexOf(page)];
-      const ctx = pageCanvas.getContext('2d');
-      const { width, height } = pageCanvas;
-      const pdfPage = pdfDoc.addPage([width, height]);
+  for (let i = 0; i < pageList.length; i++) {
+    const canvas = canvasRefs.current[i];
 
-      const { textItems, imageItems } = page;
+    // Fallback sizes if a canvas ref isn't attached yet
+    const width  = canvas?.width  ?? 1024;
+    const height = canvas?.height ?? 768;
 
-      // Add text items
-      textItems.forEach((item) => {
-        pdfPage.drawText(item.text, {
-          x: item.x,
-          y: height - item.y, // Convert canvas y to PDF coordinate system
-          size: item.fontSize || fontSize,
-          color: rgb(0, 0, 0),
-        });
+    const pdfPage = pdfDoc.addPage([width, height]);
+
+    // ✅ get items for THIS page directly from the pages slice
+    const { textItems = [], imageItems = [] } = pageList[i] ?? {};
+
+    // ---- draw text ----
+    for (const item of textItems) {
+      const size = item.fontSize ?? DEFAULT_FONT_SIZE;
+      pdfPage.drawText(item.text ?? "", {
+        x: item.x ?? 0,
+        // PDF has origin at bottom-left; canvas typically top-left
+        // subtract size to approximate top-left anchoring for text
+        y: height - (item.y ?? 0) - size,
+        size,
+        color: rgb(0, 0, 0),
+        // you can pass maxWidth if you stored it:
+        // maxWidth: item.maxWidth,
       });
-
-      // Add image items
-      for (const item of imageItems) {
-        const imgBytes = await fetch(item.data).then((res) => res.arrayBuffer());
-        const pdfImage = await pdfDoc.embedPng(imgBytes); // Assuming PNG
-        pdfPage.drawImage(pdfImage, {
-          x: item.x,
-          y: height - item.y - item.height,
-          width: item.width,
-          height: item.height,
-        });
-      }
-
-      i++;
     }
 
-    const pdfBytes = await pdfDoc.save();
-    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'multi_page_document.pdf';
-    link.click();
-  };
+    // ---- draw images ----
+    for (const item of imageItems) {
+      const src = (item).data ?? (item).src; // support either .data or .src
+      if (!src || typeof src !== "string") continue;
+
+      // Get bytes (works for data URLs and normal URLs)
+      const res = await fetch(src);
+      const imgBytes = await res.arrayBuffer();
+
+      // Pick the right embedder
+      const isJpg = src.startsWith("data:image/jpeg") || src.endsWith(".jpg") || src.endsWith(".jpeg");
+      const pdfImage = isJpg ? await pdfDoc.embedJpg(imgBytes) : await pdfDoc.embedPng(imgBytes);
+
+      const w = item.width  ?? pdfImage.width;
+      const h = item.height ?? pdfImage.height;
+
+      pdfPage.drawImage(pdfImage, {
+        x: item.x ?? 0,
+        // convert top-left canvas to bottom-left PDF coords
+        y: height - (item.y ?? 0) - h,
+        width:  w,
+        height: h,
+      });
+    }
+  }
+
+  const pdfBytes = await pdfDoc.save();
+  const blob = new Blob([pdfBytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "multi_page_document.pdf";
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
   useEffect(() => {
     drawCanvas(activePage);
-  }, [textItems, showGrid, isTextSelected, pages, activePage, textBox]);
+  }, [textItems, showGrid, isTextSelected, pageList, activePage, textBox]);
 
 
 
   const updatePageItems = (type, items) => {
-    const updatedPages = [...pages];
+    const updatedPages = [...pageList];
     updatedPages.map((page, index) => {
       if (index === activePage){
         updatedPages[activePage][type] = items;
@@ -1618,7 +1537,7 @@ const wrapText = (text, maxWidth) => {
       }));
 
       
-      let updatedPages = pages;
+      let updatedPages = pageList;
       for(let i=0; i< result.length; i++) {
         updatedPages[i] = {
           "textItems": result[i].texts,
@@ -1642,7 +1561,8 @@ const wrapText = (text, maxWidth) => {
 
 
 const handleDoubleClick = (e) => {
-  const { offsetX, offsetY } = getMousePosOnCanvas(e, activePage);
+  const canvas = canvasRefs.current[activePage];
+  const { offsetX, offsetY } = getMousePosOnCanvas(e, canvas);
   const ctx = canvasRefs.current[activePage].getContext('2d');
 
   textItems.forEach((item, index) => {
@@ -1746,264 +1666,310 @@ const closeEditModal = () => {
 
 
 return (
-<div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif', position: 'relative'}}>
-  {/* Sidebar */}
-  <div
-    style={{
-      width: '260px',
-      backgroundColor: '#f4f6f8',
-      padding: '20px 10px',
-      borderRight: '1px solid #ddd',
-      display: 'flex',
-      flexDirection: 'column',
-      overflowY: 'auto',
-      height: '100vh',
-      boxShadow: '2px 0 6px rgba(0,0,0,0.05)',
-      scrollbarWidth: 'thin'
-    }}
-  >
-    <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>📄 PdfEditor</h2>
+    <div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif', position: 'relative'}}>
+    {/* Sidebar */}
+    <div
+      style={{
+        width: '260px',
+        backgroundColor: '#f4f6f8',
+        padding: '20px 10px',
+        borderRight: '1px solid #ddd',
+        display: 'flex',
+        flexDirection: 'column',
+        overflowY: 'auto',
+        height: '100vh',
+        boxShadow: '2px 0 6px rgba(0,0,0,0.05)',
+        scrollbarWidth: 'thin'
+      }}
+    >
+      <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>📄 PdfEditor</h2>
 
-    {[
-      {
-        title: 'PDF',
-        icon: '📂',
-        content: (
-          <>
-            <input
-              type="file"
-              accept="application/pdf"
-              onChange={handleFileChange}
-              style={{ marginBottom: '10px', width: '100%' }}
-            />
-            <button style={btnStyle} onClick={uploadPdfToServer}>Upload PDF</button>
-            <button style={btnStyle} onClick={saveAllPagesAsPDF}>Save as PDF</button>
-          </>
-        )
-      },
-      {
-        title: 'Pages',
-        icon: '📄',
-        content: (
-          <>
-            <button style={btnStyle} onClick={addNewPage}>Add Page</button>
-            <button style={btnStyle} onClick={removePage}>Remove Page</button>
-          </>
-        )
-      },
-      {
-        title: 'Text',
-        icon: '🔤',
-        content: (
-          <>
-            <button style={btnStyle} onClick={() => setShowAddTextModal(true)}>Add Text</button>
+      {[
+        {
+          title: 'PDF',
+          icon: '📂',
+          content: (
+            <>
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={handleFileChange}
+                style={{ marginBottom: '10px', width: '100%' }}
+              />
+              <button style={btnStyle} onClick={uploadPdfToServer}>Upload PDF</button>
+              <button style={btnStyle} onClick={saveAllPagesAsPDF}>Save as PDF</button>
+            </>
+          )
+        },
+        {
+          title: 'Pages',
+          icon: '📄',
+          content: (
+            <>
+              <button style={btnStyle} onClick={addNewPage}>Add Page</button>
+              <button style={btnStyle} onClick={removePage}>Remove Page</button>
+            </>
+          )
+        },
+        {
+          title: 'Text',
+          icon: '🔤',
+          content: (
+            <>
+              <button style={btnStyle} onClick={() => setShowAddTextModal(true)}>Add Text</button>
+              <button
+                style={{
+                  ...btnStyle,
+                  opacity: selectedTextIndex === null && selectedTextIndexes.length < 1 ? 0.5 : 1
+                }}
+                onClick={removeSelectedText}
+                disabled={selectedTextIndex === null && selectedTextIndexes.length < 1}
+              >
+                Remove Text
+              </button>
+              <button style={btnStyle} onClick={toggleGrid}>
+                {showGrid ? 'Hide Grid' : 'Show Grid'}
+              </button>
+            </>
+          )
+        },
+        {
+          title: 'Images',
+          icon: '🖼️',
+          content: (
+            <>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleAddImage}
+                style={{ marginBottom: '10px', width: '100%' }}
+              />
+              <button
+                style={{ ...btnStyle, opacity: selectedImageIndex === null ? 0.5 : 1 }}
+                onClick={deleteSelectedImage}
+                disabled={selectedImageIndex === null}
+              >
+                Delete Image
+              </button>
+            </>
+          )
+        },
+        {
+          title: 'TextBox',
+          icon: '📝',
+          content: (
             <button
-              style={{
-                ...btnStyle,
-                opacity: selectedTextIndex === null && selectedTextIndexes.length < 1 ? 0.5 : 1
+              style={btnStyle}
+              onClick={() => {
+                setIsTextBoxEditEnabled(prev => !prev);
+                if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
+                setTextBox(null);
               }}
-              onClick={removeSelectedText}
-              disabled={selectedTextIndex === null && selectedTextIndexes.length < 1}
             >
-              Remove Text
+              {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
             </button>
-            <button style={btnStyle} onClick={toggleGrid}>
-              {showGrid ? 'Hide Grid' : 'Show Grid'}
-            </button>
-          </>
-        )
-      },
-      {
-        title: 'Images',
-        icon: '🖼️',
-        content: (
-          <>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleAddImage}
-              style={{ marginBottom: '10px', width: '100%' }}
-            />
-            <button
-              style={{ ...btnStyle, opacity: selectedImageIndex === null ? 0.5 : 1 }}
-              onClick={deleteSelectedImage}
-              disabled={selectedImageIndex === null}
-            >
-              Delete Image
-            </button>
-          </>
-        )
-      },
-      {
-        title: 'TextBox',
-        icon: '📝',
-        content: (
-          <button
-            style={btnStyle}
-            onClick={() => {
-              setIsTextBoxEditEnabled(prev => !prev);
-              if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
-              setTextBox(null);
+          )
+        },
+        {
+          title: 'History',
+          icon: '⏪',
+          content: (
+            <>
+              <button style={btnStyle} onClick={handleUndo}>Undo</button>
+              <button style={btnStyle} onClick={handleRedo}>Redo</button>
+            </>
+          )
+        },
+        {
+          title: 'Data',
+          icon: '🗑️',
+          content: (
+            <>
+              <button
+                style={{ ...btnStyle, backgroundColor: '#ff4d4f', color: 'white' }}
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to clear all saved data?')) {
+                    // Clear persistent storage
+                    localStorage.removeItem('undoStack');
+                    localStorage.removeItem('redoStack');
+                    localStorage.removeItem('pages');
+                    localStorage.removeItem('textItems');
+                    localStorage.removeItem('imageItems');
+
+                    // Reset state to a single blank page
+                    setUndoStack({});
+                    setRedoStack({});
+                    setTextItems([]);
+                    setImageItems([]);
+                    setPages([{}]);       // single placeholder page
+                    setActivePage(0);
+
+                    // Optional: clear selection / editing states if you keep them
+                    setSelectedTextIndex?.(null);
+                    setSelectedTextIndexes?.([]);
+                    setSelectedImageIndex?.(null);
+                    setIsSelecting?.(false);
+                    setIsDragging?.(false);
+                    setIsImageDragging?.(false);
+                    setResizingImageIndex?.(null);
+                    setTextBox?.(null);
+
+                    // Redraw fresh first page
+                    drawCanvas(0);
+                  }
+                }}
+              >
+                Clear Data
+              </button>
+            </>
+          )
+        }
+      ].map((section, index) => (
+        
+        <div key={index} style={{ marginTop: '20px' }}>
+          <h4
+            style={{
+              marginBottom: '10px',
+              color: '#333',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer'
             }}
+            onClick={() =>
+              setOpenSections(prev => ({
+                ...prev,
+                [section.title]: !prev[section.title]
+              }))
+            }
           >
-            {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
-          </button>
-        )
-      },
-      {
-        title: 'History',
-        icon: '⏪',
-        content: (
-          <>
-            <button style={btnStyle} onClick={handleUndo}>Undo</button>
-            <button style={btnStyle} onClick={handleRedo}>Redo</button>
-          </>
-        )
-      }
-    ].map((section, index) => (
-      <div key={index} style={{ marginTop: '20px' }}>
-        <h4
+            <span>{section.icon}</span>
+            <span>{section.title}</span>
+          </h4>
+          {openSections[section.title] && <div style={{ paddingLeft: '8px' }}>{section.content}</div>}
+        </div>
+      ))}
+    </div>
+
+    {/* Canvas Area */}
+    <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
+      {pageList.map((_, index) => (
+        <canvas
+          key={index}
+          ref={(el) => (canvasRefs.current[index] = el)}
           style={{
-            marginBottom: '10px',
-            color: '#333',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            cursor: 'pointer'
+            display: 'block',
+            width: canvasWidth,
+            height: canvasHeight,
+            border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
+            backgroundColor: 'white',
+            pointerEvents: 'auto',
+            userSelect: 'none',
+            MozUserSelect: 'none',
+            WebkitUserSelect: 'none',
+            marginBottom: '20px'
           }}
-          onClick={() =>
-            setOpenSections(prev => ({
-              ...prev,
-              [section.title]: !prev[section.title]
-            }))
-          }
-        >
-          <span>{section.icon}</span>
-          <span>{section.title}</span>
-        </h4>
-        {openSections[section.title] && <div style={{ paddingLeft: '8px' }}>{section.content}</div>}
-      </div>
-    ))}
-  </div>
-
-  {/* Canvas Area */}
-  <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
-    {pages.map((_, index) => (
-      <canvas
-        key={index}
-        ref={(el) => (canvasRefs.current[index] = el)}
-        style={{
-          display: 'block',
-          width: canvasWidth,
-          height: canvasHeight,
-          border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
-          backgroundColor: 'white',
-          pointerEvents: 'auto',     // enforce pointer control
-          userSelect: 'none',        // disallow text selection
-          MozUserSelect: 'none',
-          WebkitUserSelect: 'none',
-          marginBottom: '20px'
-        }}
-        onMouseDown={(e) => handleMouseDown(e)}
-        onMouseMove={(e) => handleMouseMove(e, index)}
-        onMouseUp={handleMouseUp}
-        onDoubleClick={handleDoubleClick}
-        onClick={() => setActivePage(index)}
-      />
-    ))}
-  </div>
-
-  {/* Add Text Modal */}
-  {showAddTextModal && (
-    <div style={{
-      position: 'fixed',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)',
-      backgroundColor: 'white',
-      padding: '20px',
-      border: '1px solid #ccc',
-      boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
-      zIndex: 1000
-    }}>
-      <h2>Add New Text</h2>
-      <input
-        type="text"
-        value={newText}
-        onChange={(e) => setNewText(e.target.value)}
-        placeholder="Enter text here"
-        style={{ marginBottom: '10px', display: 'block', width: '100%' }}
-      />
-      <input
-        type="number"
-        value={newFontSize}
-        onChange={(e) => setNewFontSize(parseInt(e.target.value, 10))}
-        placeholder="Font Size"
-        style={{ marginBottom: '10px', display: 'block', width: '100%' }}
-      />
-      <input
-        type="number"
-        value={maxWidth}
-        onChange={(e) => setMaxWidth(parseInt(e.target.value, 10))}
-        placeholder="Enter max width (e.g., 200)"
-        style={{ marginBottom: '10px', display: 'block', width: '100%' }}
-      />
-      <div>
-        <button onClick={addTextToCanvas}>Ok</button>
-        <button
-          onClick={() => {
-            setShowAddTextModal(false);
-            setNewText('');
-            setMaxWidth(200);
-            setNewFontSize(fontSize);
-          }}
-          style={{ marginLeft: '10px' }}
-        >
-          Cancel
-        </button>
-      </div>
+          onMouseDown={(e) => handleMouseDown(e)}
+          onMouseMove={(e) => handleMouseMove(e, index)}
+          onMouseUp={handleMouseUp}
+          onDoubleClick={handleDoubleClick}
+          onClick={() => setActivePage(index)}
+        />
+      ))}
     </div>
-  )}
 
-
-  {/* Edit Text Modal */}
-  {isEditing && (
-    <div style={{
-      position: 'fixed',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)',
-      backgroundColor: 'white',
-      padding: '20px',
-      border: '1px solid #ccc',
-      boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
-      zIndex: 1000
-    }}>
-      <h2>Edit Text</h2>
-      <input
-        type="text"
-        value={editingText}
-        onChange={(e) => setEditingText(e.target.value)}
-        placeholder="Edit text here"
-        style={{ marginBottom: '10px', display: 'block', width: '100%' }}
-      />
-      <input
-        type="number"
-        value={editingFontSize}
-        onChange={(e) => setEditingFontSize(parseInt(e.target.value, 10))}
-        placeholder="Font Size"
-        style={{ marginBottom: '10px', display: 'block', width: '100%' }}
-      />
-      <div>
-        <button onClick={saveEditedText}>Save</button>
-        <button onClick={closeEditModal} style={{ marginLeft: '10px' }}>
-          Cancel
-        </button>
+    {/* Add Text Modal */}
+    {showAddTextModal && (
+      <div style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        backgroundColor: 'white',
+        padding: '20px',
+        border: '1px solid #ccc',
+        boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
+        zIndex: 1000
+      }}>
+        <h2>Add New Text</h2>
+        <input
+          type="text"
+          value={newText}
+          onChange={(e) => setNewText(e.target.value)}
+          placeholder="Enter text here"
+          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+        />
+        <input
+          type="number"
+          value={newFontSize}
+          onChange={(e) => setNewFontSize(parseInt(e.target.value, 10))}
+          placeholder="Font Size"
+          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+        />
+        <input
+          type="number"
+          value={maxWidth}
+          onChange={(e) => setMaxWidth(parseInt(e.target.value, 10))}
+          placeholder="Enter max width (e.g., 200)"
+          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+        />
+        <div>
+          <button onClick={addTextToCanvas}>Ok</button>
+          <button
+            onClick={() => {
+              setShowAddTextModal(false);
+              setNewText('');
+              setMaxWidth(200);
+              setNewFontSize(fontSize);
+            }}
+            style={{ marginLeft: '10px' }}
+          >
+            Cancel
+          </button>
+        </div>
       </div>
-    </div>
-  )}
-</div>
+    )}
+
+    {/* Edit Text Modal */}
+    {isEditing && (
+      <div style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        backgroundColor: 'white',
+        padding: '20px',
+        border: '1px solid #ccc',
+        boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
+        zIndex: 1000
+      }}>
+        <h2>Edit Text</h2>
+        <input
+          type="text"
+          value={editingText}
+          onChange={(e) => setEditingText(e.target.value)}
+          placeholder="Edit text here"
+          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+        />
+        <input
+          type="number"
+          value={editingFontSize}
+          onChange={(e) => setEditingFontSize(parseInt(e.target.value, 10))}
+          placeholder="Font Size"
+          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+        />
+        <div>
+          <button onClick={saveEditedText}>Save</button>
+          <button onClick={closeEditModal} style={{ marginLeft: '10px' }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
 );
+
+
 }
 
 export default App;
