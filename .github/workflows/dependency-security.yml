@@ -1,9 +1,16 @@
 name: Dependency Security
+
 on:
   push:
   pull_request:
   schedule:
-    - cron: '0 */6 * * *' # every 6 hours to catch newly disclosed vulns
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write   # needed to upload results to Security > Code scanning
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -24,10 +31,14 @@ jobs:
           elif [ -f yarn.lock ]; then yarn npm audit --severity high || yarn audit --level high;
           else npm audit --audit-level=high; fi
 
-      - name: OSV scan (lockfile)
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/google/osv-scanner/main/install.sh | sh -s -- -b /usr/local/bin
-          if [ -f pnpm-lock.yaml ]; then osv-scanner --lockfile pnpm-lock.yaml;
-          elif [ -f yarn.lock ]; then osv-scanner --lockfile yarn.lock;
-          elif [ -f package-lock.json ]; then osv-scanner --lockfile package-lock.json;
-          else echo "No lockfile found" && exit 1; fi
+  osv-scan:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.2.1
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    with:
+      # default behavior is recursive scan from repo root; you can be explicit:
+      scan-args: |-
+        --recursive
+        ./
