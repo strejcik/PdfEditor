@@ -1,0 +1,33 @@
+name: Dependency Security
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 */6 * * *' # every 6 hours to catch newly disclosed vulns
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 'lts/*' }
+
+      - name: Install (respect your manager)
+        run: |
+          if [ -f pnpm-lock.yaml ]; then npm i -g pnpm && pnpm i --frozen-lockfile;
+          elif [ -f yarn.lock ]; then yarn install --frozen-lockfile;
+          else npm ci; fi
+
+      - name: npm/pnpm/yarn audit (fail on high+)
+        run: |
+          if [ -f pnpm-lock.yaml ]; then pnpm audit --audit-level=high;
+          elif [ -f yarn.lock ]; then yarn npm audit --severity high || yarn audit --level high;
+          else npm audit --audit-level=high; fi
+
+      - name: OSV scan (lockfile)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/google/osv-scanner/main/install.sh | sh -s -- -b /usr/local/bin
+          if [ -f pnpm-lock.yaml ]; then osv-scanner --lockfile pnpm-lock.yaml;
+          elif [ -f yarn.lock ]; then osv-scanner --lockfile yarn.lock;
+          elif [ -f package-lock.json ]; then osv-scanner --lockfile package-lock.json;
+          else echo "No lockfile found" && exit 1; fi
