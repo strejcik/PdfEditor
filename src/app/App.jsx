@@ -1,10 +1,19 @@
 import { useRef, useEffect, useState, useLayoutEffect} from 'react';
-import { PDFDocument, rgb } from 'pdf-lib';
 import axios from 'axios';
 import './App.css'
 import { DEFAULT_FONT_SIZE, CELL_SIZE, BOX_PADDING, CANVAS_WIDTH, CANVAS_HEIGHT, PDF_WIDTH, PDF_HEIGHT } from "../config/constants";
 import { getMousePosOnCanvas } from "../utils/canvas/getMousePosOnCanvas";
 import { useEditor } from "../context/EditorProvider";
+import fontkit from "@pdf-lib/fontkit";
+async function loadFontBytes(path) { const r = await fetch(path); return r.arrayBuffer(); }
+// Clip everything to the page box (matches canvas clipping)
+import {
+  pushGraphicsState, popGraphicsState,
+  moveTo, lineTo, closePath, clip, endPath,
+  PDFDocument, StandardFonts, rgb
+} from "pdf-lib";
+
+
 const btnStyle = {
   display: 'block',
   width: '100%',
@@ -26,11 +35,56 @@ const App = () => {
   const fontSize = DEFAULT_FONT_SIZE;
   const cellSize = CELL_SIZE;
   const boxPadding = BOX_PADDING;
-
+  const APP_FONT_FAMILY = "Lato";
   const canvasWidth = CANVAS_WIDTH;
   const canvasHeight = CANVAS_HEIGHT;
   const pdfWidth = PDF_WIDTH;
   const pdfHeight = PDF_HEIGHT;
+
+
+
+  async function ensureAppFontLoaded(
+  family = "Lato",
+  url = "/fonts/Lato-Regular.ttf",
+  descriptors = { style: "normal", weight: "400" }
+) {
+  try {
+    // Already available?
+    if (document.fonts?.check?.(`12px "${family}"`)) return;
+
+    // Load via FontFace API
+    const face = new FontFace(family, `url(${url})`, descriptors);
+    await face.load();
+    document.fonts.add(face);
+
+    // Wait until ready to ensure accurate measureText
+    if (document.fonts?.ready) await document.fonts.ready;
+  } catch (err) {
+    // Don’t crash rendering if the font fails to load
+    console.warn("[fonts] Failed to load", { family, url, err });
+  }
+}
+
+
+  function setupCanvasA4(canvas, portrait = true) {
+  const w = portrait ? canvasWidth : canvasHeight;
+  const h = portrait ? canvasHeight : canvasWidth;
+
+  const dpr = window.devicePixelRatio || 1;
+  // Backing store in device pixels
+  canvas.width  = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  // CSS size in logical pixels (no scaling in your math)
+  canvas.style.width  = `${w}px`;
+  canvas.style.height = `${h}px`;
+
+  const ctx = canvas.getContext('2d');
+  // Draw using logical units; DPR handled by transform
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, width: w, height: h };
+}
+
+
   const {
     ui: { openSections, setOpenSections },
 
@@ -75,7 +129,7 @@ const App = () => {
     draggedImageIndex, setDraggedImageIndex,
     selectedImageIndex, setSelectedImageIndex,
     resizingImageIndex, setResizingImageIndex,
-    resizeStart, setResizeStart},
+    resizeStart, setResizeStart, addImageFromFile},
 
     selection: {
       showGrid, setShowGrid,
@@ -118,49 +172,19 @@ const App = () => {
 
 
 
- // Save pageList to localStorage whenever they change
-useEffect(() => {
-  if (!pageList || pageList.length === 0) return;
-
-  try { localStorage.setItem("pages", JSON.stringify(pageList)); } catch {}
-
-  if (!runOnceRef.current) {
-    setActivePage(pageList.length - 1); // or 0 if you prefer first page
-    runOnceRef.current = true;
-  }
-}, [pageList, setActivePage]);
 
 
-
-
-// Function to handle file input change
-const handleAddImage = (e) => {
-  const file = e.target.files[0];
+const handleAddImage = async (e) => {
+  const file = e.target.files?.[0];
   if (!file) return;
 
-  const reader = new FileReader();
-  reader.onload = () => {
-    const img = new Image();
-    img.src = reader.result; // Base64 encoded image
-    img.onload = () => {
-      const newItem = { 
-        image: img, 
-        data: reader.result, // Store base64 data for persistence
-        x: 50, 
-        y: 50, 
-        width: img.width / 2, 
-        height: img.height / 2,
-        index: activePage
-      };
-      const updatedItems = [...imageItems, newItem];
-      setImageItems(updatedItems);
-      const uI = updatedItems.filter((_, index) => _.index === activePage);
-      updatePageItems('imageItems', uI);
-      saveImageItemsToLocalStorage(updatedItems); // Save to localStorage
-      drawCanvas(activePage);
-    };
-  };
-  reader.readAsDataURL(file);
+  pushSnapshotToUndo(activePage);        // snapshot BEFORE mutation
+  await addImageFromFile(file, activePage, { x: 50, y: 50, scale: 0.5 });
+
+  // If you don't use the effect-driven draw yet, force a draw:
+  // drawCanvas(activePage);
+
+  e.target.value = ""; // allow re-selecting same file
 };
 
 
@@ -384,78 +408,148 @@ const wrapTextResponsive = (text, maxWidth, ctx) => {
   return lines;
 };
 
-const drawCanvas = (pageIndex) => {
+async function drawCanvas(pageIndex) {
   const canvas = canvasRefs.current[pageIndex];
   if (!canvas) return;
 
-  // === Cross-Browser: Set canvas internal resolution to match CSS size ===
-  const rect = canvas.getBoundingClientRect();
-  const scale = window.devicePixelRatio || 1;
+  // Load the exact font you use for measuring/drawing (same as PDF export)
+  await ensureAppFontLoaded(APP_FONT_FAMILY, "Lato-Regular.ttf");
 
-  canvas.width = rect.width * scale;
-  canvas.height = rect.height * scale;
+  // === Size/scale canvas to match its CSS box ===
+  const rect  = canvas.getBoundingClientRect();
+  const dpr   = window.devicePixelRatio || 1;
+  canvas.width  = Math.round(rect.width  * dpr);
+  canvas.height = Math.round(rect.height * dpr);
 
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale); // scale all drawing to match visual size
+  const ctx = canvas.getContext("2d");
+  // Draw in CSS units (no need to think in backing pixels)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Clear and optional grid in CSS units
   ctx.clearRect(0, 0, rect.width, rect.height);
-
   if (showGrid) drawGrid(ctx, rect.width, rect.height);
 
-  // === DRAW TEXT ITEMS ===
-  textItems.forEach((item, index) => {
-    if (item.index !== pageIndex) return;
+  // Helper: resolve text draw position (x, topY) and metrics in CSS units
+  const resolveTextLayout = (item) => {
+    const fontSize   = Number(item.fontSize) || 16;
+    const fontFamily = item.fontFamily || "Lato";
+    const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
 
-    ctx.font = `${item.fontSize}px Arial`;
-    const metrics = ctx.measureText(item.text);
-    const textWidth = metrics.width;
-    const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = `${fontSize}px ${fontFamily}`;
 
-    const padding = item.boxPadding || 5;
-    const textRect = {
-      x: item.x - padding,
-      y: item.y - textHeight - padding,
-      width: textWidth + padding * 2,
-      height: textHeight + padding * 2,
-    };
+    const m = ctx.measureText(item.text || "");
+    const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
+    const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.2;
+    const textWidth  = m.width;
+    const textHeight = ascent + descent;
 
-    // Draw bounding box if selected
-    if (selectedTextIndexes.includes(index)) {
-      ctx.strokeStyle = 'rgba(30, 144, 255, 0.7)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(textRect.x, textRect.y, textRect.width, textRect.height);
+    // Prefer normalized; DO NOT CLAMP so we can go off-canvas (negative or >1)
+    const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
+
+    const x = hasNorm
+      ? Number(item.xNorm) * rect.width
+      : (Number(item.x) || 0);
+
+    let topY;
+    if (hasNorm) {
+      topY = Number(item.yNormTop) * rect.height; // can be <0 or >rect.height
+    } else {
+      // Legacy: item.y may be baseline; convert to top if needed
+      const anchor = item.anchor || "baseline"; // "top" | "baseline" | "bottom"
+      const rawY = Number(item.y) || 0;
+      if (anchor === "baseline")      topY = rawY - ascent;
+      else if (anchor === "bottom")   topY = rawY - textHeight;
+      else                            topY = rawY; // already top
     }
 
-    // Draw vertical guide line
+    return {
+      x,
+      topY,
+      fontSize,
+      fontFamily,
+      padding,
+      textWidth,
+      textHeight,
+      ascent,
+      descent,
+    };
+  };
+
+  // === DRAW TEXT ITEMS (normalized-first, off-canvas allowed) ===
+  textItems.forEach((item, globalIndex) => {
+    if (item.index !== pageIndex) return;
+
+    const L = resolveTextLayout(item);
+    const boxX = Math.round(L.x)    - L.padding;
+    const boxY = Math.round(L.topY) - L.padding;
+    const boxW = L.textWidth  + L.padding * 2;
+    const boxH = L.textHeight + L.padding * 2;
+
+    // Bounding box when selected
+    if (selectedTextIndexes.includes(globalIndex)) {
+      ctx.strokeStyle = "rgba(30, 144, 255, 0.7)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(boxX, boxY, boxW, boxH);
+    }
+
+    // Optional vertical guide line
+    ctx.save();
     ctx.beginPath();
     ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = 'dodgerblue';
-    ctx.moveTo(item.x - padding, 0);
-    ctx.lineTo(item.x - padding, rect.height);
+    ctx.strokeStyle = "dodgerblue";
+    ctx.moveTo(Math.round(L.x) - L.padding, 0);
+    ctx.lineTo(Math.round(L.x) - L.padding, rect.height);
     ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.restore();
 
-    ctx.fillStyle = 'black';
-    ctx.fillText(item.text, item.x, item.y);
+    // Draw the text (top-anchored at L.topY)
+    ctx.fillStyle = "black";
+    ctx.font = `${L.fontSize}px ${L.fontFamily}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText(item.text || "", Math.round(L.x), Math.round(L.topY));
   });
 
-  // === DRAW IMAGE ITEMS ===
+  // === DRAW IMAGE ITEMS (normalized-first, off-canvas allowed) ===
   imageItems.forEach((item) => {
     if (item.index !== pageIndex) return;
 
-    ctx.drawImage(item.image, item.x, item.y, item.width, item.height);
+    const hasNormPos  = (item.xNorm != null) && (item.yNormTop != null);
+    const hasNormSize = (item.widthNorm != null) && (item.heightNorm != null);
 
+    // DO NOT CLAMP: allow negative / >1
+    const x    = hasNormPos  ? Number(item.xNorm)    * rect.width  : (Number(item.x)      || 0);
+    const yTop = hasNormPos  ? Number(item.yNormTop) * rect.height : (Number(item.y)      || 0);
+    const w    = hasNormSize ? Number(item.widthNorm)  * rect.width  : (Number(item.width)  || 0);
+    const h    = hasNormSize ? Number(item.heightNorm) * rect.height : (Number(item.height) || 0);
+
+    const src = item.data || item.src;
+    const imgEl = createImageElement(src);
+    if (!imgEl || !imgEl.complete || !imgEl.naturalWidth) {
+      if (imgEl) {
+        imgEl.onload = () => requestAnimationFrame(() => drawCanvas(pageIndex));
+      }
+      return;
+    }
+
+    ctx.drawImage(imgEl, Math.round(x), Math.round(yTop), Math.round(w), Math.round(h));
+
+    // Resize handle
     const handleSize = 10;
-    ctx.fillStyle = 'dodgerblue';
+    ctx.fillStyle = "dodgerblue";
     ctx.fillRect(
-      item.x + item.width - handleSize / 2,
-      item.y + item.height - handleSize / 2,
+      Math.round(x + w - handleSize / 2),
+      Math.round(yTop + h - handleSize / 2),
       handleSize,
       handleSize
     );
 
-    ctx.strokeStyle = 'black';
+    // Outline
+    ctx.strokeStyle = "black";
     ctx.lineWidth = 1;
-    ctx.strokeRect(item.x, item.y, item.width, item.height);
+    ctx.strokeRect(Math.round(x), Math.round(yTop), Math.round(w), Math.round(h));
   });
 
   // === DRAW SELECTION RECT ===
@@ -466,11 +560,11 @@ const drawCanvas = (pageIndex) => {
     activePage === pageIndex &&
     (selectionStart.x !== selectionEnd.x || selectionStart.y !== selectionEnd.y)
   ) {
-    const width = selectionEnd.x - selectionStart.x;
+    const width  = selectionEnd.x - selectionStart.x;
     const height = selectionEnd.y - selectionStart.y;
 
-    ctx.strokeStyle = 'dodgerblue';
-    ctx.fillStyle = 'rgba(30, 144, 255, 0.3)';
+    ctx.strokeStyle = "dodgerblue";
+    ctx.fillStyle = "rgba(30, 144, 255, 0.3)";
     ctx.lineWidth = 1;
     ctx.strokeRect(selectionStart.x, selectionStart.y, width, height);
     ctx.fillRect(selectionStart.x, selectionStart.y, width, height);
@@ -479,13 +573,14 @@ const drawCanvas = (pageIndex) => {
   // === DRAW TEXTBOX ===
   if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
     const padding = textBox.boxPadding || 10;
-    ctx.strokeStyle = 'black';
+
+    ctx.strokeStyle = "black";
     ctx.lineWidth = 1;
     ctx.strokeRect(textBox.x, textBox.y, textBox.width, textBox.height);
 
     // Drag handle
     const dragPointSize = 10;
-    ctx.fillStyle = 'dodgerblue';
+    ctx.fillStyle = "dodgerblue";
     ctx.fillRect(
       textBox.x + textBox.width - dragPointSize,
       textBox.y + textBox.height - dragPointSize,
@@ -493,23 +588,27 @@ const drawCanvas = (pageIndex) => {
       dragPointSize
     );
 
-    // Text
-    ctx.fillStyle = 'black';
-    ctx.font = `${textBox.fontSize || fontSize}px Arial`;
+    // Text inside the box (top-anchored)
+    ctx.fillStyle = "black";
+    const boxFontSize = textBox.fontSize || fontSize;
+    ctx.font = `${boxFontSize}px ${APP_FONT_FAMILY}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
 
     const wrapped = wrapTextPreservingNewlinesResponsive(
       textBox.text,
       ctx,
       textBox.width,
-      fontSize,
+      boxFontSize,
       padding
     );
 
     wrapped.lines.forEach((line, idx) => {
-      ctx.fillText(line, textBox.x + padding, textBox.y + (idx + 1) * (fontSize + 4));
+      ctx.fillText(line, textBox.x + padding, textBox.y + padding + idx * (boxFontSize + 4));
     });
   }
-};
+}
+
 
 useLayoutEffect(() => {
   const canvas = canvasRefs.current[activePage];
@@ -619,93 +718,193 @@ const removePage = () => {
 
 
 
+
+
+  // CSS mouse position (works with React events too)
+function getCssMousePos(e, canvas) {
+  const evt = e?.nativeEvent ?? e;
+  const rect = canvas.getBoundingClientRect();
+  return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+}
+
+
+// Map your getMousePosOnCanvas() (backing pixels) to CSS units used by drawCanvas.
+function toCssFromBacking(canvas, { offsetX, offsetY }) {
+  const rect = canvas.getBoundingClientRect();
+  const sx = canvas.width / rect.width;
+  const sy = canvas.height / rect.height;
+  return { x: offsetX / sx, y: offsetY / sy };
+}
+
+// Resolve text layout exactly like drawCanvas (top-anchored, normalized-first)
+// Compute the same layout used for drawing a text item (top-anchored).
+function resolveTextLayoutForHit(item, ctx, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const cssW = rect.width;
+  const cssH = rect.height;
+
+  const fontSize   = Number(item.fontSize) || 16;
+  const fontFamily = item.fontFamily || "Lato";
+  const padding    = item.boxPadding != null ? Number(item.boxPadding) : Math.round(fontSize * 0.2);
+
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `${fontSize}px ${fontFamily}`;
+
+  const m = ctx.measureText(item.text || "");
+  const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
+  const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.20;
+  const textWidth  = m.width;
+  const textHeight = ascent + descent;
+  ctx.restore();
+
+  const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
+
+  // ❌ no clamping — allow negative / > canvas values
+  const x = hasNorm
+    ? Number(item.xNorm) * cssW
+    : (Number(item.x) || 0);
+
+  let topY;
+  if (hasNorm) {
+    // ❌ no clamping
+    topY = Number(item.yNormTop) * cssH;
+  } else {
+    // Legacy pixel mode: convert baseline/bottom to top
+    const rawY = Number(item.y) || 0;
+    const anchor = item.anchor || "baseline"; // keep legacy default
+    if (anchor === "baseline")      topY = rawY - ascent;
+    else if (anchor === "bottom")   topY = rawY - textHeight;
+    else                            topY = rawY; // already top
+  }
+
+  return {
+    x,
+    topY,
+    fontSize,
+    fontFamily,
+    padding,
+    textWidth,
+    textHeight,
+    ascent,
+    descent,
+    box: {
+      x: x - padding,
+      y: topY - padding,
+      w: textWidth + padding * 2,
+      h: textHeight + padding * 2,
+    },
+  };
+}
+function rectsIntersect(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// clamp 0..1
+const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+
+// Resolve image rect in CSS units (prefers normalized fields).
+function resolveImageRectCss(item, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const cssW = rect.width;
+  const cssH = rect.height;
+
+  const hasNormPos  = (item.xNorm != null) && (item.yNormTop != null);
+  const hasNormSize = (item.widthNorm != null) && (item.heightNorm != null);
+
+  // ❌ no clamp on positions
+  const x = hasNormPos  ? Number(item.xNorm)    * cssW : (Number(item.x)      || 0);
+  const y = hasNormPos  ? Number(item.yNormTop) * cssH : (Number(item.y)      || 0);
+
+  // No clamp on size either; just coerce to finite and >= 0
+  const wPx = hasNormSize ? Number(item.widthNorm)  * cssW : (Number(item.width)  || 0);
+  const hPx = hasNormSize ? Number(item.heightNorm) * cssH : (Number(item.height) || 0);
+  const w = Number.isFinite(wPx) ? Math.max(0, wPx) : 0;
+  const h = Number.isFinite(hPx) ? Math.max(0, hPx) : 0;
+
+  return { x, y, w, h, cssW, cssH };
+}
+
+
+
 const handleMouseDown = (e) => {
-  if(editingIndex !== null) {
-  e.preventDefault();
+  if (editingIndex !== null) {
+    e.preventDefault();
   }
   const canvas = canvasRefs.current[activePage];
-  const { offsetX, offsetY } = getMousePosOnCanvas(e, canvas);
-  const ctx = canvasRefs.current[activePage].getContext('2d');
+  if (!canvas) return;
 
-  // ======== Check if resizing image ========
+  // Use raw CSS coordinates (can be negative only if pointer starts outside canvas,
+  // but mousedown happens on canvas, so expect 0..rect.* here)
+  const rect = canvas.getBoundingClientRect();
+  const clientX = e.touches?.[0]?.clientX ?? e.clientX;
+  const clientY = e.touches?.[0]?.clientY ?? e.clientY;
+  const cssX = clientX - rect.left;
+  const cssY = clientY - rect.top;
+
+  const ctx = canvas.getContext('2d');
+
+  // ======== 1) IMAGE: resize handle (bottom-right) ========
   for (let index = 0; index < imageItems.length; index++) {
     const item = imageItems[index];
     if (item.index !== activePage) continue;
 
-    const handleSize = 10;
-    const handleX = item.x + item.width - handleSize / 2;
-    const handleY = item.y + item.height - handleSize / 2;
+    const { x, y, w, h, cssW, cssH } = resolveImageRectCss(item, canvas);
 
-    if (
-      offsetX >= handleX &&
-      offsetX <= handleX + handleSize &&
-      offsetY >= handleY &&
-      offsetY <= handleY + handleSize
-    ) {
+    const handleSize = 10; // CSS px
+    const handleX = x + w - handleSize / 2;
+    const handleY = y + h - handleSize / 2;
+
+    if (cssX >= handleX && cssX <= handleX + handleSize &&
+        cssY >= handleY && cssY <= handleY + handleSize) {
       setResizingImageIndex(index);
       setResizeStart({
-        x: offsetX,
-        y: offsetY,
-        startW: item.width,
-        startH: item.height,
-        ratio: item.width > 0 && item.height > 0 ? item.width / item.height : 1
+        x: cssX,
+        y: cssY,
+        startW: w,
+        startH: h,
+        ratio: (w > 0 && h > 0) ? (w / h) : 1,
+        cssW,
+        cssH,
       });
       setIsSelecting(false);
       return;
     }
   }
 
-// ======== Check if clicked on image ========
-for (let index = 0; index < imageItems.length; index++) {
-  const item = imageItems[index];
-  if (item.index !== activePage) continue;
+  // ======== 2) IMAGE: inside -> start drag ========
+  for (let index = 0; index < imageItems.length; index++) {
+    const item = imageItems[index];
+    if (item.index !== activePage) continue;
 
-  if (
-    offsetX >= item.x &&
-    offsetX <= item.x + item.width &&
-    offsetY >= item.y &&
-    offsetY <= item.y + item.height
-  ) {
-    setSelectedImageIndex(index);
-    setDraggedImageIndex(index);
-    setIsImageDragging(true);
+    const { x, y, w, h } = resolveImageRectCss(item, canvas);
 
-    // 👇 store both the mouse start and the *grab offset within the image*
-    setDragStart({
-      x: offsetX,
-      y: offsetY,
-      grabDX: offsetX - item.x,   // distance from image.left to grab point
-      grabDY: offsetY - item.y    // distance from image.top to grab point
-    });
-
-    setIsSelecting(false);
-    return; // ⛔ Prevent further action
+    if (cssX >= x && cssX <= x + w && cssY >= y && cssY <= y + h) {
+      setSelectedImageIndex(index);
+      setDraggedImageIndex(index);
+      setIsImageDragging(true);
+      setDragStart({
+        x: cssX,
+        y: cssY,
+        grabDX: cssX - x,
+        grabDY: cssY - y,
+      });
+      setIsSelecting(false);
+      return;
+    }
   }
-}
 
-  // ======== Check if clicked on text ========
-  for (let index = 0; index < textItems.length; index++) {
+  // ======== 3) TEXT: hit-test (top-anchored; supports off-canvas x<0) ========
+  for (let index = textItems.length - 1; index >= 0; index--) {
     const item = textItems[index];
     if (item.index !== activePage) continue;
 
-    ctx.font = `${item.fontSize}px Arial`;
-    const metrics = ctx.measureText(item.text);
-    const textWidth = metrics.width;
-    const actualHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+    const L = resolveTextLayoutForHit(item, ctx, canvas);
+    const b = L.box;
 
-    const textRect = {
-      x: item.x - item.boxPadding,
-      y: item.y - actualHeight - item.boxPadding,
-      width: textWidth + item.boxPadding * 2,
-      height: actualHeight + item.boxPadding * 2,
-    };
-
-    if (
-      offsetX >= textRect.x &&
-      offsetX <= textRect.x + textRect.width &&
-      offsetY >= textRect.y &&
-      offsetY <= textRect.y + textRect.height
-    ) {
+    if (cssX >= b.x && cssX <= b.x + b.w && cssY >= b.y && cssY <= b.y + b.h) {
       setIsTextSelected(true);
       setSelectedTextIndex(index);
 
@@ -715,36 +914,34 @@ for (let index = 0; index < imageItems.length; index++) {
 
       setSelectedTextIndexes(newSelectedIndexes);
       setIsDragging(true);
-      setDragStart({ x: offsetX, y: offsetY });
+      setDragStart({ x: cssX, y: cssY });
 
-      const init = newSelectedIndexes.map((i) => ({
-        index: i,
-        x: textItems[i].x,
-        y: textItems[i].y,
-        activePage,
-      }));
-
+      // Store initial TOP-anchored positions for drag
+      const init = newSelectedIndexes.map((i) => {
+        const Li = resolveTextLayoutForHit(textItems[i], ctx, canvas);
+        return { index: i, xTop: Li.x, yTop: Li.topY, activePage };
+      });
       setInitialPositions(init);
       setIsSelecting(false);
-      return; // ⛔ Prevent further action
+      return;
     }
   }
 
-  // ======== TextBox Resize Handle ========
+  // ======== 4) TEXTBOX: resize handle ========
   const dragPointSize = 10;
   if (
     textBox &&
-    offsetX >= textBox.x + textBox.width - dragPointSize &&
-    offsetX <= textBox.x + textBox.width &&
-    offsetY >= textBox.y + textBox.height - dragPointSize &&
-    offsetY <= textBox.y + textBox.height
+    cssX >= textBox.x + textBox.width  - dragPointSize &&
+    cssX <= textBox.x + textBox.width &&
+    cssY >= textBox.y + textBox.height - dragPointSize &&
+    cssY <= textBox.y + textBox.height
   ) {
     setIsResizing(true);
     setIsSelecting(false);
-    return; // ⛔ Prevent further action
+    return;
   }
 
-  // ======== Default: Start Selection ========
+  // ======== 5) Default: begin selection rectangle ========
   setIsTextSelected(false);
   setSelectedTextIndex(null);
   setSelectedTextIndexes([]);
@@ -755,9 +952,11 @@ for (let index = 0; index < imageItems.length; index++) {
   setSelectedImageIndex(null);
 
   setIsSelecting(true);
-  setSelectionStart({ x: offsetX, y: offsetY });
-  setSelectionEnd({ x: offsetX, y: offsetY });
+  setSelectionStart({ x: cssX, y: cssY });
+  setSelectionEnd({ x: cssX, y: cssY });
 };
+
+
 
 // useEffect(() => {
 //   const u = JSON.parse(localStorage.getItem('undoStack') || '{}');
@@ -836,196 +1035,252 @@ const handleRedo = () => {
 
 
 
+// Mirrors your drawCanvas metrics and does NOT clamp xNorm/yNormTop
+function resolveTextLayoutForHit(item, ctx, canvas) {
+  const rect = canvas.getBoundingClientRect();
+
+  const fontSize   = Number(item.fontSize) || 16;
+  const fontFamily = item.fontFamily || "Lato";
+  const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
+
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `${fontSize}px ${fontFamily}`;
+
+  const m = ctx.measureText(item.text || "");
+  const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.8;
+  const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.2;
+  const textW = m.width;
+  const textH = ascent + descent;
+  ctx.restore();
+
+  const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
+  const x = hasNorm ? Number(item.xNorm)    * rect.width  : (Number(item.x) || 0);
+  let topY;
+  if (hasNorm) {
+    topY = Number(item.yNormTop) * rect.height; // can be negative / > rect.height
+  } else {
+    const rawY = Number(item.y) || 0;
+    const anchor = item.anchor || "top"; // "top" | "baseline" | "bottom"
+    if (anchor === "baseline")      topY = rawY - ascent;
+    else if (anchor === "bottom")   topY = rawY - textH;
+    else                            topY = rawY;
+  }
+
+  const box = {
+    x: x - padding,
+    y: topY - padding,
+    w: textW + padding * 2,
+    h: textH + padding * 2,
+  };
+
+  return { x, topY, w: textW, h: textH, padding, box };
+}
+
+// Image rect in CSS units; NO clamping on normalized values
+function resolveImageRectCss(item, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const hasNormPos  = (item.xNorm != null) && (item.yNormTop != null);
+  const hasNormSize = (item.widthNorm != null) && (item.heightNorm != null);
+
+  const x = hasNormPos  ? Number(item.xNorm)    * rect.width  : (Number(item.x)      || 0);
+  const y = hasNormPos  ? Number(item.yNormTop) * rect.height : (Number(item.y)      || 0);
+  const w = hasNormSize ? Number(item.widthNorm)  * rect.width  : (Number(item.width)  || 0);
+  const h = hasNormSize ? Number(item.heightNorm) * rect.height : (Number(item.height) || 0);
+
+  return { x, y, w, h, cssW: rect.width, cssH: rect.height };
+}
 
 
 
 
 
 const handleMouseMove = (e) => {
-    if(editingIndex !== null) {
-  e.preventDefault();
+  if (editingIndex !== null) {
+    e.preventDefault();
   }
   const canvas = canvasRefs.current[activePage];
-  const { offsetX, offsetY } = getMousePosOnCanvas(e, canvas);
+  if (!canvas) return;
 
+  // CSS-space pointer; can be negative when moving outside left/top
+  const rect = canvas.getBoundingClientRect();
+  const clientX = e.touches?.[0]?.clientX ?? e.clientX;
+  const clientY = e.touches?.[0]?.clientY ?? e.clientY;
+  const cssX = clientX - rect.left;
+  const cssY = clientY - rect.top;
+
+  const ctx = canvas.getContext('2d');
 
   // === TEXTBOX RESIZING ===
-if (isResizing && textBox) {
-  const newWidth = Math.max(50, offsetX - textBox.x);
-  const newHeight = Math.max(20, offsetY - textBox.y);
+  if (isResizing && textBox) {
+    const newWidth  = Math.max(50, cssX - textBox.x);
+    const newHeight = Math.max(20, cssY - textBox.y);
 
-  const ctx = canvasRefs.current[activePage].getContext('2d');
-  const padding = textBox.boxPadding || 5;
-  const innerWidth = newWidth - padding * 2;
+    const padding = textBox.boxPadding || 5;
+    const innerWidth = newWidth - padding * 2;
 
-  const wrappedLines = wrapTextResponsive(textBox.text, innerWidth, ctx);
-  const recombinedText = wrappedLines.join('\n');
+    const wrappedLines = wrapTextResponsive(textBox.text, innerWidth, ctx);
+    const recombinedText = wrappedLines.join('\n');
 
-  setTextBox({
-    ...textBox,
-    width: newWidth,
-    height: newHeight,
-    text: recombinedText, // 🔁 Update to reflect real wrapping
-  });
+    setTextBox({ ...textBox, width: newWidth, height: newHeight, text: recombinedText });
+    drawCanvas(activePage);
+    return;
+  }
 
-  drawCanvas(activePage);
-  return;
-}
-
-  // === SELECTION RECTANGLE ===
+  // === SELECTION RECTANGLE (live preview) ===
   if (isSelecting) {
-  setSelectionEnd({ x: offsetX, y: offsetY });
+    setSelectionEnd({ x: cssX, y: cssY });
 
-  // Optional live preview: evaluate which text/image items fall inside the selection rectangle.
-  const minX = Math.min(selectionStart.x, offsetX);
-  const maxX = Math.max(selectionStart.x, offsetX);
-  const minY = Math.min(selectionStart.y, offsetY);
-  const maxY = Math.max(selectionStart.y, offsetY);
+    const rectSel = {
+      x: Math.min(selectionStart.x, cssX),
+      y: Math.min(selectionStart.y, cssY),
+      w: Math.abs(cssX - selectionStart.x),
+      h: Math.abs(cssY - selectionStart.y),
+    };
 
-  const ctx = canvasRefs.current[activePage].getContext('2d');
-  const selected = [];
+    const selected = [];
+    for (let i = 0; i < textItems.length; i++) {
+      const it = textItems[i];
+      if (it.index !== activePage) continue;
+      const L = resolveTextLayoutForHit(it, ctx, canvas);
+      const b = L.box;
 
-  for (let i = 0; i < textItems.length; i++) {
-    const item = textItems[i];
-    if (item.index !== activePage) continue;
+      const intersects =
+        b.x < rectSel.x + rectSel.w &&
+        b.x + b.w > rectSel.x &&
+        b.y < rectSel.y + rectSel.h &&
+        b.y + b.h > rectSel.y;
 
-    ctx.font = `${item.fontSize}px Arial`;
-    const metrics = ctx.measureText(item.text);
-    const width = metrics.width;
-    const height = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
-
-    const x = item.x - item.boxPadding;
-    const y = item.y - height - item.boxPadding;
-    const w = width + item.boxPadding * 2;
-    const h = height + item.boxPadding * 2;
-
-    if (x + w >= minX && x <= maxX && y + h >= minY && y <= maxY) {
-      selected.push(i);
+      if (intersects) selected.push(i);
     }
+
+    setSelectedTextIndexes(selected);
+    drawCanvas(activePage);
+    return;
   }
 
-  setSelectedTextIndexes(selected);
-  drawCanvas(activePage);
-  return;
-  }
+  // === IMAGE RESIZING ===
+  if (resizingImageIndex !== null) {
+    const updated = [...imageItems];
+    const item = updated[resizingImageIndex];
+    if (!item || item.index !== activePage) return;
 
-// === IMAGE RESIZING ===
-if (resizingImageIndex !== null) {
-  const updatedItems = [...imageItems];
-  const item = updatedItems[resizingImageIndex];
-  if (!item || item.index !== activePage) return;
+    const startW = resizeStart?.startW ?? item.width;
+    const startH = resizeStart?.startH ?? item.height;
+    const ratio  = resizeStart?.ratio  ?? ((startW > 0 && startH > 0) ? startW / startH : 1);
 
-  const startW = resizeStart?.startW ?? item.width;
-  const startH = resizeStart?.startH ?? item.height;
-  const ratio  = resizeStart?.ratio  ?? (startW > 0 && startH > 0 ? startW / startH : 1);
+    const totalDX = cssX - (resizeStart?.x ?? cssX);
+    const totalDY = cssY - (resizeStart?.y ?? cssY);
 
-  const totalDX = offsetX - (resizeStart?.x ?? offsetX);
-  const totalDY = offsetY - (resizeStart?.y ?? offsetY);
+    let newW = startW + totalDX;
+    let newH = startH + totalDY;
 
-  let newW = startW + totalDX;
-  let newH = startH + totalDY;
-
-  // Optional: hold Shift to keep aspect ratio while resizing from bottom-right
-  if (e.shiftKey && ratio > 0) {
-    // pick the dominant delta to avoid “sawtooth” during diagonal moves
-    if (Math.abs(totalDX) >= Math.abs(totalDY)) {
-      newW = startW + totalDX;
-      newH = newW / ratio;
-    } else {
-      newH = startH + totalDY;
-      newW = newH * ratio;
+    if (e.shiftKey && ratio > 0) {
+      if (Math.abs(totalDX) >= Math.abs(totalDY)) {
+        newW = startW + totalDX; newH = newW / ratio;
+      } else {
+        newH = startH + totalDY; newW = newH * ratio;
+      }
     }
+
+    newW = Math.max(10, newW);
+    newH = Math.max(10, newH);
+
+    item.width  = newW;               // pixels
+    item.height = newH;
+
+    // normalized (UNCLAMPED)
+    item.widthNorm  = rect.width  ? (newW / rect.width)  : 0;
+    item.heightNorm = rect.height ? (newH / rect.height) : 0;
+
+    setImageItems(updated);
+    saveImageItemsToLocalStorage(updated);
+    updatePageItems('imageItems', updated.filter(i => i.index === activePage));
+    drawCanvas(activePage);
+    return;
   }
 
-  // Clamp
-  newW = Math.max(10, newW);
-  newH = Math.max(10, newH);
+  // === IMAGE DRAGGING ===
+  if (isImageDragging && draggedImageIndex !== null) {
+    const updated = [...imageItems];
+    const item = updated[draggedImageIndex];
+    if (!item || item.index !== activePage) return;
 
-  item.width  = newW;
-  item.height = newH;
+    const grabDX = dragStart?.grabDX ?? 0;
+    const grabDY = dragStart?.grabDY ?? 0;
 
-  setImageItems(updatedItems);
-  saveImageItemsToLocalStorage(updatedItems);
-  updatePageItems('imageItems', updatedItems.filter(i => i.index === activePage));
+    const newX = cssX - grabDX; // can be negative
+    const newY = cssY - grabDY;
 
-  // ❌ Don't do this anymore; it causes incremental drift
-  // setResizeStart({ x: offsetX, y: offsetY });
+    item.x = newX;
+    item.y = newY;
 
-  drawCanvas(activePage);
-  return;
-}
+    // UNCLAMPED normalized
+    item.xNorm    = rect.width  ? (newX / rect.width)  : 0;
+    item.yNormTop = rect.height ? (newY / rect.height) : 0;
 
-// === IMAGE DRAGGING ===
-if (isImageDragging && draggedImageIndex !== null) {
-  const updatedItems = [...imageItems];
-  const item = updatedItems[draggedImageIndex];
-  if (!item || item.index !== activePage) return;
-
-  // Fallbacks in case dragStart was missing fields (shouldn’t happen after the fix)
-  const grabDX = dragStart?.grabDX ?? 0;
-  const grabDY = dragStart?.grabDY ?? 0;
-
-  // Absolute positioning from current pointer minus fixed grab offset
-  item.x = offsetX - grabDX;
-  item.y = offsetY - grabDY;
-
-  setImageItems(updatedItems);
-  saveImageItemsToLocalStorage(updatedItems);
-  updatePageItems('imageItems', updatedItems.filter(i => i.index === activePage));
-
-  // ❌ Do NOT do this anymore; it causes incremental drift
-  // setDragStart({ x: offsetX, y: offsetY });
-
-  drawCanvas(activePage);
-  return;
-}
+    setImageItems(updated);
+    saveImageItemsToLocalStorage(updated);
+    updatePageItems('imageItems', updated.filter(i => i.index === activePage));
+    drawCanvas(activePage);
+    return;
+  }
 
   // === TEXT DRAGGING ===
   if (isDragging && dragStart && initialPositions.length > 0) {
-    const deltaX = offsetX - dragStart.x;
-    const deltaY = offsetY - dragStart.y;
-    const updatedItems = [...textItems];
+    const dx = cssX - dragStart.x;
+    const dy = cssY - dragStart.y;
 
-    // === MULTIPLE ITEMS DRAG ===
+    const updated = [...textItems];
+
+    // Multiple selection
     if (selectedTextIndexes.length > 1 && initialPositions.length === selectedTextIndexes.length) {
       initialPositions.forEach((pos) => {
-        const item = updatedItems[pos.index];
+        const item = updated[pos.index];
         if (item && item.index === activePage) {
-          item.x = pos.x + deltaX;
-          item.y = pos.y + deltaY;
+          const newX = pos.xTop + dx;
+          const newY = pos.yTop + dy;
+
+          item.x = newX;
+          item.y = newY;
+          item.anchor = "top";
+
+          item.xNorm    = rect.width  ? (newX / rect.width)  : 0; // NO clamp
+          item.yNormTop = rect.height ? (newY / rect.height) : 0; // NO clamp
         }
       });
 
-      setTextItems(updatedItems);
-      updatePageItems('textItems', updatedItems.filter(i => i.index === activePage));
-      saveTextItemsToLocalStorage(updatedItems);
+      setTextItems(updated);
+      updatePageItems('textItems', updated.filter(i => i.index === activePage));
+      saveTextItemsToLocalStorage(updated);
       drawCanvas(activePage);
       return;
     }
 
-    // === SINGLE ITEM DRAG (WITH SNAPPING) ===
+    // Single selection (+ optional snapping)
     if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
       const selIdx = selectedTextIndexes[0];
-      const item = updatedItems[selIdx];
-      const initPos = initialPositions[0];
-
+      const item   = updated[selIdx];
+      const init   = initialPositions[0];
       if (!item || item.index !== activePage) return;
 
-      let newX = initPos.x + deltaX;
-      let newY = initPos.y + deltaY;
+      let newX = init.xTop + dx;
+      let newY = init.yTop + dy;
 
+      // Snap to other left edges (optional)
       const padding = (item.fontSize || fontSize) * 0.2;
       const draggedLeft = newX - padding;
       const snapThreshold = 4;
 
-      // Snap to nearby vertical edge
       for (let i = 0; i < textItems.length; i++) {
         if (i === selIdx) continue;
         const other = textItems[i];
         if (other.index !== activePage) continue;
 
+        const Lother = resolveTextLayoutForHit(other, ctx, canvas);
         const otherPadding = (other.fontSize || fontSize) * 0.2;
-        const otherLeft = other.x - otherPadding;
+        const otherLeft = Lother.x - otherPadding;
 
         if (Math.abs(draggedLeft - otherLeft) < snapThreshold) {
           newX = otherLeft + padding;
@@ -1035,31 +1290,41 @@ if (isImageDragging && draggedImageIndex !== null) {
 
       item.x = newX;
       item.y = newY;
+      item.anchor = "top";
 
-      setTextItems(updatedItems);
-      updatePageItems('textItems', updatedItems.filter(i => i.index === activePage));
-      saveTextItemsToLocalStorage(updatedItems);
+      item.xNorm    = rect.width  ? (newX / rect.width)  : 0; // NO clamp
+      item.yNormTop = rect.height ? (newY / rect.height) : 0; // NO clamp
+
+      setTextItems(updated);
+      updatePageItems('textItems', updated.filter(i => i.index === activePage));
+      saveTextItemsToLocalStorage(updated);
       drawCanvas(activePage);
       return;
     }
 
-    // === FALLBACK: JUST MOVE ALL SELECTED ===
-    selectedTextIndexes.forEach((selIdx) => {
-      const item = updatedItems[selIdx];
-      const initPos = initialPositions.find(p => p.index === selIdx);
-      if (item && initPos && item.index === activePage) {
-        item.x = initPos.x + deltaX;
-        item.y = initPos.y + deltaY;
+    // Fallback: move all selected by delta
+    selectedTextIndexes.forEach((idx) => {
+      const it = updated[idx];
+      const init = initialPositions.find(p => p.index === idx);
+      if (it && init && it.index === activePage) {
+        const newX = init.xTop + dx;
+        const newY = init.yTop + dy;
+        it.x = newX;
+        it.y = newY;
+        it.anchor = "top";
+        it.xNorm    = rect.width  ? (newX / rect.width)  : 0; // NO clamp
+        it.yNormTop = rect.height ? (newY / rect.height) : 0; // NO clamp
       }
     });
 
-    setTextItems(updatedItems);
-    updatePageItems('textItems', updatedItems.filter(t => t.index === activePage));
-    saveTextItemsToLocalStorage(updatedItems);
+    setTextItems(updated);
+    updatePageItems('textItems', updated.filter(t => t.index === activePage));
+    saveTextItemsToLocalStorage(updated);
     drawCanvas(activePage);
   }
-
 };
+
+
 
 useEffect(() => {
   if (shouldClearSelectionBox) {
@@ -1072,26 +1337,30 @@ useEffect(() => {
 
 
 const handleMouseUp = (e) => {
-    if(editingIndex !== null) {
-  e.preventDefault();
+  if (editingIndex !== null) {
+    e.preventDefault();
   }
-  const selectionRect = {
-    x: Math.min(selectionStart?.x || 0, selectionEnd?.x || 0),
-    y: Math.min(selectionStart?.y || 0, selectionEnd?.y || 0),
-    width: Math.abs((selectionEnd?.x || 0) - (selectionStart?.x || 0)),
-    height: Math.abs((selectionEnd?.y || 0) - (selectionStart?.y || 0)),
-  };
+  const canvas = canvasRefs.current[activePage];
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
 
-  // === Stop Resizing ===
+  const selX0 = Math.min(selectionStart?.x || 0, selectionEnd?.x || 0);
+  const selY0 = Math.min(selectionStart?.y || 0, selectionEnd?.y || 0);
+  const selW  = Math.abs((selectionEnd?.x || 0) - (selectionStart?.x || 0));
+  const selH  = Math.abs((selectionEnd?.y || 0) - (selectionStart?.y || 0));
+  const selectionRect = { x: selX0, y: selY0, width: selW, height: selH };
+
   if (isResizing) setIsResizing(false);
 
-  // === Stop Dragging ===
   if (isDragging) {
     setIsDragging(false);
     setInitialPositions([]);
     setDragStart({ x: 0, y: 0 });
-        //undo-redo
-    pushSnapshotToUndo(activePage)
+    if (typeof pushSnapshotToUndo === "function") {
+      pushSnapshotToUndo(activePage);
+    } else if (history?.pushSnapshotToUndo) {
+      history.pushSnapshotToUndo(activePage);
+    }
   }
 
   if (resizingImageIndex !== null) setResizingImageIndex(null);
@@ -1099,87 +1368,70 @@ const handleMouseUp = (e) => {
     setIsImageDragging(false);
     setDraggedImageIndex(null);
     setDragStart({ x: 0, y: 0 });
+    if (typeof pushSnapshotToUndo === "function") {
+      pushSnapshotToUndo(activePage);
+    } else if (history?.pushSnapshotToUndo) {
+      history.pushSnapshotToUndo(activePage);
+    }
   }
 
-  // === Selection Handling ===
   if (isSelecting) {
-    const ctx = canvasRefs.current[activePage].getContext('2d');
     const selectedIndexes = [];
-    const updatedInitialPositions = [];
+    const updatedInitials = [];
 
-    textItems.forEach((item, index) => {
-      if (item.index !== activePage) return;
+    for (let i = 0; i < textItems.length; i++) {
+      const item = textItems[i];
+      if (item.index !== activePage) continue;
 
-      const textWidth = ctx.measureText(item.text).width;
-      const textHeight = ctx.measureText(item.text);
-      const actualHeight = textHeight.actualBoundingBoxAscent + textHeight.actualBoundingBoxDescent;
-
-      const textRect = {
-        x: item.x - item.boxPadding,
-        y: item.y - actualHeight - item.boxPadding,
-        width: textWidth + item.boxPadding * 2,
-        height: actualHeight + item.boxPadding * 2,
-      };
+      const L = resolveTextLayoutForHit(item, ctx, canvas);
+      const b = L.box;
 
       const intersects =
-        selectionRect.x < textRect.x + textRect.width &&
-        selectionRect.x + selectionRect.width > textRect.x &&
-        selectionRect.y < textRect.y + textRect.height &&
-        selectionRect.y + selectionRect.height > textRect.y;
+        selectionRect.x < b.x + b.w &&
+        selectionRect.x + selectionRect.width > b.x &&
+        selectionRect.y < b.y + b.h &&
+        selectionRect.y + selectionRect.height > b.y;
 
       if (intersects) {
-        selectedIndexes.push(index);
-        updatedInitialPositions.push({
-          index,
-          x: item.x,
-          y: item.y,
-          activePage,
-        });
+        selectedIndexes.push(i);
+        updatedInitials.push({ index: i, xTop: L.x, yTop: L.topY, activePage });
       }
-    });
+    }
 
     if (selectedIndexes.length > 0) {
-      // Texts selected
       setSelectedTextIndexes(selectedIndexes);
-      setInitialPositions(updatedInitialPositions);
+      setInitialPositions(updatedInitials);
       setIsTextSelected(true);
     } else {
-      // No texts selected
       setSelectedTextIndexes([]);
       setSelectedTextIndex(null);
       setIsTextSelected(false);
     }
 
-    // TextBox mode creates a new box
-if (isTextBoxEditEnabled && !textBox) {
-  const startX = selectionStart.x;
-  const startY = selectionStart.y;
-  const endX = selectionEnd.x;
-  const endY = selectionEnd.y;
+    if (isTextBoxEditEnabled && !textBox && selectionStart && selectionEnd) {
+      const startX = selectionStart.x;
+      const startY = selectionStart.y;
+      const endX   = selectionEnd.x;
+      const endY   = selectionEnd.y;
 
-  const x = Math.min(startX, endX);
-  const y = Math.min(startY, endY);
-  const width = Math.abs(endX - startX);
-  const height = Math.abs(endY - startY);
+      const x = Math.min(startX, endX);
+      const y = Math.min(startY, endY);
+      const width  = Math.abs(endX - startX);
+      const height = Math.abs(endY - startY);
 
-  setTextBox({
-    x,
-    y,
-    width,
-    height,
-    text: '',
-  });
-}
+      setTextBox({ x, y, width, height, text: "" });
+    }
 
-   setIsSelecting(false);
-   setShouldClearSelectionBox(true);
+    setIsSelecting(false);
+    setShouldClearSelectionBox(true);
   }
 
-  // === Always clear selection rectangle ===
   setSelectionStart(null);
   setSelectionEnd(null);
-  drawCanvas(activePage); // Redraw canvas
+  drawCanvas(activePage);
 };
+
+
 
 
  const handleKeyDown = (e) => {
@@ -1244,45 +1496,87 @@ useEffect(() => {
   
 // Function to handle adding new text to the canvas
 const addTextToCanvas = () => {
-  if (newText.trim() === '') return;
-  const fontSizeToUse = newFontSize || fontSize;
-  const padding = fontSizeToUse * 0.2; // 20% padding
-  const ctx = canvasRefs.current[activePage]?.getContext('2d');
-  const font = `${fontSizeToUse}px Arial`;
+  if (!newText || newText.trim() === "") return;
 
+  const canvas = canvasRefs.current[activePage];
+  if (!canvas) return;
+
+  const { ctx } = setupCanvasA4(canvasRefs.current[activePage], /* portrait? */ true);
   if (!ctx) return;
 
-  ctx.font = font;
+  const fontFamily = "Lato";                 // match what you export with pdf-lib
+  const fontSizeToUse = Number(newFontSize);
+  const padding = Math.round(fontSizeToUse * 0.2);
 
-  // Ensure maxWidth is valid and usable
-  const measuredTextWidth = ctx.measureText(newText).width;
-  const effectiveMaxWidth = maxWidth && maxWidth > fontSizeToUse
-    ? maxWidth
-    : measuredTextWidth + 20;
+  // Prepare font for measuring/wrapping
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `${fontSizeToUse}px ${fontFamily}`;
 
-  // Use corrected wrapText logic
-  const wrappedText = wrapText(newText, effectiveMaxWidth, ctx, 100, 100, fontSizeToUse);
+  // Choose an effective maxWidth:
+  // if user provided a sensible one, use it; otherwise pick a safe default
+  const measuredWidth = ctx.measureText(newText).width;
+  const safeDefaultMax = Math.max(measuredWidth + 20, fontSizeToUse * 2);
+  const effectiveMaxWidth =
+    (typeof maxWidth === "number" && maxWidth > fontSizeToUse) ? maxWidth : safeDefaultMax;
 
-  // Construct new textItems array
-  const newItems = wrappedText.map((line) => ({
-    text: line.text,
-    x: line.x,
-    y: line.y,
+  // Wrap into CANVAS coordinates (no PDF conversion here)
+  const lines = wrapText(newText, ctx, {
+    x: 50,                 // starting X (adjust as you like)
+    y: 50,                 // starting Y (adjust as you like)
+    maxWidth: effectiveMaxWidth,
     fontSize: fontSizeToUse,
-    boxPadding: padding,
-    index: activePage
-  }));
+    fontFamily,
+    lineGap: 0,
+  });
 
-  const updatedItems = [...textItems, ...newItems];
-  setTextItems(updatedItems);
-  saveTextItemsToLocalStorage(updatedItems);
-  updatePageItems('textItems', newItems);
-  //history.pushSnapshotToUndo(activePage);
-  drawCanvas(activePage);
+  // Build items (top-anchored). We store 'anchor: "top"' for clarity/compat.
+  const itemsToAdd = lines.map((ln) => {
+      // After you compute the canvas top-anchored y (e.g., `yTop`)
+    // let yTop = toCanvasTopLeftY(ln)
+    // console.log("[A] add", {
+    //   page: activePage,
+    //   fontSize: newFontSize,
+    //   yCanvasTop: R(yTop),
+    //   CANVAS_HEIGHT,
+    //   yNormTopExpected: R(yTop / CANVAS_HEIGHT),
+    // });
+    return {
+      text: ln.text,
+      x: ln.x,
+      y: ln.y,
+      fontSize: fontSizeToUse,
+      boxPadding: padding,
+      index: activePage,
+      anchor: "top",
+      fontFamily,            // optional, helps keep draw/export consistent
+    }
+  });
+
+
+  // Snapshot BEFORE state change for undo
+  pushSnapshotToUndo(activePage);
+
+  // Update global textItems
+  setTextItems((prev) => [...prev, ...itemsToAdd]);
+
+  // Sync into the pages slice so persistence/refresh works
+setPages(prev => {
+  const next = [...prev];
+  const page = next[activePage] || { textItems: [], imageItems: [] };
+  next[activePage] = {
+    ...page,
+    textItems: [...(page.textItems || []), ...itemsToAdd.map(it => ({ ...it }))], // spread preserves xNorm/yNormTop
+  };
+  return next;
+});
+
+  // (If you don't have the effect-driven redraw yet, you can force it)
+  // drawCanvas(activePage);
 
   // Reset modal state
   setShowAddTextModal(false);
-  setNewText('');
+  setNewText("");
   setNewFontSize(fontSize);
   setMaxWidth(200);
 };
@@ -1290,41 +1584,124 @@ const addTextToCanvas = () => {
 
 
 const addTextToCanvas3 = (textArray = []) => {
-  if (newText.trim() !== '' || textArray.length > 0) {
-    const padding = newFontSize * 0.2; // Calculate dynamic padding (20% of font size)
-    let itemsToAdd = convertTextItemsToPdfCoordinates(textArray);
-    
-    if (textArray.length > 0) {
-      // If textArray is provided, use it to create items
-      itemsToAdd = itemsToAdd.map((item) => ({
-        text: item.text,
-        fontSize: newFontSize,
-        boxPadding: padding,
-        x: item.xPdf,
-        y: item.yPdf-5,
-        index: item.index,
-      }));
-    } else {
-      // Default behavior for adding a single new text item
-      const wrappedText = wrapText(newText, maxWidth); // Wrap text based on maxWidth
-      itemsToAdd = wrappedText.map((e) => ({
-        text: e.text,
-        fontSize: newFontSize,
-        boxPadding: padding,
-        x: e.x,
-        y: e.y,
-        index: e.index,
-      }));
-    }
+  const usingImport = Array.isArray(textArray) && textArray.length > 0;
 
-    const updatedItems = [...textItems, ...itemsToAdd];
-    setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
-    setShowAddTextModal(false); // Close modal
-    setNewText(''); // Reset text input
-    setNewFontSize(fontSize); // Reset font size input
-    setMaxWidth(200); // Reset maxWidth input
-    drawCanvas(activePage); // Redraw canvas to show new text immediately
+  if (!usingImport && (!newText || newText.trim() === "")) return;
+
+  // snapshot BEFORE mutation (for undo)
+  if (typeof pushSnapshotToUndo === "function") {
+    pushSnapshotToUndo(activePage);
+  } else if (history?.pushSnapshotToUndo) {
+    history.pushSnapshotToUndo(activePage);
+  }
+
+  const fontFamily = "Lato"; // keep in sync with draw & PDF export
+  const fallbackSize = Number(newFontSize) || Number(fontSize) || 16;
+
+  let itemsToAdd = [];
+
+  if (usingImport) {
+    // Backend path: items contain xNorm (0..1 from left), yNormTop (0..1 from top)
+    itemsToAdd = textArray.map((src) => {
+      const size = Number(src.fontSize) || fallbackSize;
+
+      const xNorm = src.xNorm != null ? clamp01(src.xNorm)
+                  : (src.x != null ? clamp01(src.x / CANVAS_WIDTH) : 0);
+
+      const yNormTop = src.yNormTop != null ? clamp01(src.yNormTop)
+                     : (src.y != null ? clamp01(src.y / CANVAS_HEIGHT) : 0);
+
+      const x = Math.round(xNorm * CANVAS_WIDTH);
+      const y = Math.round(yNormTop * CANVAS_HEIGHT);
+
+      const padding = src.boxPadding != null ? Number(src.boxPadding) : Math.round(size * 0.2);
+
+      return {
+        text: String(src.text ?? ""),
+        fontSize: size,
+        fontFamily,
+        boxPadding: padding,
+        // store BOTH pixel and normalized for round-trip + rendering
+        x, y,
+        xNorm, yNormTop,
+        index: src.index ?? activePage,
+        anchor: "top",
+      };
+    });
+  } else {
+    // Manual entry path: wrap in CANVAS pixels, also store normalized
+    const canvas = canvasRefs.current[activePage];
+    const ctx = canvas?.getContext("2d");
+    if (!ctx) return;
+
+    const size = fallbackSize;
+    const padding = Math.round(size * 0.2);
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = `${size}px ${fontFamily}`;
+
+    // pick a sensible maxWidth
+    const measured = ctx.measureText(newText).width;
+    const safeDefault = Math.max(measured + 20, size * 2);
+    const effectiveMaxWidth =
+      (typeof maxWidth === "number" && maxWidth > size) ? maxWidth : safeDefault;
+
+    // wrapText should return CANVAS coords (top-left anchored)
+    // Expected shape per line: { text, x, y }
+    const lines = wrapText(newText, ctx, {
+      x: 50,
+      y: 50,
+      maxWidth: effectiveMaxWidth,
+      fontSize: size,
+      fontFamily,
+      lineGap: 0,
+    });
+
+    itemsToAdd = lines.map((ln) => {
+      const x = Math.round(ln.x);
+      const y = Math.round(ln.y);
+      const xNorm = x / CANVAS_WIDTH;
+      const yNormTop = y / CANVAS_HEIGHT;
+
+      return {
+        text: ln.text,
+        fontSize: size,
+        fontFamily,
+        boxPadding: padding,
+        x, y,
+        xNorm, yNormTop,
+        index: activePage,
+        anchor: "top",
+      };
+    });
+  }
+
+  // update flat items
+  setTextItems((prev) => [...prev, ...itemsToAdd]);
+
+  // also sync into pages[activePage] so it persists on refresh
+  setPages((prev) => {
+    const next = Array.isArray(prev) ? [...prev] : [];
+    const page = next[activePage] || { textItems: [], imageItems: [] };
+    next[activePage] = {
+      ...page,
+      textItems: [...(page.textItems || []), ...itemsToAdd.map(it => ({ ...it }))],
+    };
+    return next;
+  });
+
+  // reset modal UI (when coming from manual entry)
+  if (!usingImport) {
+    setShowAddTextModal(false);
+    setNewText("");
+    setNewFontSize(fontSize);
+    setMaxWidth(200);
+  }
+
+  // force redraw if your effects don’t auto-trigger
+  if (typeof drawCanvas === "function") {
+    drawCanvas(activePage);
   }
 };
 
@@ -1360,6 +1737,7 @@ const addTextToCanvas2 = (textBox) => {
 // Handle deleting the selected image
 const deleteSelectedImage = () => {
   if (selectedImageIndex !== null) {
+    console.log(imageItems);
     const filteredItems = imageItems.filter((item, index) => {
       if (item.index !== activePage) return true; // keep images from other pageList
       const pageImages = imageItems.filter(i => i.index === activePage);
@@ -1367,60 +1745,93 @@ const deleteSelectedImage = () => {
       return item !== targetItem; // remove only the matched item from current page
     });
 
+    console.log(filteredItems);
+
     setImageItems(filteredItems);
     saveImageItemsToLocalStorage(filteredItems);
+    updatePageItems('imageItems', filteredItems);
     setSelectedImageIndex(null);
     drawCanvas(activePage);
   }
 };
 
 
-const wrapText = (text, maxWidth) => {
-  const ctx = canvasRefs.current[activePage].getContext('2d');
+const wrapText = (text, ctx, {
+  x = 50,
+  y = 50,
+  maxWidth = Infinity,
+  fontSize = 16,
+  fontFamily = "Lato",
+  lineGap = 0,              // extra gap between lines in pixels
+} = {}) => {
+  if (!text) return [];
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `${fontSize}px ${fontFamily}`;
+
+  // Measure a representative glyph to get ascent+descent for line height
+  const m = ctx.measureText("Mg");
+  const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
+  const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.2;
+  const lineHeight = Math.ceil(ascent + descent + lineGap);
+
   const lines = [];
-  const paragraphs = text.split('\n'); // Split text into paragraphs by newline
+  const paragraphs = String(text).split("\n");
 
-  paragraphs.forEach((paragraph) => {
-    const words = paragraph.split(' ');
-    let currentLine = '';
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(" ");
+    let current = "";
 
-    words.forEach((word, wordIndex) => {
-      let testLine = currentLine + (currentLine ? ' ' : '') + word;
-      let testWidth = ctx.measureText(testLine).width;
+    for (let w = 0; w < words.length; w++) {
+      const word = words[w];
+      const next = current ? current + " " + word : word;
+      const nextWidth = ctx.measureText(next).width;
+      const wordWidth = ctx.measureText(word).width;
 
-      // If the word itself exceeds maxWidth, break it into smaller parts
-      if (ctx.measureText(word).width > maxWidth) {
+      // If a single word is wider than maxWidth, break it by characters
+      if (wordWidth > maxWidth) {
+        // push the current line first
+        if (current) {
+          lines.push(current);
+          current = "";
+        }
+        let chunk = "";
         for (let i = 0; i < word.length; i++) {
-          const testWordLine = currentLine + word[i];
-          const testWordWidth = ctx.measureText(testWordLine).width;
-
-          if (testWordWidth > maxWidth && currentLine) {
-            lines.push(currentLine); // Push the current line
-            currentLine = word[i]; // Start a new line with the current letter
+          const tryChunk = chunk + word[i];
+          const chunkWidth = ctx.measureText(tryChunk).width;
+          if (chunkWidth > maxWidth && chunk) {
+            lines.push(chunk);
+            chunk = word[i];
           } else {
-            currentLine += word[i]; // Add the letter to the current line
+            chunk = tryChunk;
           }
         }
-        currentLine += ''; // Add a space after breaking the word
-      } else if (testWidth > maxWidth && currentLine) {
-        lines.push(currentLine); // Push the current line
-        currentLine = word; // Start a new line with the word
+        if (chunk) {
+          current = chunk; // continue current with the leftover piece
+        }
+      } else if (nextWidth > maxWidth && current) {
+        // wrap before adding word
+        lines.push(current);
+        current = word;
       } else {
-        currentLine = testLine; // Continue adding words to the current line
+        current = next;
       }
 
-      // If it's the last word in the paragraph, push the current line
-      if (wordIndex === words.length - 1 && currentLine) {
-        lines.push(currentLine);
-        currentLine = '';
+      if (w === words.length - 1 && current) {
+        lines.push(current);
+        current = "";
       }
-    });
-  });
+    }
+    // keep blank line if paragraph ends with an empty current
+    if (paragraph === "" ) lines.push("");
+  }
 
+  // Map to positioned lines (top-anchored)
   return lines.map((line, i) => ({
     text: line,
-    x: 50, // Default starting x-coordinate
-    y: 50 + i * (fontSize + 5), // Adjust y-coordinate for each line
+    x: Math.round(x),
+    y: Math.round(y + i * lineHeight),
   }));
 };
 
@@ -1432,61 +1843,170 @@ const wrapText = (text, maxWidth) => {
 
 
 
-const saveAllPagesAsPDF = async () => {
+// --- helpers ---
+async function loadArrayBuffer(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
+  return await res.arrayBuffer();
+}
+
+function pdfAscentAt(font, size) {
+  if (typeof font.ascentAtSize === "function") return font.ascentAtSize(size);
+  if (typeof font.heightAtSize === "function") return font.heightAtSize(size) * 0.83;
+  return size * 0.8;
+}
+
+// Converges on the *same* top-left canvas coordinates you draw with
+function resolveTopLeft(item, W, H) {
+  const hasNorm = item.xNorm != null && item.yNormTop != null;
+
+  const xTop = hasNorm ? Number(item.xNorm) * W : Number(item.x ?? 0) - item.boxPadding;
+  const yTop = hasNorm ? Number(item.yNormTop) * H : Number(item.y ?? 0);
+
+  const xNorm = hasNorm ? Number(item.xNorm) : xTop / W;
+  const yNormTop = hasNorm ? Number(item.yNormTop) : yTop / H;
+
+  let w = item.width - item.padding;
+  let h = item.height - item.padding;
+  if (w == null && item.widthNorm  != null) w = Number(item.widthNorm)  * W;
+  if (h == null && item.heightNorm != null) h = Number(item.heightNorm) * H;
+
+  const wNorm = w != null ? (Number(w) / W) : (item.widthNorm ?? null);
+  const hNorm = h != null ? (Number(h) / H) : (item.heightNorm ?? null);
+
+  return { xTop, yTop, xNorm, yNormTop, w, h, wNorm, hNorm };
+}
+
+
+
+function clipToPage(pdfPage, W, H) {
+  pdfPage.pushOperators(
+    pushGraphicsState(),
+    moveTo(0, 0),
+    lineTo(W, 0),
+    lineTo(W, H),
+    lineTo(0, H),
+    closePath(),
+    clip(),   // W operator
+    endPath() // n
+  );
+}
+
+function unclip(pdfPage) {
+  pdfPage.pushOperators(popGraphicsState());
+}
+
+async function saveAllPagesAsPDF() {
   const pdfDoc = await PDFDocument.create();
+  pdfDoc.registerFontkit?.(fontkit);
 
-  for (let i = 0; i < pageList.length; i++) {
-    const canvas = canvasRefs.current[i];
+  // Embed EXACT font (public assets are served from “/”, not “/public”)
+  let pdfFont;
+  try {
+    const fontBytes = await loadArrayBuffer("/fonts/Lato-Regular.ttf");
+    pdfFont = await pdfDoc.embedFont(fontBytes, { subset: true });
+  } catch {
+    pdfFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  }
 
-    // Fallback sizes if a canvas ref isn't attached yet
-    const width  = canvas?.width  ?? 1024;
-    const height = canvas?.height ?? 768;
+  const manifest = {
+    pageSize: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+    pages: [],
+  };
 
-    const pdfPage = pdfDoc.addPage([width, height]);
+  const pageCount = Array.isArray(pageList) ? pageList.length : 0;
 
-    // ✅ get items for THIS page directly from the pages slice
-    const { textItems = [], imageItems = [] } = pageList[i] ?? {};
+  for (let i = 0; i < pageCount; i++) {
+    const W = CANVAS_WIDTH;
+    const H = CANVAS_HEIGHT;
+    const pdfPage = pdfDoc.addPage([W, H]);
 
-    // ---- draw text ----
+    const page = pageList[i] ?? {};
+    const textItems = Array.isArray(page.textItems) ? page.textItems : [];
+    const imageItems = Array.isArray(page.imageItems) ? page.imageItems : [];
+
+    const pageManifest = { texts: [], images: [] };
+
+    // **Clip to the page rectangle** so overflow matches canvas behavior
+    clipToPage(pdfPage, W, H);
+
+    // ---- TEXT (top-left canvas → PDF baseline) ----
     for (const item of textItems) {
-      const size = item.fontSize ?? DEFAULT_FONT_SIZE;
-      pdfPage.drawText(item.text ?? "", {
-        x: item.x ?? 0,
-        // PDF has origin at bottom-left; canvas typically top-left
-        // subtract size to approximate top-left anchoring for text
-        y: height - (item.y ?? 0) - size,
+      const text = String(item.text ?? "");
+      if (!text) continue;
+
+      const size = Number(item.fontSize) || 16;
+      const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
+
+      // Baseline so glyph top == yTop
+      const asc = pdfAscentAt(pdfFont, size);
+      const baseline = H - yTop+item.boxPadding - asc;
+
+      // **No rounding**: keep floats to avoid “falling off” near edges
+      pdfPage.drawText(text, {
+        x: xTop,
+        y: baseline,
         size,
+        font: pdfFont,
         color: rgb(0, 0, 0),
-        // you can pass maxWidth if you stored it:
-        // maxWidth: item.maxWidth,
+      });
+
+      pageManifest.texts.push({
+        text,
+        xNorm: +xNorm.toFixed(6),
+        yNormTop: +yNormTop.toFixed(6),
+        fontSize: size,
+        anchor: "top",
+        index: item.index,
       });
     }
 
-    // ---- draw images ----
+    // ---- IMAGES (top-left canvas → bottom-left PDF) ----
     for (const item of imageItems) {
-      const src = (item).data ?? (item).src; // support either .data or .src
+      const src = item.data || item.src;
       if (!src || typeof src !== "string") continue;
 
-      // Get bytes (works for data URLs and normal URLs)
-      const res = await fetch(src);
-      const imgBytes = await res.arrayBuffer();
+      const { xTop, yTop, xNorm, yNormTop, w, h } = resolveTopLeft(item, W, H);
 
-      // Pick the right embedder
-      const isJpg = src.startsWith("data:image/jpeg") || src.endsWith(".jpg") || src.endsWith(".jpeg");
-      const pdfImage = isJpg ? await pdfDoc.embedJpg(imgBytes) : await pdfDoc.embedPng(imgBytes);
+      const bytes = await loadArrayBuffer(src);
+      const isJpg = /^data:image\/jpeg/i.test(src) || /\.jpe?g$/i.test(src);
+      const pdfImage = isJpg ? await pdfDoc.embedJpg(bytes) : await pdfDoc.embedPng(bytes);
 
-      const w = item.width  ?? pdfImage.width;
-      const h = item.height ?? pdfImage.height;
+      const drawW = w ?? pdfImage.width;
+      const drawH = h ?? pdfImage.height;
 
       pdfPage.drawImage(pdfImage, {
-        x: item.x ?? 0,
-        // convert top-left canvas to bottom-left PDF coords
-        y: height - (item.y ?? 0) - h,
-        width:  w,
-        height: h,
+        x: xTop,
+        y: H - yTop - drawH, // flip Y
+        width: drawW,
+        height: drawH,
+      });
+
+      pageManifest.images.push({
+        xNorm: +xNorm.toFixed(6),
+        yNormTop: +yNormTop.toFixed(6),
+        widthNorm: +((drawW) / W).toFixed(6),
+        heightNorm: +((drawH) / H).toFixed(6),
+        ref: item.ref ?? null,
       });
     }
+
+    // End clipping for this page
+    unclip(pdfPage);
+
+    manifest.pages.push(pageManifest);
   }
+
+  // Attach manifest for perfect re-import (optional)
+  try {
+    const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+    await pdfDoc.attach?.(manifestBytes, "manifest.json", {
+      mimeType: "application/json",
+      description: "Normalized coordinates for texts/images.",
+      creationDate: new Date(),
+      modificationDate: new Date(),
+    });
+  } catch { /* older pdf-lib, ignore */ }
 
   const pdfBytes = await pdfDoc.save();
   const blob = new Blob([pdfBytes], { type: "application/pdf" });
@@ -1496,7 +2016,8 @@ const saveAllPagesAsPDF = async () => {
   a.download = "multi_page_document.pdf";
   a.click();
   URL.revokeObjectURL(url);
-};
+}
+
 
   useEffect(() => {
     drawCanvas(activePage);
@@ -1562,44 +2083,78 @@ const saveAllPagesAsPDF = async () => {
 
 const handleDoubleClick = (e) => {
   const canvas = canvasRefs.current[activePage];
-  const { offsetX, offsetY } = getMousePosOnCanvas(e, canvas);
-  const ctx = canvasRefs.current[activePage].getContext('2d');
+  if (!canvas) return;
 
-  textItems.forEach((item, index) => {
-    if (item.index !== activePage) return;
+  // Your getMousePosOnCanvas returns backing-store coords; convert to CSS units.
+  const backing = getMousePosOnCanvas(e, canvas); // { offsetX, offsetY } in backing px
+  const { x: mx, y: my } = toCssFromBacking(canvas, backing); // CSS px
 
-    // Set font size for the item before measuring
-    const fontSize = item.fontSize || 16;
-    ctx.font = `${fontSize}px Arial`;
+  const ctx = canvas.getContext('2d');
 
-    // Recalculate padding dynamically if not stored
-    const boxPadding = item.boxPadding ?? (fontSize * 0.2);
+  for (let index = 0; index < textItems.length; index++) {
+    const item = textItems[index];
+    if (item.index !== activePage) continue;
 
-    const metrics = ctx.measureText(item.text);
-    const textWidth = metrics.width;
-    const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+    const fontSize   = Number(item.fontSize) || 16;
+    const fontFamily = item.fontFamily || 'Lato';
+    const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
 
-    const textRect = {
-      x: item.x - boxPadding,
-      y: item.y - textHeight - boxPadding,
-      width: textWidth + boxPadding * 2,
-      height: textHeight + boxPadding * 2,
-    };
+    // Use same settings as drawCanvas
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = `${fontSize}px ${fontFamily}`;
 
-    const isInside =
-      offsetX >= textRect.x &&
-      offsetX <= textRect.x + textRect.width &&
-      offsetY >= textRect.y &&
-      offsetY <= textRect.y + textRect.height;
+    // Resolve item position (prefer normalized)
+    const cssW = CANVAS_WIDTH;   // your logical canvas width
+    const cssH = CANVAS_HEIGHT;  // your logical canvas height
 
+    const hasNorm = item.xNorm != null && item.yNormTop != null;
+
+    const x = hasNorm ? (Math.min(Math.max(item.xNorm, 0), 1) * cssW)
+                      : (Number(item.x) || 0);
+
+    let topY;
+    if (hasNorm) {
+      topY = Math.min(Math.max(item.yNormTop, 0), 1) * cssH; // top-anchored
+    } else {
+      // Legacy anchor conversion → top-anchored y
+      const m = ctx.measureText(item.text || '');
+      const ascent  = (typeof m.actualBoundingBoxAscent  === 'number') ? m.actualBoundingBoxAscent  : fontSize * 0.83;
+      const descent = (typeof m.actualBoundingBoxDescent === 'number') ? m.actualBoundingBoxDescent : fontSize * 0.2;
+      const textHeight = ascent + descent;
+
+      const anchor = item.anchor || 'top'; // 'top' | 'baseline' | 'bottom'
+      const rawY   = Number(item.y) || 0;
+      if (anchor === 'baseline')       topY = rawY - ascent;
+      else if (anchor === 'bottom')    topY = rawY - textHeight;
+      else                              topY = rawY;
+    }
+
+    // Measure with the SAME font to get width/height
+    const m2 = ctx.measureText(item.text || '');
+    const ascent2  = (typeof m2.actualBoundingBoxAscent  === 'number') ? m2.actualBoundingBoxAscent  : fontSize * 0.83;
+    const descent2 = (typeof m2.actualBoundingBoxDescent === 'number') ? m2.actualBoundingBoxDescent : fontSize * 0.2;
+    const textWidth  = m2.width;
+    const textHeight = ascent2 + descent2;
+
+    // Top-anchored bounding box
+    const boxX = x - padding;
+    const boxY = topY - padding;
+    const boxW = textWidth + padding * 2;
+    const boxH = textHeight + padding * 2;
+
+    // Hit-test in CSS units
+    const isInside = (mx >= boxX && mx <= boxX + boxW && my >= boxY && my <= boxY + boxH);
     if (isInside) {
       setIsEditing(true);
       setEditingText(item.text);
-      setEditingFontSize(item.fontSize);
+      setEditingFontSize(fontSize);
       setEditingIndex(index);
+      return;
     }
-  });
+  }
 };
+
 
 // Function to save the edited text and font size
 const saveEditedText = () => {
@@ -1861,7 +2416,7 @@ return (
             display: 'block',
             width: canvasWidth,
             height: canvasHeight,
-            border: activePage === index ? '2px solid dodgerblue' : '1px solid #ccc',
+            border: activePage === index ? '1px solid dodgerblue' : '1px solid #ccc',
             backgroundColor: 'white',
             pointerEvents: 'auto',
             userSelect: 'none',

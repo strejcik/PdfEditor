@@ -39,9 +39,20 @@ export function EditorProvider({ children }: PropsWithChildren) {
   // Keep latest slices in refs so bound getters/setters always see fresh data
   const textRef = useRef(text);
   const imagesRef = useRef(images);
+  const hydratedOnceRef = useRef(false);
 
   // Update refs every render
   useEffect(() => { textRef.current = text; imagesRef.current = images; }, [text, images]);
+
+useEffect(() => {
+  if (hydratedOnceRef.current) return;
+  if (!pages.pages || pages.pages.length === 0) return;
+
+  text.hydrateFromPages?.(pages.pages);
+  images.hydrateFromPages?.(pages.pages);
+
+  hydratedOnceRef.current = true;
+}, [pages.pages]);
 
   // Bind ONCE before paint; functions read from refs → always up to date
   useLayoutEffect(() => {

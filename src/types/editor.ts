@@ -12,6 +12,7 @@ export type TextItem = {
 
 export type ImageItem = {
   data:string;
+  image: Base64URLString;
   height:number;
   index:number;
   width:number;
