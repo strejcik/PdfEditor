@@ -10,13 +10,17 @@
       content="Web site created using create-react-app"
     />
     <title>React App</title>
-    <!-- <link as="font" type="font/ttf" href="Lato-Regular.ttf" crossorigin="anonymous" /> -->
-    <style>
-      @font-face {
-        font-family: 'Lato';
-        src: url('Lato-Regular.ttf')  format('truetype'), /* Safari, Android, iOS */
-      }
-    </style>
+<link rel="preload" href="./public/fonts/Lato-Regular.ttf" as="font" type="font/ttf" crossorigin>
+
+<style>
+@font-face {
+  font-family: "Lato";
+  src: url("./public/fonts/Lato-Regular.ttf") format("truetype"); /* ← no trailing comma */
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap; /* or 'block' if you prefer; just be consistent */
+}
+</style>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

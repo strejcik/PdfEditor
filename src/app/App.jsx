@@ -5,14 +5,13 @@ import { DEFAULT_FONT_SIZE, CELL_SIZE, BOX_PADDING, CANVAS_WIDTH, CANVAS_HEIGHT,
 import { getMousePosOnCanvas } from "../utils/canvas/getMousePosOnCanvas";
 import { useEditor } from "../context/EditorProvider";
 import fontkit from "@pdf-lib/fontkit";
-async function loadFontBytes(path) { const r = await fetch(path); return r.arrayBuffer(); }
+import { loadLatoOnce } from "../utils/font/fontLoader";
 // Clip everything to the page box (matches canvas clipping)
 import {
   pushGraphicsState, popGraphicsState,
   moveTo, lineTo, closePath, clip, endPath,
   PDFDocument, StandardFonts, rgb
 } from "pdf-lib";
-
 
 const btnStyle = {
   display: 'block',
@@ -40,30 +39,34 @@ const App = () => {
   const canvasHeight = CANVAS_HEIGHT;
   const pdfWidth = PDF_WIDTH;
   const pdfHeight = PDF_HEIGHT;
+  const fontsReadyRef = useRef(null);
 
 
+//   async function ensureAppFontLoaded(
+//   family = "Lato",
+//   url = "../../public/fonts/Lato-Regular.ttf",
+//   descriptors = { style: "normal", weight: "400", as:"font"}
+// ) {
+//   try {
+//     // Already available?
+//     if (document.fonts?.check?.(`12px "${family}"`)) return;
 
-  async function ensureAppFontLoaded(
-  family = "Lato",
-  url = "/fonts/Lato-Regular.ttf",
-  descriptors = { style: "normal", weight: "400" }
-) {
-  try {
-    // Already available?
-    if (document.fonts?.check?.(`12px "${family}"`)) return;
+//     // Load via FontFace API
+//     const face = new FontFace(family, `url(${url})`, descriptors);
+//     await face.load();
+//     document.fonts.add(face);
 
-    // Load via FontFace API
-    const face = new FontFace(family, `url(${url})`, descriptors);
-    await face.load();
-    document.fonts.add(face);
+//     // Wait until ready to ensure accurate measureText
+//     if (document.fonts?.ready) await document.fonts.ready;
+//   } catch (err) {
+//     // Don’t crash rendering if the font fails to load
+//     console.warn("[fonts] Failed to load", { family, url, err });
+//   }
+// }
 
-    // Wait until ready to ensure accurate measureText
-    if (document.fonts?.ready) await document.fonts.ready;
-  } catch (err) {
-    // Don’t crash rendering if the font fails to load
-    console.warn("[fonts] Failed to load", { family, url, err });
-  }
-}
+useEffect(() => {
+    fontsReadyRef.current = loadLatoOnce("../../public/fonts/Lato-Regular.ttf", "Lato");
+  }, []);
 
 
   function setupCanvasA4(canvas, portrait = true) {
@@ -409,11 +412,17 @@ const wrapTextResponsive = (text, maxWidth, ctx) => {
 };
 
 async function drawCanvas(pageIndex) {
+    // Load the exact font you use for measuring/drawing (same as PDF export)
+  await loadLatoOnce("../../public/fonts/Lato-Regular.ttf", APP_FONT_FAMILY);
+  if (document.fonts?.ready) await document.fonts.ready;
+
+
   const canvas = canvasRefs.current[pageIndex];
   if (!canvas) return;
 
-  // Load the exact font you use for measuring/drawing (same as PDF export)
-  await ensureAppFontLoaded(APP_FONT_FAMILY, "Lato-Regular.ttf");
+
+
+  
 
   // === Size/scale canvas to match its CSS box ===
   const rect  = canvas.getBoundingClientRect();
@@ -422,6 +431,7 @@ async function drawCanvas(pageIndex) {
   canvas.height = Math.round(rect.height * dpr);
 
   const ctx = canvas.getContext("2d");
+  
   // Draw in CSS units (no need to think in backing pixels)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
@@ -1331,7 +1341,7 @@ useEffect(() => {
     setSelectionStart(null);
     setSelectionEnd(null);
     setShouldClearSelectionBox(false);
-    drawCanvas(activePage);
+    requestAnimationFrame(() => drawCanvas(activePage));
   }
 }, [shouldClearSelectionBox]);
 
