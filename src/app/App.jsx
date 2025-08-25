@@ -1615,11 +1615,11 @@ const addTextToCanvas3 = (textArray = []) => {
     itemsToAdd = textArray.map((src) => {
       const size = Number(src.fontSize) || fallbackSize;
 
-      const xNorm = src.xNorm != null ? clamp01(src.xNorm)
-                  : (src.x != null ? clamp01(src.x / CANVAS_WIDTH) : 0);
+      const xNorm = src.xNorm != null ? (src.xNorm)
+                  : (src.x != null ? (src.x / CANVAS_WIDTH) : 0);
 
-      const yNormTop = src.yNormTop != null ? clamp01(src.yNormTop)
-                     : (src.y != null ? clamp01(src.y / CANVAS_HEIGHT) : 0);
+      const yNormTop = src.yNormTop != null ? (src.yNormTop)
+                     : (src.y != null ? (src.y / CANVAS_HEIGHT) : 0);
 
       const x = Math.round(xNorm * CANVAS_WIDTH);
       const y = Math.round(yNormTop * CANVAS_HEIGHT);
@@ -1870,7 +1870,7 @@ function pdfAscentAt(font, size) {
 function resolveTopLeft(item, W, H) {
   const hasNorm = item.xNorm != null && item.yNormTop != null;
 
-  const xTop = hasNorm ? Number(item.xNorm) * W : Number(item.x ?? 0) - item.boxPadding;
+  const xTop = hasNorm ? Number(item.xNorm) * W : Number(item.x ?? 0);
   const yTop = hasNorm ? Number(item.yNormTop) * H : Number(item.y ?? 0);
 
   const xNorm = hasNorm ? Number(item.xNorm) : xTop / W;

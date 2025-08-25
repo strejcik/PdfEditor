@@ -91,14 +91,10 @@ def _extract_manifest_with_pypdf(path):
         reader = PdfReader(path)
         print(reader)
         # --- 0) Non-standard: reader.embeddedFiles (array of dicts) ---
-        # Some producers expose a convenience property with data already pulled out
-        # e.g. [{'name': 'manifest.json', 'embedder': {'fileData': <bytes|base64 str>}, ...}]
         if hasattr(reader, "embeddedFiles") and reader.embeddedFiles:
             for ef in reader.embeddedFiles:
-                # normalize to dict
                 if not isinstance(ef, dict):
                     continue
-                # try a few common name fields
                 name = (
                     ef.get("name")
                     or ef.get("fileName")
@@ -106,7 +102,6 @@ def _extract_manifest_with_pypdf(path):
                     or ef.get("Name")
                     or ""
                 )
-                # payload candidates
                 data = (
                     (ef.get("embedder") or {}).get("fileData")
                     or ef.get("fileData")
@@ -302,6 +297,8 @@ def flatten_manifest_to_payload(manifest):
           ...
         ]
       }
+
+    Note: We do not clamp xNorm / yNormTop; values may be <0 or >1.
     """
     if not isinstance(manifest, dict):
         return None
@@ -436,9 +433,12 @@ def upload_pdf():
                 # Left-most glyph
                 x_left_pdf = min(ch.x0 for ch in chars)
 
-                # Normalize to top-left (0..1)
+                # Normalize relative to page size (no clamping).
+                # These may be <0 if content starts left/above the page,
+                # or >1 if it extends beyond right/bottom.
                 x_norm = (x_left_pdf - x0) / page_w
-                y_norm_top = 1.0 - ((y_top_pdf - y0) / page_h)
+                # y_norm_top: 0 at top edge, 1 at bottom; can be <0 or >1
+                y_norm_top = (y1 - y_top_pdf) / page_h
 
                 pdf_data.append({
                     "text": text,
