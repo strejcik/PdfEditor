@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useLayoutEffect} from 'react';
+import { useRef, useEffect, useState, useLayoutEffect, useCallback} from 'react';
 import axios from 'axios';
 import './App.css'
 import { DEFAULT_FONT_SIZE, CELL_SIZE, BOX_PADDING, CANVAS_WIDTH, CANVAS_HEIGHT, PDF_WIDTH, PDF_HEIGHT } from "../config/constants";
@@ -1444,41 +1444,86 @@ const handleMouseUp = (e) => {
 
 
 
- const handleKeyDown = (e) => {
-if (isTextBoxEditEnabled && textBox) {
+const handleKeyDown = useCallback((e) => {
+  const tag = (e.target?.tagName || "").toLowerCase();
+  const typingInDOMField =
+    tag === "input" || tag === "textarea" || e.target?.isContentEditable;
+
+  // --- NEW: Ctrl+A selects all textItems on the active page ---
+  if (e.ctrlKey && (e.key === "a" || e.key === "A")) {
+    e.preventDefault();
+    const storedTextItems = localStorage?.getItem('textItems');
+    let updatedItems
+    if(storedTextItems?.length === 0) {
+      updatedItems = [...JSON.parse(storedTextItems)];
+    }  else {
+      updatedItems = [...textItems]
+    }
+    
+    const allIds = updatedItems.map((it, idx) => {
+
+      if(it.index === activePage) {
+        return idx;
+      }
+    });
+    setSelectedTextIndexes?.(allIds);
+    setIsTextSelected(true);
+    allIds.forEach(e => {
+      setSelectedTextIndex(e);
+    })
+    return;                              
+  }
+
+  // --- Existing inline editing behavior ---
+  if (isTextBoxEditEnabled && textBox && !typingInDOMField) {
     let updatedText = textBox.text;
 
-    if (e.key === 'Enter') {
-      updatedText += '\n';
-    } else if (e.key === 'Backspace') {
+    if (e.key === "Enter") {
+      updatedText += "\n";
+    } else if (e.key === "Backspace") {
       updatedText = updatedText.slice(0, -1);
-    } else if (e.key.length === 1) {
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // guard against ctrl/cmd/alt-modified keys inserting characters
       updatedText += e.key;
     } else {
       return;
     }
 
-    const ctx = canvasRefs.current[activePage].getContext('2d');
+    const ctx = canvasRefs.current[activePage].getContext("2d");
     ctx.font = `${textBox.fontSize || fontSize}px Arial`;
 
-    const result = wrapTextPreservingNewlinesResponsive(updatedText, ctx, textBox.width, fontSize, textBox.boxPadding || 10);
+    const result = wrapTextPreservingNewlinesResponsive(
+      updatedText,
+      ctx,
+      textBox.width,
+      fontSize,
+      textBox.boxPadding || 10
+    );
 
     setTextBox({
       ...textBox,
       text: updatedText,
       width: result.width,
-      height: result.height
+      height: result.height,
     });
   }
-  };
+}, [
+  isTextBoxEditEnabled,
+  textBox,
+  activePage,
+  canvasRefs,
+  fontSize,
+  textItems,    // add your items source here
+  setSelectedTextIndexes,
+  setIsSelecting,
+]);
+
 useEffect(() => {
-
-
-  window.addEventListener('keydown', handleKeyDown); // changed from keyup
+  window.addEventListener("keydown", handleKeyDown, { passive: false });
   return () => {
-    window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener("keydown", handleKeyDown);
   };
-}, [isTextBoxEditEnabled, textBox, activePage]);
+}, [isTextBoxEditEnabled, textBox, activePage, textItems]);
 
   const handleTextMove = (e) => {
     
@@ -1747,7 +1792,6 @@ const addTextToCanvas2 = (textBox) => {
 // Handle deleting the selected image
 const deleteSelectedImage = () => {
   if (selectedImageIndex !== null) {
-    console.log(imageItems);
     const filteredItems = imageItems.filter((item, index) => {
       if (item.index !== activePage) return true; // keep images from other pageList
       const pageImages = imageItems.filter(i => i.index === activePage);
@@ -1755,7 +1799,6 @@ const deleteSelectedImage = () => {
       return item !== targetItem; // remove only the matched item from current page
     });
 
-    console.log(filteredItems);
 
     setImageItems(filteredItems);
     saveImageItemsToLocalStorage(filteredItems);
@@ -1976,14 +2019,14 @@ async function saveAllPagesAsPDF() {
       const src = item.data || item.src;
       if (!src || typeof src !== "string") continue;
 
-      const { xTop, yTop, xNorm, yNormTop, w, h } = resolveTopLeft(item, W, H);
+      const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
 
       const bytes = await loadArrayBuffer(src);
       const isJpg = /^data:image\/jpeg/i.test(src) || /\.jpe?g$/i.test(src);
       const pdfImage = isJpg ? await pdfDoc.embedJpg(bytes) : await pdfDoc.embedPng(bytes);
 
-      const drawW = w ?? pdfImage.width;
-      const drawH = h ?? pdfImage.height;
+      const drawW = item.width;
+      const drawH = item.height;
 
       pdfPage.drawImage(pdfImage, {
         x: xTop,
@@ -2378,7 +2421,7 @@ return (
                     setIsImageDragging?.(false);
                     setResizingImageIndex?.(null);
                     setTextBox?.(null);
-
+                    setIsTextSelected(false);
                     // Redraw fresh first page
                     drawCanvas(0);
                   }
