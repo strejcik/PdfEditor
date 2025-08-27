@@ -519,7 +519,11 @@ async function drawCanvas(pageIndex) {
     ctx.font = `${L.fontSize}px ${L.fontFamily}`;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.fillText(item.text || "", Math.round(L.x), Math.round(L.topY));
+    if(item.text.length === 1 || item.text.length === 2) {
+      ctx.fillText(item.text || "", Math.round(L.x), Math.round(L.topY-L.textHeight/2));
+    } else {
+      ctx.fillText(item.text || "", Math.round(L.x), Math.round(L.topY));
+    }
   });
 
   // === DRAW IMAGE ITEMS (normalized-first, off-canvas allowed) ===
@@ -1638,6 +1642,7 @@ setPages(prev => {
 
 
 
+
 const addTextToCanvas3 = (textArray = []) => {
   const usingImport = Array.isArray(textArray) && textArray.length > 0;
 
@@ -1950,6 +1955,59 @@ function unclip(pdfPage) {
 }
 
 async function saveAllPagesAsPDF() {
+    const canvas = canvasRefs.current[activePage];
+  const rect  = canvas.getBoundingClientRect();
+  const ctx = canvas.getContext('2d');
+// Helper: resolve text draw position (x, topY) and metrics in CSS units
+  const resolveTextLayout = (item) => {
+    const fontSize   = Number(item.fontSize) || 16;
+    const fontFamily = item.fontFamily || "Lato";
+    const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.font = `${fontSize}px ${fontFamily}`;
+
+    const m = ctx.measureText(item.text || "");
+    const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
+    const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.2;
+    const textWidth  = m.width;
+    const textHeight = ascent + descent;
+
+    // Prefer normalized; DO NOT CLAMP so we can go off-canvas (negative or >1)
+    const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
+
+    const x = hasNorm
+      ? Number(item.xNorm) * rect.width
+      : (Number(item.x) || 0);
+
+    let topY;
+    if (hasNorm) {
+      topY = Number(item.yNormTop) * rect.height; // can be <0 or >rect.height
+    } else {
+      // Legacy: item.y may be baseline; convert to top if needed
+      const anchor = item.anchor || "baseline"; // "top" | "baseline" | "bottom"
+      const rawY = Number(item.y) || 0;
+      if (anchor === "baseline")      topY = rawY - ascent;
+      else if (anchor === "bottom")   topY = rawY - textHeight;
+      else                            topY = rawY; // already top
+    }
+
+    return {
+      x,
+      topY,
+      fontSize,
+      fontFamily,
+      padding,
+      textWidth,
+      textHeight,
+      ascent,
+      descent,
+    };
+  };
+
+
+
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit?.(fontkit);
 
@@ -1985,6 +2043,7 @@ async function saveAllPagesAsPDF() {
 
     // ---- TEXT (top-left canvas → PDF baseline) ----
     for (const item of textItems) {
+      const L = resolveTextLayout(item);
       const text = String(item.text ?? "");
       if (!text) continue;
 
@@ -1995,7 +2054,27 @@ async function saveAllPagesAsPDF() {
       const asc = pdfAscentAt(pdfFont, size);
       const baseline = H - yTop+item.boxPadding - asc;
 
-      // **No rounding**: keep floats to avoid “falling off” near edges
+      if(text.length === 1 || text.length === 2) {
+        // **No rounding**: keep floats to avoid “falling off” near edges
+        pdfPage.drawText(text, {
+          x: xTop,
+          y: H - yTop+item.boxPadding+L.textHeight/2 - asc,
+          size,
+          font: pdfFont,
+          color: rgb(0, 0, 0),
+        });
+
+      pageManifest.texts.push({
+        text,
+        xNorm: +xNorm.toFixed(6),
+        yNormTop: +yNormTop.toFixed(6),
+        fontSize: size,
+        anchor: "top",
+        index: item.index,
+      });
+      }
+      else {
+        // **No rounding**: keep floats to avoid “falling off” near edges
       pdfPage.drawText(text, {
         x: xTop,
         y: baseline,
@@ -2012,10 +2091,12 @@ async function saveAllPagesAsPDF() {
         anchor: "top",
         index: item.index,
       });
+      }
     }
 
     // ---- IMAGES (top-left canvas → bottom-left PDF) ----
     for (const item of imageItems) {
+      let L = resolveTextLayout(item)
       const src = item.data || item.src;
       if (!src || typeof src !== "string") continue;
 
