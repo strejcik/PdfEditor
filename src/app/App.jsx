@@ -191,24 +191,6 @@ const handleAddImage = async (e) => {
 };
 
 
-const convertToPdfCoordinates = (xCanvas, yCanvas) => {
-  const xPdf = xCanvas; // Direct mapping since dimensions are identical
-  const yPdf = pdfHeight - yCanvas; // Flipping Y-axis for PDF coordinates
-  return { x: xPdf, y: yPdf };
-};
-
-// Function to convert all textItems to PDF coordinates
-const convertTextItemsToPdfCoordinates = (textItems) => {
-  return textItems.map((item) => {
-    let { x, y } = convertToPdfCoordinates(item.x, item.y);
-    
-    return {
-      ...item,
-      xPdf: x,
-      yPdf: y,
-    };
-  });
-};
 
 // useEffect(() => {
 //   const handleMouseMove = (e) => {
@@ -986,19 +968,6 @@ const handleMouseDown = (e) => {
 useEffect(() => { drawCanvas(activePage); }, [activePage, textItems, imageItems]);
 
 
-const snapshotsEqual = (a, b) => {
-  const serialize = (obj) => JSON.stringify(
-    obj.map(item =>
-      Object.keys(item).sort().reduce((acc, key) => {
-        acc[key] = item[key];
-        return acc;
-      }, {})
-    )
-  );
-
-  return serialize(a.textItems) === serialize(b.textItems) &&
-         serialize(a.imageItems) === serialize(b.imageItems);
-};
 
 // const applySnapshotToPage = (snapshot) => {
 //   const newTextItems = snapshot.textItems.map(item => ({ ...item }));
@@ -1356,13 +1325,18 @@ const handleMouseUp = (e) => {
   }
   const canvas = canvasRefs.current[activePage];
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext("2d");
 
   const selX0 = Math.min(selectionStart?.x || 0, selectionEnd?.x || 0);
   const selY0 = Math.min(selectionStart?.y || 0, selectionEnd?.y || 0);
   const selW  = Math.abs((selectionEnd?.x || 0) - (selectionStart?.x || 0));
   const selH  = Math.abs((selectionEnd?.y || 0) - (selectionStart?.y || 0));
   const selectionRect = { x: selX0, y: selY0, width: selW, height: selH };
+
+  const getCanvasPoint = (evt, el) => {
+    const r = el.getBoundingClientRect();
+    return { x: evt.clientX - r.left, y: evt.clientY - r.top };
+  };
 
   if (isResizing) setIsResizing(false);
 
@@ -1438,6 +1412,68 @@ const handleMouseUp = (e) => {
 
     setIsSelecting(false);
     setShouldClearSelectionBox(true);
+  } else {
+    // --- SINGLE-ITEM PICK on click/tap ---
+    const pt = getCanvasPoint(e, canvas); // <- use event coordinates, not selectionStart/End
+
+    const pointInRect = (px, py, r) =>
+      px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+
+    let pickedIdx = null;
+
+    // Pass 1: choose the TOPMOST item that contains the point (iterate from end)
+    for (let i = textItems.length - 1; i >= 0; i--) {
+      const item = textItems[i];
+      if (item.index !== activePage) continue;
+
+      const L = resolveTextLayoutForHit(item, ctx, canvas);
+      const b = L.box; // {x,y,w,h} – tight glyph bbox
+
+      if (pointInRect(pt.x, pt.y, b)) {
+        pickedIdx = i;
+        break; // topmost found
+      }
+    }
+
+    // Pass 2: if none contain, snap to nearest within a small threshold
+    if (pickedIdx === null) {
+      const NEAR_THRESHOLD = 6; // px
+      let bestDist = Infinity;
+
+      for (let i = textItems.length - 1; i >= 0; i--) {
+        const item = textItems[i];
+        if (item.index !== activePage) continue;
+
+        const L = resolveTextLayoutForHit(item, ctx, canvas);
+        const b = L.box;
+
+        const dx =
+          pt.x < b.x ? b.x - pt.x : pt.x > b.x + b.w ? pt.x - (b.x + b.w) : 0;
+        const dy =
+          pt.y < b.y ? b.y - pt.y : pt.y > b.y + b.h ? pt.y - (b.y + b.h) : 0;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist <= NEAR_THRESHOLD && dist < bestDist) {
+          bestDist = dist;
+          pickedIdx = i;
+        }
+      }
+    }
+
+    if (pickedIdx !== null) {
+      // Select exactly one item (use GLOBAL index, not page index)
+      setSelectedTextIndexes([pickedIdx]);
+      setSelectedTextIndex(pickedIdx);
+      setIsTextSelected(true);
+
+      const Lbest = resolveTextLayoutForHit(textItems[pickedIdx], ctx, canvas);
+      setInitialPositions([{ index: pickedIdx, xTop: Lbest.x, yTop: Lbest.topY, activePage }]);
+    } else {
+      // Clicked empty space: clear selection
+      setSelectedTextIndexes([]);
+      setSelectedTextIndex(null);
+      setIsTextSelected(false);
+    }
   }
 
   setSelectionStart(null);
@@ -1448,86 +1484,83 @@ const handleMouseUp = (e) => {
 
 
 
+
+// optional: keep some state in refs to avoid stale closures
+const selectedTextIndexesRef = useRef(selectedTextIndexes);
+useEffect(() => { selectedTextIndexesRef.current = selectedTextIndexes; }, [selectedTextIndexes]);
+
 const handleKeyDown = useCallback((e) => {
   const tag = (e.target?.tagName || "").toLowerCase();
   const typingInDOMField =
     tag === "input" || tag === "textarea" || e.target?.isContentEditable;
 
-  // --- NEW: Ctrl+A selects all textItems on the active page ---
+  // Ctrl + A: select all textItems on the active page
   if (e.ctrlKey && (e.key === "a" || e.key === "A")) {
     e.preventDefault();
-    const storedTextItems = localStorage?.getItem('textItems');
-    let updatedItems
-    if(storedTextItems?.length === 0) {
-      updatedItems = [...JSON.parse(storedTextItems)];
-    }  else {
-      updatedItems = [...textItems]
-    }
-    
-    const allIds = updatedItems.map((it, idx) => {
 
-      if(it.index === activePage) {
-        return idx;
-      }
-    });
-    setSelectedTextIndexes?.(allIds);
-    setIsTextSelected(true);
-    allIds.forEach(e => {
-      setSelectedTextIndex(e);
-    })
-    return;                              
+    // Build ids only for the active page (no undefined holes)
+    const allIds = textItems
+      .map((it, idx) => (it.index === activePage ? idx : null))
+      .filter((v) => v !== null);
+
+    setSelectedTextIndexes(allIds);
+    setIsTextSelected(allIds.length > 0);
+    setSelectedTextIndex(allIds.length ? allIds[allIds.length - 1] : null);
+    return;
   }
 
-  // --- Existing inline editing behavior ---
-  if (isTextBoxEditEnabled && textBox && !typingInDOMField) {
-    let updatedText = textBox.text;
-
-    if (e.key === "Enter") {
-      updatedText += "\n";
-    } else if (e.key === "Backspace") {
-      updatedText = updatedText.slice(0, -1);
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      // guard against ctrl/cmd/alt-modified keys inserting characters
-      updatedText += e.key;
-    } else {
+  if (e.key === "Delete") {
+    e.preventDefault();
+    const toRemove = selectedTextIndexesRef.current;
+    if (toRemove.length > 0) {
+      const updated = textItems.filter((_, i) => !toRemove.includes(i));
+      setTextItems(updated);
+      saveTextItemsToLocalStorage(updated);
+      updatePageItems("textItems", updated.filter(it => it.index === activePage));
+      setSelectedTextIndexes([]);
+      setIsTextSelected(false);
+      setSelectedTextIndex(null);
       return;
     }
+  }
+
+  // TextBox inline typing
+  if (isTextBoxEditEnabled && textBox && !typingInDOMField) {
+    let updatedText = textBox.text;
+    if (e.key === "Enter")       updatedText += "\n";
+    else if (e.key === "Backspace") updatedText = updatedText.slice(0, -1);
+    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey)
+      updatedText += e.key;
+    else return;
 
     const ctx = canvasRefs.current[activePage].getContext("2d");
     ctx.font = `${textBox.fontSize || fontSize}px Arial`;
-
     const result = wrapTextPreservingNewlinesResponsive(
-      updatedText,
-      ctx,
-      textBox.width,
-      fontSize,
-      textBox.boxPadding || 10
+      updatedText, ctx, textBox.width, fontSize, textBox.boxPadding || 10
     );
-
-    setTextBox({
-      ...textBox,
-      text: updatedText,
-      width: result.width,
-      height: result.height,
-    });
+    setTextBox({ ...textBox, text: updatedText, width: result.width, height: result.height });
   }
 }, [
-  isTextBoxEditEnabled,
-  textBox,
+  // keep these minimal—avoid re-creating handler constantly
   activePage,
   canvasRefs,
   fontSize,
-  textItems,    // add your items source here
+  isTextBoxEditEnabled,
+  textBox,
+  textItems,
   setSelectedTextIndexes,
-  setIsSelecting,
+  setIsTextSelected,
+  setSelectedTextIndex,
+  setTextItems
 ]);
 
 useEffect(() => {
-  window.addEventListener("keydown", handleKeyDown, { passive: false });
+  // Use document for better reliability; capture=false is fine
+  document.addEventListener("keydown", handleKeyDown, { passive: false });
   return () => {
-    window.removeEventListener("keydown", handleKeyDown);
+    document.removeEventListener("keydown", handleKeyDown);
   };
-}, [isTextBoxEditEnabled, textBox, activePage, textItems]);
+}, [handleKeyDown]);  // <-- depend on the handler itself
 
   const handleTextMove = (e) => {
     
