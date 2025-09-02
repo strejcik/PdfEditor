@@ -428,12 +428,12 @@ async function drawCanvas(pageIndex) {
     const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
 
     ctx.textAlign = "left";
-    ctx.textBaseline = "top";
+    ctx.textBaseline = "alphabetic";
     ctx.font = `${fontSize}px ${fontFamily}`;
 
     const m = ctx.measureText(item.text || "");
-    const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
-    const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.2;
+    const ascent  = m.actualBoundingBoxAscent;
+    const descent = m.actualBoundingBoxDescent
     const textWidth  = m.width;
     const textHeight = ascent + descent;
 
@@ -500,12 +500,8 @@ async function drawCanvas(pageIndex) {
     ctx.fillStyle = "black";
     ctx.font = `${L.fontSize}px ${L.fontFamily}`;
     ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    if(item.text.length === 1 || item.text.length === 2) {
-      ctx.fillText(item.text || "", Math.round(L.x), Math.round(L.topY-L.textHeight/2));
-    } else {
-      ctx.fillText(item.text || "", Math.round(L.x), Math.round(L.topY));
-    }
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(item.text || "", Math.round(L.x), Math.round(L.topY + L.textHeight));
   });
 
   // === DRAW IMAGE ITEMS (normalized-first, off-canvas allowed) ===
@@ -589,7 +585,7 @@ async function drawCanvas(pageIndex) {
     const boxFontSize = textBox.fontSize || fontSize;
     ctx.font = `${boxFontSize}px ${APP_FONT_FAMILY}`;
     ctx.textAlign = "left";
-    ctx.textBaseline = "top";
+    ctx.textBaseline = "alphabetic";
 
     const wrapped = wrapTextPreservingNewlinesResponsive(
       textBox.text,
@@ -745,7 +741,7 @@ function resolveTextLayoutForHit(item, ctx, canvas) {
 
   ctx.save();
   ctx.textAlign = "left";
-  ctx.textBaseline = "top";
+  ctx.textBaseline = "alphabetic";
   ctx.font = `${fontSize}px ${fontFamily}`;
 
   const m = ctx.measureText(item.text || "");
@@ -1028,7 +1024,7 @@ function resolveTextLayoutForHit(item, ctx, canvas) {
 
   ctx.save();
   ctx.textAlign = "left";
-  ctx.textBaseline = "top";
+  ctx.textBaseline = "alphabetic";
   ctx.font = `${fontSize}px ${fontFamily}`;
 
   const m = ctx.measureText(item.text || "");
@@ -1602,7 +1598,7 @@ const addTextToCanvas = () => {
 
   // Prepare font for measuring/wrapping
   ctx.textAlign = "left";
-  ctx.textBaseline = "top";
+  ctx.textBaseline = "alphabetic";
   ctx.font = `${fontSizeToUse}px ${fontFamily}`;
 
   // Choose an effective maxWidth:
@@ -1731,7 +1727,7 @@ const addTextToCanvas3 = (textArray = []) => {
     const padding = Math.round(size * 0.2);
 
     ctx.textAlign = "left";
-    ctx.textBaseline = "top";
+    ctx.textBaseline = "alphabetic";
     ctx.font = `${size}px ${fontFamily}`;
 
     // pick a sensible maxWidth
@@ -1858,7 +1854,7 @@ const wrapText = (text, ctx, {
   if (!text) return [];
 
   ctx.textAlign = "left";
-  ctx.textBaseline = "top";
+  ctx.textBaseline = "alphabetic";
   ctx.font = `${fontSize}px ${fontFamily}`;
 
   // Measure a representative glyph to get ascent+descent for line height
@@ -1998,12 +1994,12 @@ async function saveAllPagesAsPDF() {
     const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
 
     ctx.textAlign = "left";
-    ctx.textBaseline = "top";
+    ctx.textBaseline = "alphabetic";
     ctx.font = `${fontSize}px ${fontFamily}`;
 
     const m = ctx.measureText(item.text || "");
-    const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
-    const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.2;
+    const ascent  = m.actualBoundingBoxAscent;
+    const descent = m.actualBoundingBoxDescent;
     const textWidth  = m.width;
     const textHeight = ascent + descent;
 
@@ -2084,31 +2080,9 @@ async function saveAllPagesAsPDF() {
       const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
 
       // Baseline so glyph top == yTop
-      const asc = pdfAscentAt(pdfFont, size);
-      const baseline = H - yTop+item.boxPadding - asc;
+      const baseline = H - yTop - L.textHeight;
 
-      if(text.length === 1 || text.length === 2) {
-        // **No rounding**: keep floats to avoid “falling off” near edges
-        pdfPage.drawText(text, {
-          x: xTop,
-          y: H - yTop+item.boxPadding+L.textHeight/2 - asc,
-          size,
-          font: pdfFont,
-          color: rgb(0, 0, 0),
-        });
-
-      pageManifest.texts.push({
-        text,
-        xNorm: +xNorm.toFixed(6),
-        yNormTop: +yNormTop.toFixed(6),
-        fontSize: size,
-        anchor: "top",
-        index: item.index,
-      });
-      }
-      else {
-        // **No rounding**: keep floats to avoid “falling off” near edges
-      pdfPage.drawText(text, {
+     pdfPage.drawText(text, {
         x: xTop,
         y: baseline,
         size,
@@ -2124,7 +2098,6 @@ async function saveAllPagesAsPDF() {
         anchor: "top",
         index: item.index,
       });
-      }
     }
 
     // ---- IMAGES (top-left canvas → bottom-left PDF) ----
