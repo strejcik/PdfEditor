@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useLayoutEffect, useCallback} from 'react';
+import { useRef, useEffect, useLayoutEffect, useCallback} from 'react';
 import axios from 'axios';
 import './App.css'
 import { DEFAULT_FONT_SIZE, CELL_SIZE, BOX_PADDING, CANVAS_WIDTH, CANVAS_HEIGHT, PDF_WIDTH, PDF_HEIGHT } from "../config/constants";
@@ -151,6 +151,12 @@ useEffect(() => {
       textBox, setTextBox, 
       isTextBoxEditing, setIsTextBoxEditing
     },
+    multiline: {
+      isMultilineMode, setIsMultilineMode,
+      mlText, setMlText,
+      mlConfig, setMlConfig,
+      toggleMultilineMode
+    },
 
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
   } = useEditor(); // ✅ correct
@@ -171,7 +177,7 @@ useEffect(() => {
         drawCanvas(i);
       });
     });
-  }, [pageList, textItems, imageItems /* + any other draw deps */]);
+  }, [pageList, textItems, imageItems, mlText/* + any other draw deps */]);
 
 
 
@@ -420,6 +426,12 @@ async function drawCanvas(pageIndex) {
   // Clear and optional grid in CSS units
   ctx.clearRect(0, 0, rect.width, rect.height);
   if (showGrid) drawGrid(ctx, rect.width, rect.height);
+
+   // ========= MULTI-LINE MODE =========
+  if (isMultilineMode) {
+    drawMultilinePage(ctx, pageIndex);
+    // Optionally early return to hide regular items while in multi-line mode:
+  }
 
   // Helper: resolve text draw position (x, topY) and metrics in CSS units
   const resolveTextLayout = (item) => {
@@ -1536,6 +1548,28 @@ const handleKeyDown = useCallback((e) => {
     );
     setTextBox({ ...textBox, text: updatedText, width: result.width, height: result.height });
   }
+
+  // MULTI-LINE MODE: capture typing
+  if (isMultilineMode && !typingInDOMField) {
+    // prevent browser shortcuts inserting characters
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    e.preventDefault();
+
+    if (e.key === "Enter") {
+      setMlText(t => t + "\n");
+      return;
+    }
+    if (e.key === "Backspace") {
+      setMlText(t => t.slice(0, -1));
+      return;
+    }
+    if (e.key.length === 1) {
+      setMlText(t => t + e.key);
+      return;
+    }
+    return; // ignore other keys for now
+  }
 }, [
   // keep these minimal—avoid re-creating handler constantly
   activePage,
@@ -1544,10 +1578,13 @@ const handleKeyDown = useCallback((e) => {
   isTextBoxEditEnabled,
   textBox,
   textItems,
+  isMultilineMode,
+  mlText,
   setSelectedTextIndexes,
   setIsTextSelected,
   setSelectedTextIndex,
-  setTextItems
+  setTextItems,
+  setMlText,
 ]);
 
 useEffect(() => {
@@ -1579,6 +1616,166 @@ useEffect(() => {
     }
 
   };
+
+
+
+
+
+
+
+
+
+
+
+
+
+  function pdfToCssMargins(rect, marginsPDF) {
+  // scale PDF units → CSS px (respect current canvas rect)
+  const sx = rect.width  / PDF_WIDTH;
+  const sy = rect.height / PDF_HEIGHT;
+  return {
+    left:   marginsPDF.left   * sx,
+    right:  marginsPDF.right  * sx,
+    top:    marginsPDF.top    * sy,
+    bottom: marginsPDF.bottom * sy,
+  };
+}
+
+// returns { lines: [{text,x,y}], lineHeight, clipped:boolean }
+function wrapParagraphsToWidth(ctx, text, {
+  x, y, maxWidth, fontSize, fontFamily, lineGap = 0, maxHeight = Infinity
+}) {
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `${fontSize}px ${fontFamily}`;
+
+  // robust line height from tight metrics
+  const probe = ctx.measureText("Mg");
+  const ascent  = probe.actualBoundingBoxAscent;
+  const descent = probe.actualBoundingBoxDescent
+  const lineHeight = Math.ceil(ascent + descent + lineGap);
+
+  const out = [];
+  let cursorY = y;
+  let clipped = false;
+
+  const paragraphs = String(text ?? "").split("\n");
+
+  for (let p = 0; p < paragraphs.length; p++) {
+    const para = paragraphs[p];
+    // collapse multiple spaces visually but keep a single space for wrapping
+    // (optional: remove this if you want literal spaces)
+    const words = para.split(" ");
+
+    let current = "";
+
+    const pushLine = (s) => {
+      if (cursorY + lineHeight > y + maxHeight) { clipped = true; return false; }
+      out.push({ text: s, x: Math.round(x), y: Math.round(cursorY) });
+      cursorY += lineHeight;
+      return true;
+    };
+
+    for (let w = 0; w < words.length; w++) {
+      const word = words[w];
+      const next = current ? current + " " + word : word;
+
+      const wordWidth = ctx.measureText(word).width;
+      const nextWidth = ctx.measureText(next).width;
+
+      if (wordWidth > maxWidth) {
+        // break the long word by characters
+        if (current) { if (!pushLine(current)) return { lines: out, lineHeight, clipped }; current = ""; }
+        let chunk = "";
+        for (let i = 0; i < word.length; i++) {
+          const tryChunk = chunk + word[i];
+          const cW = ctx.measureText(tryChunk).width;
+          if (cW > maxWidth && chunk) {
+            if (!pushLine(chunk)) return { lines: out, lineHeight, clipped: true };
+            chunk = word[i];
+          } else {
+            chunk = tryChunk;
+          }
+        }
+        current = chunk; // leftover continues on this line
+      } else if (nextWidth > maxWidth && current) {
+        if (!pushLine(current)) return { lines: out, lineHeight, clipped: true };
+        current = word;
+      } else {
+        current = next;
+      }
+
+      if (w === words.length - 1) {
+        if (!pushLine(current)) return { lines: out, lineHeight, clipped: true };
+        current = "";
+      }
+    }
+
+    // blank line (paragraph break)
+    if (para === "") {
+      if (!pushLine("")) return { lines: out, lineHeight, clipped: true };
+    }
+  }
+
+  return { lines: out, lineHeight, clipped };
+}
+
+
+
+function drawMultilinePage(ctx, pageIndex) {
+  // only for active page
+  if (pageIndex !== activePage) return;
+
+  const rect = canvasRefs.current[pageIndex].getBoundingClientRect();
+
+  // convert PDF margins to CSS px
+  const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
+
+  // layout zone
+  const x = m.left;
+  const y = m.top;
+  const maxWidth  = Math.max(0, rect.width  - (m.left + m.right));
+  const maxHeight = Math.max(0, rect.height - (m.top  + m.bottom));
+
+  // draw optional margin guides
+  ctx.save();
+  ctx.strokeStyle = "rgba(0,0,0,0.1)";
+  ctx.setLineDash([4, 4]);
+  ctx.strokeRect(x, y, maxWidth, maxHeight);
+  ctx.restore();
+
+  // wrap + render
+  ctx.fillStyle = "black";
+  const { lines } = wrapParagraphsToWidth(ctx, mlText, {
+    x, y,
+    maxWidth,
+    maxHeight,
+    fontSize: mlConfig.fontSize,
+    fontFamily: mlConfig.fontFamily,
+    lineGap: mlConfig.lineGap,
+  });
+
+  ctx.font = `${mlConfig.fontSize}px ${mlConfig.fontFamily}`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  lines.forEach(line => {
+    // ensure each line paints fully inside the layout box (safety nudge)
+    const mLine = ctx.measureText(line.text || "");
+    const left  = mLine.actualBoundingBoxLeft  ?? 0;
+    const right = mLine.actualBoundingBoxRight ?? mLine.width;
+    const gW    = left + right;
+
+    // nudge x so the painted glyphs stay inside [x, x+maxWidth]
+    let gx = line.x;
+    let glyphLeft = gx - left;
+    if (glyphLeft < x) gx += (x - glyphLeft);
+    if (glyphLeft + gW > x + maxWidth) gx -= (glyphLeft + gW) - (x + maxWidth);
+
+    ctx.fillText(line.text || "", gx, line.y);
+  });
+}
+
 
 
   
@@ -1794,7 +1991,101 @@ const addTextToCanvas3 = (textArray = []) => {
   }
 };
 
+const addTextToCanvasMlMode = () => {
+  const canvas = canvasRefs.current[activePage];
+  if (!canvas) return;
 
+  const ctx = canvasRefs.current[activePage].getContext('2d');
+
+
+
+
+
+
+
+
+
+
+  const rect = canvasRefs.current[activePage].getBoundingClientRect();
+
+  // convert PDF margins to CSS px
+  const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
+
+  // layout zone
+  const x = m.left;
+  const y = m.top;
+  const maxWidth  = Math.max(0, rect.width  - (m.left + m.right));
+  const maxHeight = Math.max(0, rect.height - (m.top  + m.bottom));
+
+
+
+  let { lines } = wrapParagraphsToWidth(ctx, mlText, {
+    x, y,
+    maxWidth,
+    maxHeight,
+    fontSize: mlConfig.fontSize,
+    fontFamily: mlConfig.fontFamily,
+    lineGap: mlConfig.lineGap,
+  });
+
+
+  const padding = newFontSize * 0.2;
+  lines = lines.map(line => {
+    return {
+      index: activePage,
+      x: line.x,
+      y: line.y,
+      anchor: 'top',
+      padding: padding,
+      fontFamily: 'Lato',
+      fontSize: 20,
+      text: line.text
+    }
+  });
+
+//   // Sync into the pages slice so persistence/refresh works
+// setPages(prev => {
+//   const next = [...prev];
+//   const page = next[activePage] || { textItems: [], imageItems: [] };
+//   next[activePage] = {
+//     ...page,
+//     textItems: [...(page.textItems || []), l], // spread preserves xNorm/yNormTop
+//   };
+//   return next;
+// });
+
+
+
+  // const updatedItems = [...textItems, ...lines];
+  // console.log(updatedItems);
+  // pushSnapshotToUndo(activePage);
+  // setTextItems(updatedItems);
+  // saveTextItemsToLocalStorage(updatedItems);
+  // updatePageItems('textItems', updatedItems);
+  // drawCanvas(activePage);
+
+
+  // Snapshot BEFORE state change for undo
+  pushSnapshotToUndo(activePage);
+
+  // Sync into the pages slice so persistence/refresh works
+  setPages(prev => {
+    const next = [...prev];
+    const page = next[activePage] || { textItems: [], imageItems: [] };
+    next[activePage] = {
+      ...page,
+      textItems: [...(page.textItems || []), ...lines], // spread preserves xNorm/yNormTop
+    };
+    return next;
+  });
+
+  const updatedItems = [...textItems, ...lines];
+  setTextItems(updatedItems);
+  // force redraw if your effects don’t auto-trigger
+  if (typeof drawCanvas === "function") {
+    drawCanvas(activePage);
+  }
+}
 
 const addTextToCanvas2 = (textBox) => {
     if (textBox?.text?.trim()) {
@@ -1821,6 +2112,8 @@ const addTextToCanvas2 = (textBox) => {
     drawCanvas(activePage);
   }
 };
+
+
 
 
 // Handle deleting the selected image
@@ -2161,7 +2454,7 @@ async function saveAllPagesAsPDF() {
 
   useEffect(() => {
     drawCanvas(activePage);
-  }, [textItems, showGrid, isTextSelected, pageList, activePage, textBox]);
+  }, [textItems, showGrid, isTextSelected, pageList, activePage, textBox, isMultilineMode]);
 
 
 
@@ -2472,6 +2765,24 @@ return (
             <>
               <button style={btnStyle} onClick={handleUndo}>Undo</button>
               <button style={btnStyle} onClick={handleRedo}>Redo</button>
+            </>
+          )
+        },
+        {
+          title: 'MultiLine Mode',
+          icon: '║',
+          content: (
+            <>
+              <button onClick={() => {
+                toggleMultilineMode();
+                if(isMultilineMode === true) {
+                  addTextToCanvasMlMode();
+                  setMlText('');
+                }
+                drawCanvas(activePage);
+              }}>
+                {isMultilineMode ? "Exit Multi-line mode" : "Multi-line mode"}
+              </button>
             </>
           )
         },

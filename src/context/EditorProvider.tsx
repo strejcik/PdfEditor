@@ -7,6 +7,7 @@ import { useSelection } from "../hooks/useSelection";
 import { useTextBox } from "../hooks/useTextBox";
 import { useImages } from "../hooks/useImages";
 import { usePdf } from "../hooks/usePdf";
+import { useMultiLineMode } from '../hooks/useMultiLineMode';
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -17,6 +18,7 @@ type EditorContextValue = {
   textBox: ReturnType<typeof useTextBox>;
   images: ReturnType<typeof useImages>;
   pdf: ReturnType<typeof usePdf>;
+  multiline: ReturnType<typeof useMultiLineMode>;
 };
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -34,6 +36,7 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const textBox = useTextBox();
   const images = useImages();
   const pdf = usePdf();
+  const multiline = useMultiLineMode();
   const history = useHistory();
 
   // Keep latest slices in refs so bound getters/setters always see fresh data
@@ -65,8 +68,8 @@ useEffect(() => {
   }, [history]);
 
   const value = useMemo<EditorContextValue>(() => ({
-    ui, history, pages, text, selection, textBox, images, pdf
-  }), [ui, history, pages, text, selection, textBox, images, pdf]);
+    ui, history, pages, text, selection, textBox, images, pdf, multiline
+  }), [ui, history, pages, text, selection, textBox, images, pdf, multiline]);
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
 }
