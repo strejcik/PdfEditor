@@ -1827,40 +1827,41 @@ function layoutMultiline(ctx, text, { x, y, maxWidth, maxHeight, fontSize, fontF
 
   const lines = [];
   let cursorY = y;
-  let globalIndex = 0; // index within mlText (code point based)
+  let globalIndex = 0; // caret index in code points (Array.from-based)
 
   const paras = String(text ?? "").split("\n");
+
+  const pushLine = (lineText) => {
+    if (cursorY + lineHeight > y + maxHeight) return false;
+    const units = Array.from(lineText);
+    const charX = [x];
+    let running = 0;
+    for (let i = 0; i < units.length; i++) {
+      running += ctx.measureText(units[i]).width;
+      charX.push(x + running);
+    }
+    lines.push({
+      text: lineText,
+      x,
+      y: cursorY,
+      width: running,
+      height: lineHeight,
+      start: globalIndex,
+      end: globalIndex + units.length, // exclusive
+      charX, // len = units.length + 1
+      ascent, descent,
+    });
+    cursorY += lineHeight;
+    globalIndex += units.length;
+    return true;
+  };
+
   for (let p = 0; p < paras.length; p++) {
     const para = paras[p];
     const words = para.split(" ");
 
-    const pushLine = (lineText) => {
-      if (cursorY + lineHeight > y + maxHeight) return false;
-      // precompute per-char Xs (boundaries)
-      const units = toUnits(lineText);
-      const charX = [x];
-      let running = 0;
-      for (let i = 0; i < units.length; i++) {
-        running += ctx.measureText(units[i]).width;
-        charX.push(x + running); // boundary after char i
-      }
-      lines.push({
-        text: lineText,
-        x,
-        y: cursorY,
-        width: running,
-        height: lineHeight,
-        start: globalIndex,
-        end: globalIndex + units.length, // exclusive
-        charX, // length = units.length + 1
-        ascent, descent,
-      });
-      cursorY += lineHeight;
-      globalIndex += units.length;
-      return true;
-    };
-
     let current = "";
+
     for (let w = 0; w < words.length; w++) {
       const word = words[w];
       const next = current ? current + " " + word : word;
@@ -1869,9 +1870,9 @@ function layoutMultiline(ctx, text, { x, y, maxWidth, maxHeight, fontSize, fontF
       const nextW = ctx.measureText(next).width;
 
       if (wordW > maxWidth) {
-        // break word by characters
+        // Hard break the long word by characters
         if (current) { if (!pushLine(current)) return { lines, lineHeight, ascent, descent }; current = ""; }
-        const units = toUnits(word);
+        const units = Array.from(word);
         let chunk = "";
         for (let i = 0; i < units.length; i++) {
           const tryChunk = chunk + units[i];
@@ -1884,6 +1885,7 @@ function layoutMultiline(ctx, text, { x, y, maxWidth, maxHeight, fontSize, fontF
         }
         current = chunk;
       } else if (nextW > maxWidth && current) {
+        // Wrap BEFORE adding word (same lineHeight as any wrapped line)
         if (!pushLine(current)) return { lines, lineHeight, ascent, descent };
         current = word;
       } else {
@@ -1891,21 +1893,27 @@ function layoutMultiline(ctx, text, { x, y, maxWidth, maxHeight, fontSize, fontF
       }
 
       if (w === words.length - 1) {
+        // Flush last bit of the paragraph
         if (!pushLine(current)) return { lines, lineHeight, ascent, descent };
         current = "";
       }
     }
 
-    // newline char (empty line at paragraph boundary)
+    // Handle the explicit newline BETWEEN paragraphs:
+    // - We DO NOT push an extra empty line here (that caused an extra gap).
+    // - We STILL advance globalIndex by 1 to account for the "\n" caret position.
+    // - If the paragraph itself was empty (i.e., user typed a blank line: "\n\n"),
+    //   then we must render a visual blank line: pushLine("").
     if (p < paras.length - 1) {
-      // represent the newline as an empty line if needed
-      if (!pushLine("")) return { lines, lineHeight, ascent, descent };
-      // account for the newline in global index
+      if (para === "") {
+        // Real blank line requested by the user
+        if (!pushLine("")) return { lines, lineHeight, ascent, descent };
+      }
+      // Count the newline character in the caret index space
       globalIndex += 1; // the "\n"
     }
   }
 
-  // If text ended without explicit newline, globalIndex already accounted from lines
   return { lines, lineHeight, ascent, descent };
 }
 
