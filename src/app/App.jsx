@@ -152,10 +152,15 @@ useEffect(() => {
       isTextBoxEditing, setIsTextBoxEditing
     },
     multiline: {
-      isMultilineMode, setIsMultilineMode,
-      mlText, setMlText,
-      mlConfig, setMlConfig,
-      toggleMultilineMode
+    isMultilineMode, setIsMultilineMode,
+    mlText, setMlText,
+    mlConfig, setMlConfig,
+    mlCaret, setMlCaret,
+    mlAnchor, setMlAnchor,
+    mlPreferredX, setMlPreferredX,
+    mlCaretBlink, setMlCaretBlink,
+    isMlDragging, setIsMlDragging,
+    toggleMultilineMode
     },
 
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
@@ -177,11 +182,17 @@ useEffect(() => {
         drawCanvas(i);
       });
     });
-  }, [pageList, textItems, imageItems, mlText/* + any other draw deps */]);
+  }, [pageList, textItems, imageItems, mlText, mlCaretBlink, mlAnchor,
+mlPreferredX /* + any other draw deps */]);
 
 
+useEffect(() => {
+  if (!isMultilineMode) return;
+  const id = setInterval(() => setMlCaretBlink(v => !v), 1000);
+  return () => clearInterval(id);
+}, [isMultilineMode]);
 
-
+const toUnits = (str) => Array.from(str ?? "");
 
 const handleAddImage = async (e) => {
   const file = e.target.files?.[0];
@@ -1502,8 +1513,33 @@ const handleKeyDown = useCallback((e) => {
   const typingInDOMField =
     tag === "input" || tag === "textarea" || e.target?.isContentEditable;
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+
   // Ctrl + A: select all textItems on the active page
-  if (e.ctrlKey && (e.key === "a" || e.key === "A")) {
+  if (e.ctrlKey && (e.key === "a" || e.key === "A") && !isMultilineMode) {
     e.preventDefault();
 
     // Build ids only for the active page (no undefined holes)
@@ -1517,7 +1553,7 @@ const handleKeyDown = useCallback((e) => {
     return;
   }
 
-  if (e.key === "Delete") {
+  if (e.key === "Delete" && !isMultilineMode) {
     e.preventDefault();
     const toRemove = selectedTextIndexesRef.current;
     if (toRemove.length > 0) {
@@ -1533,7 +1569,7 @@ const handleKeyDown = useCallback((e) => {
   }
 
   // TextBox inline typing
-  if (isTextBoxEditEnabled && textBox && !typingInDOMField) {
+  if (isTextBoxEditEnabled && textBox && !typingInDOMField && !isMultilineMode) {
     let updatedText = textBox.text;
     if (e.key === "Enter")       updatedText += "\n";
     else if (e.key === "Backspace") updatedText = updatedText.slice(0, -1);
@@ -1549,26 +1585,182 @@ const handleKeyDown = useCallback((e) => {
     setTextBox({ ...textBox, text: updatedText, width: result.width, height: result.height });
   }
 
-  // MULTI-LINE MODE: capture typing
+  // MULTI-LINE MODE
   if (isMultilineMode && !typingInDOMField) {
-    // prevent browser shortcuts inserting characters
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // ignore meta shortcuts except shift for selection
+    if (e.metaKey || e.ctrlKey) return;
 
-    e.preventDefault();
+    const units = toUnits(mlText);
+    const clamp = (v) => Math.max(0, Math.min(v, units.length));
 
+    // selection helpers
+    const hasSel = mlCaret !== mlAnchor;
+    const selA = Math.min(mlCaret, mlAnchor);
+    const selB = Math.max(mlCaret, mlAnchor);
+
+    // prepare layout for navigation
+    const canvas = canvasRefs.current[activePage];
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const ctx = canvas.getContext("2d");
+    const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
+    const layout = layoutMultiline(ctx, mlText, {
+      x: m.left, y: m.top,
+      maxWidth: rect.width - (m.left + m.right),
+      maxHeight: rect.height - (m.top + m.bottom),
+      fontSize: mlConfig.fontSize,
+      fontFamily: mlConfig.fontFamily,
+      lineGap: mlConfig.lineGap
+    });
+
+    const moveCaret = (newPos, keepAnchor=false) => {
+      const pos = clamp(newPos);
+      setMlCaret(pos);
+      if (!keepAnchor) setMlAnchor(pos);
+      const { x } = indexToXY(pos, layout);
+      setMlPreferredX(x);
+    };
+
+    // Navigation
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      if (hasSel && !e.shiftKey) {
+        moveCaret(selA, false); // collapse to start
+      } else {
+        moveCaret(mlCaret - 1, e.shiftKey);
+      }
+      return;
+    }
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      if (hasSel && !e.shiftKey) {
+        moveCaret(selB, false); // collapse to end
+      } else {
+        moveCaret(mlCaret + 1, e.shiftKey);
+      }
+      return;
+    }
+    if (e.key === "Home") {
+      e.preventDefault();
+      // go to line start
+      const { line } = indexToXY(mlCaret, layout);
+      if (line) moveCaret(line.start, e.shiftKey);
+      return;
+    }
+    if (e.key === "End") {
+      e.preventDefault();
+      const { line } = indexToXY(mlCaret, layout);
+      if (line) moveCaret(line.end, e.shiftKey);
+      return;
+    }
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const dir = (e.key === "ArrowUp") ? -1 : 1;
+      const { x, line } = indexToXY(mlCaret, layout);
+      const targetX = mlPreferredX ?? x;
+
+      let li = layout.lines.findIndex(L => mlCaret >= L.start && mlCaret <= L.end);
+      if (li === -1) li = 0;
+      const newLi = li + dir;
+      if (newLi >= 0 && newLi < layout.lines.length) {
+        const L = layout.lines[newLi];
+        // find column by nearest boundary to targetX
+        let bestCol = 0, bestDist = Infinity;
+        for (let c = 0; c < L.charX.length; c++) {
+          const d = Math.abs(L.charX[c] - targetX);
+          if (d < bestDist) { bestDist = d; bestCol = c; }
+        }
+        if(e.key === "ArrowUp") {
+          moveCaret(L.start + bestCol, e.shiftKey);
+        }
+        if(e.key === "ArrowDown") {
+          moveCaret((L.start + bestCol) + dir, e.shiftKey);
+        }
+      }
+      return;
+    }
+
+    // Editing
     if (e.key === "Enter") {
-      setMlText(t => t + "\n");
+      e.preventDefault();
+      let next = mlText;
+      if (hasSel) next = toUnits(next).slice(0, selA).join("") + "\n" + toUnits(next).slice(selB).join("");
+      else        next = toUnits(next).slice(0, mlCaret).join("") + "\n" + toUnits(next).slice(mlCaret).join("");
+      setMlText(next);
+      const newPos = hasSel ? selA + 1 : mlCaret + 1;
+      setMlCaret(newPos);
+      setMlAnchor(newPos);
       return;
     }
     if (e.key === "Backspace") {
-      setMlText(t => t.slice(0, -1));
+      e.preventDefault();
+      if (hasSel) {
+        const next = toUnits(mlText).slice(0, selA).concat(toUnits(mlText).slice(selB)).join("");
+        setMlText(next); moveCaret(selA, false);
+      } else if (mlCaret > 0) {
+        const arr = toUnits(mlText);
+        arr.splice(mlCaret - 1, 1);
+        setMlText(arr.join("")); moveCaret(mlCaret - 1, false);
+      }
       return;
     }
+    if (e.key === "Delete") {
+      e.preventDefault();
+      if (hasSel) {
+        const next = toUnits(mlText).slice(0, selA).concat(toUnits(mlText).slice(selB)).join("");
+        setMlText(next); moveCaret(selA, false);
+      } else {
+        const arr = toUnits(mlText);
+        if (mlCaret < arr.length) { arr.splice(mlCaret, 1); setMlText(arr.join("")); }
+      }
+      return;
+    }
+
+    // Insert printable character
     if (e.key.length === 1) {
-      setMlText(t => t + e.key);
+      e.preventDefault();
+      const ch = e.key;
+      let arr = toUnits(mlText);
+      if (hasSel) {
+        arr = arr.slice(0, selA).concat([ch], arr.slice(selB));
+        setMlText(arr.join("")); moveCaret(selA + 1, false);
+      } else {
+        if(arr.length === 0) {
+          const ch = e.key;
+
+          // Current text as grapheme array
+          const units = toUnits(mlText);
+
+
+          let newUnits, newPos;
+
+          if (hasSel) {
+            // Replace selection with the typed char
+            newUnits = units.slice(0, selA).concat([ch], units.slice(selB));
+            newPos = selA + 1;
+          } else {
+            // Insert at caret
+            newUnits = units.slice(0, mlCaret).concat([ch], units.slice(mlCaret));
+            newPos = mlCaret + 1;              // ← caret after the newly inserted char
+          }
+
+          const newText = newUnits.join("");
+          setMlText(newText);
+
+          // Set caret & anchor AFTER text so it lands after the new char
+          setMlCaret(newPos);
+          setMlAnchor(newPos);
+          return ;
+        }
+        arr.splice(mlCaret, 0, ch);
+        setMlText(arr.join(""));
+        setMlCaret(mlCaret + 1);
+        setMlAnchor(mlCaret + 1);
+      }
       return;
     }
-    return; // ignore other keys for now
+
+    return; // handled multiline
   }
 }, [
   // keep these minimal—avoid re-creating handler constantly
@@ -1580,6 +1772,7 @@ const handleKeyDown = useCallback((e) => {
   textItems,
   isMultilineMode,
   mlText,
+  mlCaret, mlAnchor, mlPreferredX, activePage, mlConfig,
   setSelectedTextIndexes,
   setIsTextSelected,
   setSelectedTextIndex,
@@ -1616,6 +1809,167 @@ useEffect(() => {
     }
 
   };
+
+
+
+
+
+  // Robust per-line layout, preserving newlines, with per-char positions for hit-testing.
+function layoutMultiline(ctx, text, { x, y, maxWidth, maxHeight, fontSize, fontFamily, lineGap }) {
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `${fontSize}px ${fontFamily}`;
+
+  const probe = ctx.measureText("Mg");
+  const ascent  = (probe.actualBoundingBoxAscent  ?? fontSize * 0.83);
+  const descent = (probe.actualBoundingBoxDescent ?? fontSize * 0.20);
+  const lineHeight = Math.ceil(ascent + descent + lineGap);
+
+  const lines = [];
+  let cursorY = y;
+  let globalIndex = 0; // index within mlText (code point based)
+
+  const paras = String(text ?? "").split("\n");
+  for (let p = 0; p < paras.length; p++) {
+    const para = paras[p];
+    const words = para.split(" ");
+
+    const pushLine = (lineText) => {
+      if (cursorY + lineHeight > y + maxHeight) return false;
+      // precompute per-char Xs (boundaries)
+      const units = toUnits(lineText);
+      const charX = [x];
+      let running = 0;
+      for (let i = 0; i < units.length; i++) {
+        running += ctx.measureText(units[i]).width;
+        charX.push(x + running); // boundary after char i
+      }
+      lines.push({
+        text: lineText,
+        x,
+        y: cursorY,
+        width: running,
+        height: lineHeight,
+        start: globalIndex,
+        end: globalIndex + units.length, // exclusive
+        charX, // length = units.length + 1
+        ascent, descent,
+      });
+      cursorY += lineHeight;
+      globalIndex += units.length;
+      return true;
+    };
+
+    let current = "";
+    for (let w = 0; w < words.length; w++) {
+      const word = words[w];
+      const next = current ? current + " " + word : word;
+
+      const wordW = ctx.measureText(word).width;
+      const nextW = ctx.measureText(next).width;
+
+      if (wordW > maxWidth) {
+        // break word by characters
+        if (current) { if (!pushLine(current)) return { lines, lineHeight, ascent, descent }; current = ""; }
+        const units = toUnits(word);
+        let chunk = "";
+        for (let i = 0; i < units.length; i++) {
+          const tryChunk = chunk + units[i];
+          if (ctx.measureText(tryChunk).width > maxWidth && chunk) {
+            if (!pushLine(chunk)) return { lines, lineHeight, ascent, descent };
+            chunk = units[i];
+          } else {
+            chunk = tryChunk;
+          }
+        }
+        current = chunk;
+      } else if (nextW > maxWidth && current) {
+        if (!pushLine(current)) return { lines, lineHeight, ascent, descent };
+        current = word;
+      } else {
+        current = next;
+      }
+
+      if (w === words.length - 1) {
+        if (!pushLine(current)) return { lines, lineHeight, ascent, descent };
+        current = "";
+      }
+    }
+
+    // newline char (empty line at paragraph boundary)
+    if (p < paras.length - 1) {
+      // represent the newline as an empty line if needed
+      if (!pushLine("")) return { lines, lineHeight, ascent, descent };
+      // account for the newline in global index
+      globalIndex += 1; // the "\n"
+    }
+  }
+
+  // If text ended without explicit newline, globalIndex already accounted from lines
+  return { lines, lineHeight, ascent, descent };
+}
+
+// Convert a (x,y) click into a caret index
+function hitTestToIndex(x, y, layout) {
+  const { lines } = layout;
+  if (lines.length === 0) return 0;
+
+  // Find line by y
+  let line = null;
+  for (let i = 0; i < lines.length; i++) {
+    const L = lines[i];
+    if (y >= L.y && y < L.y + L.height) { line = L; break; }
+  }
+  if (!line) {
+    // above first or below last
+    if (y < lines[0].y) return 0;
+    const last = lines[lines.length - 1];
+    return last.end; // end of last line
+  }
+
+  // Find nearest caret boundary by x (charX array)
+  const { charX, start, end } = line; // charX length = (end-start)+1
+  if (x <= charX[0]) return start;
+  if (x >= charX[charX.length - 1]) return end;
+
+  // binary search or linear (short lines are fine)
+  let best = start, bestDist = Infinity;
+  for (let i = 0; i < charX.length; i++) {
+    const dist = Math.abs(x - charX[i]);
+    if (dist < bestDist) { best = start + i; bestDist = dist; }
+  }
+  return best;
+}
+
+// Convert a caret index → (x,y, line metrics)
+function indexToXY(index, layout, preferredX = null, verticalDir = 0) {
+  const { lines, lineHeight } = layout;
+  if (lines.length === 0) return { x: 0, y: 0, line: null };
+
+  // clamp index into total range
+  const totalStart = lines[0].start;
+  const totalEnd   = lines[lines.length - 1].end;
+  const idx = Math.max(totalStart, Math.min(index, totalEnd));
+
+  // find current line
+  let li = lines.findIndex(L => idx >= L.start && idx <= L.end);
+  if (li === -1) { // in between (shouldn't happen), default to closest
+    li = (idx < lines[0].start) ? 0 : lines.length - 1;
+  }
+  let line = lines[li];
+
+  // column within line
+  const col = idx - line.start;
+  let x;
+  if (verticalDir !== 0 && preferredX != null) {
+    x = preferredX; // keep preferred X when moving up/down
+  } else {
+    x = line.charX[col];
+  }
+  const y = line.y;
+
+  return { x, y, line };
+}
 
 
 
@@ -1723,58 +2077,164 @@ function wrapParagraphsToWidth(ctx, text, {
 
 
 function drawMultilinePage(ctx, pageIndex) {
-  // only for active page
-  if (pageIndex !== activePage) return;
+if (pageIndex !== activePage) return;
 
-  const rect = canvasRefs.current[pageIndex].getBoundingClientRect();
+  const canvas = canvasRefs.current[pageIndex];
+  const rect = canvas.getBoundingClientRect();
 
-  // convert PDF margins to CSS px
+  // margins in CSS px
   const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
 
-  // layout zone
   const x = m.left;
   const y = m.top;
   const maxWidth  = Math.max(0, rect.width  - (m.left + m.right));
   const maxHeight = Math.max(0, rect.height - (m.top  + m.bottom));
 
-  // draw optional margin guides
   ctx.save();
   ctx.strokeStyle = "rgba(0,0,0,0.1)";
-  ctx.setLineDash([4, 4]);
+  ctx.setLineDash([4,4]);
   ctx.strokeRect(x, y, maxWidth, maxHeight);
   ctx.restore();
 
-  // wrap + render
-  ctx.fillStyle = "black";
-  const { lines } = wrapParagraphsToWidth(ctx, mlText, {
-    x, y,
-    maxWidth,
-    maxHeight,
-    fontSize: mlConfig.fontSize,
-    fontFamily: mlConfig.fontFamily,
-    lineGap: mlConfig.lineGap,
-  });
-
+  // layout
   ctx.font = `${mlConfig.fontSize}px ${mlConfig.fontFamily}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
 
-  lines.forEach(line => {
-    // ensure each line paints fully inside the layout box (safety nudge)
-    const mLine = ctx.measureText(line.text || "");
-    const left  = mLine.actualBoundingBoxLeft  ?? 0;
-    const right = mLine.actualBoundingBoxRight ?? mLine.width;
-    const gW    = left + right;
-
-    // nudge x so the painted glyphs stay inside [x, x+maxWidth]
-    let gx = line.x;
-    let glyphLeft = gx - left;
-    if (glyphLeft < x) gx += (x - glyphLeft);
-    if (glyphLeft + gW > x + maxWidth) gx -= (glyphLeft + gW) - (x + maxWidth);
-
-    ctx.fillText(line.text || "", gx, line.y);
+  const layout = layoutMultiline(ctx, mlText, {
+    x, y, maxWidth, maxHeight,
+    fontSize: mlConfig.fontSize,
+    fontFamily: mlConfig.fontFamily,
+    lineGap: mlConfig.lineGap
   });
+
+  // ---- Selection highlight ----
+  const selA = Math.min(mlCaret, mlAnchor);
+  const selB = Math.max(mlCaret, mlAnchor);
+  const hasSelection = selB > selA;
+
+  if (hasSelection) {
+    ctx.save();
+    ctx.fillStyle = "rgba(30,144,255,0.25)";
+    for (const L of layout.lines) {
+      const s = Math.max(selA, L.start);
+      const e = Math.min(selB, L.end);
+      if (e <= s) continue;
+
+      const startCol = s - L.start;
+      const endCol   = e - L.start;
+      const startX = L.charX[startCol];
+      const endX   = L.charX[endCol];
+
+      const highlightX = Math.max(x, startX);
+      const highlightW = Math.max(0, Math.min(x + maxWidth, endX) - highlightX);
+      if (highlightW > 0) {
+        ctx.fillRect(highlightX, L.y, highlightW, L.height);
+      }
+    }
+    ctx.restore();
+  }
+
+  // ---- Draw text ----
+  ctx.fillStyle = "black";
+  for (const L of layout.lines) {
+    ctx.fillText(L.text, L.x, L.y);
+  }
+
+  // ---- Draw caret (blink) ----
+  if (isMultilineMode && !hasSelection && mlCaretBlink) {
+    const { x: cx, y: cy, line } = indexToXY(mlCaret, layout);
+    const caretTop = cy;
+    const caretBottom = cy + (line ? line.height : layout.lineHeight);
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx + 0.5, caretTop);
+    ctx.lineTo(cx + 0.5, caretBottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "black";
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Keep preferredX in sync with current caret column
+  const { x: curX } = indexToXY(mlCaret, layout);
+  if (mlPreferredX == null || !isMlDragging) {
+    // store latest "natural" x so up/down can honor it
+    setMlPreferredX(curX);
+  }
+
+  // Expose layout for hit-testing by other handlers if needed
+  return layout;
 }
+
+
+
+const handleCanvasMouseDownMl = (e) => {
+  if (!isMultilineMode) return false; // let your normal handlers run
+  const canvas = canvasRefs.current[activePage];
+  if (!canvas) return true;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
+  const y = (e.touches?.[0]?.clientY ?? e.clientY) - rect.top;
+
+  const ctx = canvas.getContext("2d");
+  const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
+  const layout = layoutMultiline(ctx, mlText, {
+    x: m.left, y: m.top,
+    maxWidth: rect.width - (m.left + m.right),
+    maxHeight: rect.height - (m.top + m.bottom),
+    fontSize: mlConfig.fontSize,
+    fontFamily: mlConfig.fontFamily,
+    lineGap: mlConfig.lineGap
+  });
+
+  const idx = hitTestToIndex(x, y, layout);
+
+  if (e.shiftKey) {
+    // extend selection
+    setMlCaret(idx);
+    // keep anchor
+  } else {
+    setMlCaret(idx);
+    setMlAnchor(idx);
+  }
+  setMlPreferredX(indexToXY(idx, layout).x);
+  setIsMlDragging(true);
+  return true; // consumed
+};
+
+const handleCanvasMouseMoveMl = (e) => {
+  if (!isMultilineMode || !isMlDragging) return false;
+
+  const canvas = canvasRefs.current[activePage];
+  if (!canvas) return true;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
+  const y = (e.touches?.[0]?.clientY ?? e.clientY) - rect.top;
+
+  const ctx = canvas.getContext("2d");
+  const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
+  const layout = layoutMultiline(ctx, mlText, {
+    x: m.left, y: m.top,
+    maxWidth: rect.width - (m.left + m.right),
+    maxHeight: rect.height - (m.top + m.bottom),
+    fontSize: mlConfig.fontSize,
+    fontFamily: mlConfig.fontFamily,
+    lineGap: mlConfig.lineGap
+  });
+
+  const idx = hitTestToIndex(x, y, layout);
+  setMlCaret(idx);
+  return true;
+};
+
+const handleCanvasMouseUpMl = (e) => {
+  if (!isMultilineMode) return false;
+  setIsMlDragging(false);
+  return true;
+};
 
 
 
@@ -2031,6 +2491,7 @@ const addTextToCanvasMlMode = () => {
 
   const padding = newFontSize * 0.2;
   lines = lines.map(line => {
+    if(line.text.length === 0) return;
     return {
       index: activePage,
       x: line.x,
@@ -2779,7 +3240,6 @@ return (
                   addTextToCanvasMlMode();
                   setMlText('');
                 }
-                drawCanvas(activePage);
               }}>
                 {isMultilineMode ? "Exit Multi-line mode" : "Multi-line mode"}
               </button>
@@ -2875,9 +3335,9 @@ return (
             WebkitUserSelect: 'none',
             marginBottom: '20px'
           }}
-          onMouseDown={(e) => handleMouseDown(e)}
-          onMouseMove={(e) => handleMouseMove(e, index)}
-          onMouseUp={handleMouseUp}
+          onMouseDown={(e) => handleCanvasMouseDownMl(e) ? undefined : handleMouseDown(e)}
+          onMouseMove={(e) => handleCanvasMouseMoveMl(e) ? undefined : handleMouseMove(e, index)}
+          onMouseUp={(e) => handleCanvasMouseUpMl(e) ? undefined : handleMouseUp(e)}
           onDoubleClick={handleDoubleClick}
           onClick={() => setActivePage(index)}
         />
