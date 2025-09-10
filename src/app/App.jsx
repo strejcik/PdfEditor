@@ -1821,8 +1821,8 @@ function layoutMultiline(ctx, text, { x, y, maxWidth, maxHeight, fontSize, fontF
   ctx.font = `${fontSize}px ${fontFamily}`;
 
   const probe = ctx.measureText("Mg");
-  const ascent  = (probe.actualBoundingBoxAscent  ?? fontSize * 0.83);
-  const descent = (probe.actualBoundingBoxDescent ?? fontSize * 0.20);
+  const ascent  = probe.actualBoundingBoxAscent
+  const descent = probe.actualBoundingBoxDescent
   const lineHeight = Math.ceil(ascent + descent + lineGap);
 
   const lines = [];
@@ -2499,17 +2499,21 @@ const addTextToCanvasMlMode = () => {
 
   const padding = newFontSize * 0.2;
   lines = lines.map(line => {
-    if(line.text.length === 0) return;
-    return {
-      index: activePage,
-      x: line.x,
-      y: line.y,
-      anchor: 'top',
-      padding: padding,
-      fontFamily: 'Lato',
-      fontSize: 20,
-      text: line.text
+    if(line.text.length > 0) {
+      return {
+        index: activePage,
+        x: line.x,
+        y: line.y,
+        anchor: 'top',
+        padding: padding,
+        fontFamily: 'Lato',
+        fontSize: 20,
+        text: line.text
+      }
+    } else {
+      return {}
     }
+    
   });
 
 //   // Sync into the pages slice so persistence/refresh works
@@ -2751,6 +2755,7 @@ async function saveAllPagesAsPDF() {
   const ctx = canvas.getContext('2d');
 // Helper: resolve text draw position (x, topY) and metrics in CSS units
   const resolveTextLayout = (item) => {
+    console.log(item.fontSize);
     const fontSize   = Number(item.fontSize) || 16;
     const fontFamily = item.fontFamily || "Lato";
     const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
