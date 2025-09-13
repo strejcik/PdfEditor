@@ -180,7 +180,7 @@ useEffect(() => {
         // const canvas = canvasRefs.current[i];
         // if (canvas) { /* set width/height*dpr and ctx.setTransform(dpr,0,0,dpr,0,0) */ }
         drawCanvas(i);
-      });
+      }); 
     });
   }, [pageList, textItems, imageItems, mlText, mlCaretBlink, mlAnchor,
 mlPreferredX /* + any other draw deps */]);
@@ -256,6 +256,7 @@ const handleAddImage = async (e) => {
       setImageItems(parsedImages);
     }
   }, []);
+
 
 
 
@@ -2337,127 +2338,221 @@ setPages(prev => {
 
 
 
-const addTextToCanvas3 = (textArray = []) => {
-  const usingImport = Array.isArray(textArray) && textArray.length > 0;
-
+const addTextToCanvas3 = (items = []) => {
+  const usingImport = Array.isArray(items) && items.length > 0;
   if (!usingImport && (!newText || newText.trim() === "")) return;
 
-  // snapshot BEFORE mutation (for undo)
+  // Snapshot BEFORE mutation (for undo)
   if (typeof pushSnapshotToUndo === "function") {
     pushSnapshotToUndo(activePage);
   } else if (history?.pushSnapshotToUndo) {
     history.pushSnapshotToUndo(activePage);
   }
 
-  const fontFamily = "Lato"; // keep in sync with draw & PDF export
+  // Dimensions (used to convert norms <-> px)
+  const canvas = canvasRefs?.current?.[activePage];
+  const rect = canvas?.getBoundingClientRect?.() || { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
+  const cssW = (typeof rect.width === "number" && rect.width > 0) ? rect.width : CANVAS_WIDTH;
+  const cssH = (typeof rect.height === "number" && rect.height > 0) ? rect.height : CANVAS_HEIGHT;
+
+  const fontFamilyDefault = "Lato";
   const fallbackSize = Number(newFontSize) || Number(fontSize) || 16;
 
-  let itemsToAdd = [];
+  const newTextItems = [];
+  const newImageItems = [];
 
+  // Helpers
+  const toNum = (v, def = 0) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : def;
+  };
+
+  // Be very permissive when deciding if an item is an image
+  const isImageLike = (o) => {
+    if (!o || typeof o !== "object") return false;
+    if (o.type === "image") return true;
+    // Consider as image if it has any of these signals:
+    if ("widthNorm" in o || "heightNorm" in o) return true;
+    if ("pixelWidth" in o || "pixelHeight" in o) return true;
+    if (typeof o.ref === "string" || typeof o.data === "string" || typeof o.src === "string") return true;
+    // If it has only text fields, treat as text:
+    if ("text" in o && !("widthNorm" in o) && !("heightNorm" in o)) return false;
+    return false;
+  };
+
+  // Normalize incoming -> newTextItems / newImageItems
   if (usingImport) {
-    // Backend path: items contain xNorm (0..1 from left), yNormTop (0..1 from top)
-    itemsToAdd = textArray.map((src) => {
-      const size = Number(src.fontSize) || fallbackSize;
+    for (const src of items) {
+      const pageIndex = (typeof src?.index === "number") ? src.index : activePage;
 
-      const xNorm = src.xNorm != null ? (src.xNorm)
-                  : (src.x != null ? (src.x / CANVAS_WIDTH) : 0);
+      if (isImageLike(src)) {
+        const xNorm     = (src.xNorm     != null) ? toNum(src.xNorm)     : (src.x != null ? toNum(src.x) / cssW : 0);
+        const yNormTop  = (src.yNormTop  != null) ? toNum(src.yNormTop)  : (src.y != null ? toNum(src.y) / cssH : 0);
+        const widthNorm = (src.widthNorm != null) ? toNum(src.widthNorm) : (src.width  != null ? toNum(src.width)  / cssW : 0);
+        const heightNorm= (src.heightNorm!= null) ? toNum(src.heightNorm): (src.height != null ? toNum(src.height) / cssH : 0);
 
-      const yNormTop = src.yNormTop != null ? (src.yNormTop)
-                     : (src.y != null ? (src.y / CANVAS_HEIGHT) : 0);
+        const x = xNorm * cssW;
+        const y = yNormTop * cssH;
+        const width = widthNorm * cssW;
+        const height = heightNorm * cssH;
 
-      const x = Math.round(xNorm * CANVAS_WIDTH);
-      const y = Math.round(yNormTop * CANVAS_HEIGHT);
+        // Prefer base64 data URI if present; keep whatever you have in .data
+        const dataCandidate =
+          (typeof src.ref === "string" && src.ref) ||
+          (typeof src.data === "string" && src.data) ||
+          (typeof src.src === "string" && src.src) ||
+          null;
 
-      const padding = src.boxPadding != null ? Number(src.boxPadding) : Math.round(size * 0.2);
+        newImageItems.push({
+          type: "image",
+          index: pageIndex,
 
-      return {
-        text: String(src.text ?? ""),
-        fontSize: size,
-        fontFamily,
-        boxPadding: padding,
-        // store BOTH pixel and normalized for round-trip + rendering
-        x, y,
-        xNorm, yNormTop,
-        index: src.index ?? activePage,
-        anchor: "top",
-      };
-    });
+          // normalized (persisted)
+          xNorm, yNormTop, widthNorm, heightNorm,
+
+          // concrete px (draw)
+          x, y, width, height,
+
+          // meta passthrough
+          name: src.name ?? null,
+          pixelWidth: Number.isFinite(src?.pixelWidth) ? Number(src.pixelWidth) : null,
+          pixelHeight: Number.isFinite(src?.pixelHeight) ? Number(src.pixelHeight) : null,
+
+          // bytes/url for draw
+          data: dataCandidate,
+        });
+      } else {
+        // TEXT
+        const size = toNum(src?.fontSize, fallbackSize);
+
+        const xNorm    = (src?.xNorm    != null) ? toNum(src.xNorm)    : (src?.x != null ? toNum(src.x) / cssW : 0);
+        const yNormTop = (src?.yNormTop != null) ? toNum(src.yNormTop) : (src?.y != null ? toNum(src.y) / cssH : 0);
+
+        const x = xNorm * cssW;
+        const y = yNormTop * cssH;
+
+        const padding = (src?.boxPadding != null)
+          ? toNum(src.boxPadding)
+          : Math.round(size * 0.2);
+
+        newTextItems.push({
+          type: "text",
+          text: String(src?.text ?? ""),
+          x, y,
+          xNorm, yNormTop,
+          fontSize: size,
+          boxPadding: padding,
+          index: pageIndex,
+          anchor: "top",
+          fontFamily: String(src?.fontFamily || fontFamilyDefault),
+        });
+      }
+    }
   } else {
-    // Manual entry path: wrap in CANVAS pixels, also store normalized
-    const canvas = canvasRefs.current[activePage];
-    const ctx = canvas?.getContext("2d");
-    if (!ctx) return;
-
+    // Manual add (single text)
     const size = fallbackSize;
     const padding = Math.round(size * 0.2);
+    const x = 50, y = 50;
 
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.font = `${size}px ${fontFamily}`;
-
-    // pick a sensible maxWidth
-    const measured = ctx.measureText(newText).width;
-    const safeDefault = Math.max(measured + 20, size * 2);
-    const effectiveMaxWidth =
-      (typeof maxWidth === "number" && maxWidth > size) ? maxWidth : safeDefault;
-
-    // wrapText should return CANVAS coords (top-left anchored)
-    // Expected shape per line: { text, x, y }
-    const lines = wrapText(newText, ctx, {
-      x: 50,
-      y: 50,
-      maxWidth: effectiveMaxWidth,
+    newTextItems.push({
+      type: "text",
+      text: newText,
+      x, y,
+      xNorm: x / cssW,
+      yNormTop: y / cssH,
       fontSize: size,
-      fontFamily,
-      lineGap: 0,
-    });
-
-    itemsToAdd = lines.map((ln) => {
-      const x = Math.round(ln.x);
-      const y = Math.round(ln.y);
-      const xNorm = x / CANVAS_WIDTH;
-      const yNormTop = y / CANVAS_HEIGHT;
-
-      return {
-        text: ln.text,
-        fontSize: size,
-        fontFamily,
-        boxPadding: padding,
-        x, y,
-        xNorm, yNormTop,
-        index: activePage,
-        anchor: "top",
-      };
+      boxPadding: padding,
+      index: activePage,
+      anchor: "top",
+      fontFamily: fontFamilyDefault,
     });
   }
 
-  // update flat items
-  setTextItems((prev) => [...prev, ...itemsToAdd]);
+  // Commit to global stores first (so draw code can use them immediately)
+  if (newTextItems.length) {
+    setTextItems((prev) => {
+      const merged = Array.isArray(prev) ? [...prev, ...newTextItems] : [...newTextItems];
+      saveTextItemsToLocalStorage?.(merged);
+      return merged;
+    });
+  }
+  if (newImageItems.length) {
+    setImageItems?.((prev) => {
+      const merged = Array.isArray(prev) ? [...prev, ...newImageItems] : [...newImageItems];
+      saveImageItemsToLocalStorage?.(merged);
+      return merged;
+    });
+  }
 
-  // also sync into pages[activePage] so it persists on refresh
+  // Group by page to persist in `pages`
+  const byPage = new Map();
+  for (const ti of newTextItems) {
+    const entry = byPage.get(ti.index) ?? { textItems: [], imageItems: [] };
+    entry.textItems.push({ ...ti });
+    byPage.set(ti.index, entry);
+  }
+  for (const ii of newImageItems) {
+    const entry = byPage.get(ii.index) ?? { textItems: [], imageItems: [] };
+    entry.imageItems.push({ ...ii });
+    byPage.set(ii.index, entry);
+  }
+
+  // Robust setPages: supports array or object, preserves existing items, appends both text & images.
   setPages((prev) => {
-    const next = Array.isArray(prev) ? [...prev] : [];
-    const page = next[activePage] || { textItems: [], imageItems: [] };
-    next[activePage] = {
-      ...page,
-      textItems: [...(page.textItems || []), ...itemsToAdd.map(it => ({ ...it }))],
-    };
+    let next = prev;
+
+    // If pages isn't an array/object yet, initialize as array
+    if (!next || (typeof next !== "object")) {
+      next = [];
+    }
+
+    // Clone shallowly to avoid mutating prev
+    next = Array.isArray(next) ? [...next] : { ...next };
+
+    for (const [pIdx, group] of byPage.entries()) {
+      // Read existing page slice
+      const curr = Array.isArray(next)
+        ? (next[pIdx] || { textItems: [], imageItems: [] })
+        : (next[pIdx] || { textItems: [], imageItems: [] });
+
+      const currText = Array.isArray(curr.textItems) ? curr.textItems : [];
+      const currImgs = Array.isArray(curr.imageItems) ? curr.imageItems : [];
+
+      const mergedPage = {
+        ...curr,
+        textItems: [...currText, ...group.textItems],
+        imageItems: [...currImgs, ...group.imageItems],
+      };
+
+      // Write back (supports both array and object pages store)
+      if (Array.isArray(next)) {
+        next[pIdx] = mergedPage;             // creates sparse entries if needed
+      } else {
+        next[pIdx] = mergedPage;             // object keyed by index
+      }
+    }
+
     return next;
   });
 
-  // reset modal UI (when coming from manual entry)
-  if (!usingImport) {
-    setShowAddTextModal(false);
-    setNewText("");
-    setNewFontSize(fontSize);
-    setMaxWidth(200);
-  }
+  // Redraw if needed
+  drawCanvas?.(activePage);
 
-  // force redraw if your effects don’t auto-trigger
-  if (typeof drawCanvas === "function") {
-    drawCanvas(activePage);
+  // Reset inputs for manual add
+  if (!usingImport) {
+    setShowAddTextModal?.(false);
+    setNewText?.("");
+    setNewFontSize?.(fontSize);
+    setMaxWidth?.(200);
   }
 };
+
+
+
+
+
+
+
 
 const addTextToCanvasMlMode = () => {
   const canvas = canvasRefs.current[activePage];
@@ -2554,10 +2649,9 @@ const addTextToCanvasMlMode = () => {
 
   const updatedItems = [...textItems, ...lines];
   setTextItems(updatedItems);
-  // force redraw if your effects don’t auto-trigger
-  if (typeof drawCanvas === "function") {
-    drawCanvas(activePage);
-  }
+  
+  // force refresh
+  return window.location.reload(false);
 }
 
 const addTextToCanvas2 = (textBox) => {
@@ -2888,13 +2982,15 @@ async function saveAllPagesAsPDF() {
         width: drawW,
         height: drawH,
       });
-
       pageManifest.images.push({
+        index: item.index,
+        width: item.width,
+        height: item.height,
         xNorm: +xNorm.toFixed(6),
         yNormTop: +yNormTop.toFixed(6),
         widthNorm: +((drawW) / W).toFixed(6),
         heightNorm: +((drawH) / H).toFixed(6),
-        ref: item.ref ?? null,
+        ref: item.data ?? null,
       });
     }
 
@@ -2928,7 +3024,7 @@ async function saveAllPagesAsPDF() {
 
   useEffect(() => {
     drawCanvas(activePage);
-  }, [textItems, showGrid, isTextSelected, pageList, activePage, textBox, isMultilineMode]);
+  }, [textItems,imageItems, showGrid, isTextSelected, pageList, activePage, textBox, isMultilineMode]);
 
 
 
@@ -2946,37 +3042,44 @@ async function saveAllPagesAsPDF() {
   };
 
 
-  useEffect(() => {
-    if(isPdfDownloaded === true) { 
+useEffect(() => {
+  if (isPdfDownloaded === true) {
+    // Group textItems by page
+    const textOccurrences = textItems.reduce((acc, item) => {
+      if (!acc[item.index]) acc[item.index] = [];
+      acc[item.index].push(item);
+      return acc;
+    }, {});
 
-      const occurrences = textItems.reduce((acc, item) => {
-        if (!acc[item.index]) {
-          acc[item.index] = [];
-        }
-        acc[item.index].push(item);
-        return acc;
-      }, {});
-  
-      // Format result
-      const result = Object.entries(occurrences).map(([index, texts]) => ({
-        index: Number(index),
-        texts,
-        occurrence: texts.length
-      }));
+    // Group imageItems by page
+    const imageOccurrences = imageItems.reduce((acc, item) => {
+      if (!acc[item.index]) acc[item.index] = [];
+      acc[item.index].push(item);
+      return acc;
+    }, {});
 
-      
-      let updatedPages = pageList;
-      for(let i=0; i< result.length; i++) {
-        updatedPages[i] = {
-          "textItems": result[i].texts,
-          "imageItems": []
-        }
-        setActivePage(i);
-      }
-      setPages(updatedPages);
+    // Merge both into updatedPages
+    const maxIndex = Math.max(
+      ...Object.keys(textOccurrences).map(Number),
+      ...Object.keys(imageOccurrences).map(Number),
+      pageList.length - 1
+    );
+
+    const updatedPages = [...pageList];
+    for (let i = 0; i <= maxIndex; i++) {
+      const texts = textOccurrences[i] || [];
+      const images = imageOccurrences[i] || [];
+
+      updatedPages[i] = {
+        textItems: texts,
+        imageItems: images,
+      };
     }
+
+    setPages(updatedPages);
     setIsPdfDownloaded(false);
-  }, [isPdfDownloaded])
+  }
+}, [isPdfDownloaded, textItems, imageItems, pageList]);
 
 
 
@@ -3090,39 +3193,72 @@ const closeEditModal = () => {
 
 
   // Handle file upload
-  const uploadPdfToServer = async () => {
-    if (!selectedFile) {
-      alert("No file selected. Please select a PDF file to upload.");
+const uploadPdfToServer = async () => {
+  if (!selectedFile) {
+    alert("No file selected. Please select a PDF file to upload.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("pdf", selectedFile);
+  // optional flags your backend can ignore or use
+formData.append("texts", "1");
+formData.append("images", "1");
+
+  try {
+    const response = await axios.post(
+      "http://localhost:5000/upload-pdf",
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+        // withCredentials: true, // enable if your Flask server uses cookies
+      }
+    );
+
+    // Expecting an array with mixed items:
+    //  - { type: "text", text, xNorm, yNormTop, fontSize, index, ... }
+    //  - { type: "image", xNorm, yNormTop, widthNorm, heightNorm, index, ref(base64), ... }
+    const payload = response?.data;
+
+    if (!Array.isArray(payload)) {
+      console.error("Unexpected response:", payload);
+      alert("Server returned an unexpected response.");
       return;
     }
 
-    const formData = new FormData();
-    formData.append("pdf", selectedFile);
+    // Basic sanity: ensure images carry the base64 `ref` if present
+    // (Your updated backend embeds data URIs into `ref`.)
+    // No changes needed here—this is just a guard.
+    const normalized = payload.map(item => {
+      if (item?.type === "image" && typeof item.ref !== "string") {
+        // keep as-is; your draw code can still place a placeholder rect if needed
+        // (or you can decide to filter images without ref)
+      }
+      return item;
+    });
 
-    try {
-      const response = await axios.post("http://localhost:5000/upload-pdf", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      });
-      alert("PDF uploaded successfully:");
-      setIsPdfDownloaded(true);
-      addTextToCanvas3(response.data);
-    } catch (error) {
-      console.error("Error uploading PDF:", error);
-      alert("Failed to upload PDF. Please try again.");
-    }
-  };
+    setIsPdfDownloaded(true);
+    // Your improved addTextToCanvas3 already handles both text and images
+    addTextToCanvas3(normalized);
+  } catch (error) {
+    console.error("Error uploading PDF:", error);
+    alert("Failed to upload PDF. Please try again.");
+  }
+};
 
-  //Handle file selection
-  const handleFileChange = (event) => {
-    const file = event.target.files[0];
-    if (file && file.type === "application/pdf") {
-      setSelectedFile(file);
-    } else {
-      alert("Please select a valid PDF file.");
-    }
-  };
+const handleFileChange = (event) => {
+  const file = event.target.files?.[0];
+  if (!file) {
+    alert("Please select a file.");
+    return;
+  }
+  // accept only PDFs
+  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+    alert("Please select a valid PDF file.");
+    return;
+  }
+  setSelectedFile(file);
+};
 
 
 

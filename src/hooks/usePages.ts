@@ -18,10 +18,13 @@ export function usePages() {
       setActivePage(0);
     }
   }, []);
+  
 
   // Persist whenever pages change
   useEffect(() => {
-    if (pages.length > 0) savePages(pages);
+    if (pages.length > 0) {
+      savePages(pages);
+    }
   }, [pages]);
 
   return { pages, setPages, activePage, setActivePage, canvasRefs };
