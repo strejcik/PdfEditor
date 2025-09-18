@@ -2111,16 +2111,24 @@ const addTextToCanvas = () => {
   // Snapshot BEFORE state change for undo
   pushSnapshotToUndo(activePage);
 
-  // Update global textItems
-  setTextItems((prev) => [...prev, ...itemsToAdd]);
+// In your handler where you append itemsToAdd
+const nextTextItems = [ ...(textItems || []), ...itemsToAdd.map(it => ({ ...it })) ];
+setTextItems(nextTextItems);
 
-  // Sync into the pages slice so persistence/refresh works
+// Use the SAME computed array right away:
+saveTextItemsToLocalStorage?.(nextTextItems);
+
 setPages(prev => {
-  const next = [...prev];
+  const next = Array.isArray(prev) ? [...prev] : [];
   const page = next[activePage] || { textItems: [], imageItems: [] };
+
+  // Only items for this page
+  const forThisPage = nextTextItems.filter(it => it.index === activePage);
+
   next[activePage] = {
     ...page,
-    textItems: [...(page.textItems || []), ...itemsToAdd.map(it => ({ ...it }))], // spread preserves xNorm/yNormTop
+    textItems: forThisPage.map(it => ({ ...it })), // keep immutable
+    imageItems: page.imageItems || [],
   };
   return next;
 });
@@ -2480,19 +2488,27 @@ const addTextToCanvas2 = (textBox) => {
       index: activePage}
     });
     
-      // Update global textItems
-  setTextItems((prev) => [...prev, ...textItemsToAdd]);
+// In your handler where you append itemsToAdd
+const nextTextItems = [ ...(textItems || []), ...textItemsToAdd.map(it => ({ ...it })) ];
+setTextItems(nextTextItems);
 
-    // Sync into the pages slice so persistence/refresh works
-  setPages(prev => {
-    const next = [...prev];
-    const page = next[activePage] || { textItems: [], imageItems: [] };
-    next[activePage] = {
-      ...page,
-      textItems: [...(page.textItems || []), ...textItemsToAdd.map(it => ({ ...it }))], // spread preserves xNorm/yNormTop
-    };
-    return next;
-  });
+// Use the SAME computed array right away:
+saveTextItemsToLocalStorage?.(nextTextItems);
+
+setPages(prev => {
+  const next = Array.isArray(prev) ? [...prev] : [];
+  const page = next[activePage] || { textItems: [], imageItems: [] };
+
+  // Only items for this page
+  const forThisPage = nextTextItems.filter(it => it.index === activePage);
+
+  next[activePage] = {
+    ...page,
+    textItems: forThisPage.map(it => ({ ...it })), // keep immutable
+    imageItems: page.imageItems || [],
+  };
+  return next;
+});
 
     setTextBox(null);
     setNewFontSize(fontSize);
@@ -2997,19 +3013,28 @@ const saveEditedText = () => {
       index: activePage,
       boxPadding: editingFontSize * 0.2,
     };
-      // Update global textItems
-  setTextItems(updatedItems);
 
-    // Sync into the pages slice so persistence/refresh works
-  setPages(prev => {
-    const next = [...prev];
-    const page = next[activePage] || { textItems: [], imageItems: [] };
-    next[activePage] = {
-      ...page,
-      textItems: updatedItems, // spread preserves xNorm/yNormTop
-    };
-    return next;
-  });
+// In your handler where you append itemsToAdd
+const nextTextItems = [ ...updatedItems];
+setTextItems(nextTextItems);
+
+// Use the SAME computed array right away:
+saveTextItemsToLocalStorage?.(nextTextItems);
+
+setPages(prev => {
+  const next = Array.isArray(prev) ? [...prev] : [];
+  const page = next[activePage] || { textItems: [], imageItems: [] };
+
+  // Only items for this page
+  const forThisPage = nextTextItems.filter(it => it.index === activePage);
+
+  next[activePage] = {
+    ...page,
+    textItems: forThisPage.map(it => ({ ...it })), // keep immutable
+    imageItems: page.imageItems || [],
+  };
+  return next;
+});
     closeEditModal(); // Close the modal
     drawCanvas(activePage);
   }
