@@ -8,6 +8,9 @@ export type TextItem = {
   text: string;
   x: number;
   y: number;
+  anchor: string;
+  xNorm: number;
+  yNormTop: number;
 };
 
 export type ImageItem = {

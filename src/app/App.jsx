@@ -6,6 +6,8 @@ import { getMousePosOnCanvas } from "../utils/canvas/getMousePosOnCanvas";
 import { useEditor } from "../context/EditorProvider";
 import fontkit from "@pdf-lib/fontkit";
 import { loadLatoOnce } from "../utils/font/fontLoader";
+import {useHandleAddImage} from "../hooks/useHandleAddImage";
+import { drawCanvas } from '../utils/canvas/draw/drawCanvas'
 // Clip everything to the page box (matches canvas clipping)
 import {
   pushGraphicsState, popGraphicsState,
@@ -40,29 +42,6 @@ const App = () => {
   const pdfWidth = PDF_WIDTH;
   const pdfHeight = PDF_HEIGHT;
   const fontsReadyRef = useRef(null);
-
-
-//   async function ensureAppFontLoaded(
-//   family = "Lato",
-//   url = "../../public/fonts/Lato-Regular.ttf",
-//   descriptors = { style: "normal", weight: "400", as:"font"}
-// ) {
-//   try {
-//     // Already available?
-//     if (document.fonts?.check?.(`12px "${family}"`)) return;
-
-//     // Load via FontFace API
-//     const face = new FontFace(family, `url(${url})`, descriptors);
-//     await face.load();
-//     document.fonts.add(face);
-
-//     // Wait until ready to ensure accurate measureText
-//     if (document.fonts?.ready) await document.fonts.ready;
-//   } catch (err) {
-//     // Don’t crash rendering if the font fails to load
-//     console.warn("[fonts] Failed to load", { family, url, err });
-//   }
-// }
 
 useEffect(() => {
     fontsReadyRef.current = loadLatoOnce("../../public/fonts/Lato-Regular.ttf", "Lato");
@@ -110,6 +89,7 @@ useEffect(() => {
       activePage,
       setActivePage,
       canvasRefs,
+      updatePageItems
     },
 
     text: {     
@@ -125,6 +105,9 @@ useEffect(() => {
     editingIndex, setEditingIndex,
     editingFontSize, setEditingFontSize,
     newFontSize, setNewFontSize,
+    removeSelectedText, saveTextItemsToLocalStorage,
+    wrapTextPreservingNewlinesResponsive, wrapTextResponsive,
+    resolveTextLayout
     },
 
     images: { imageItems, setImageItems,
@@ -132,7 +115,9 @@ useEffect(() => {
     draggedImageIndex, setDraggedImageIndex,
     selectedImageIndex, setSelectedImageIndex,
     resizingImageIndex, setResizingImageIndex,
-    resizeStart, setResizeStart, addImageFromFile},
+    resizeStart, setResizeStart, addImageFromFile,
+    handleAddImage, saveImageItemsToLocalStorage,
+    createImageElement},
 
     selection: {
       showGrid, setShowGrid,
@@ -160,7 +145,8 @@ useEffect(() => {
     mlPreferredX, setMlPreferredX,
     mlCaretBlink, setMlCaretBlink,
     isMlDragging, setIsMlDragging,
-    toggleMultilineMode
+    toggleMultilineMode,
+    layoutMultiline
     },
 
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
@@ -182,7 +168,7 @@ useEffect(() => {
         drawCanvas(i);
       }); 
     });
-  }, [pageList, textItems, imageItems, mlText, mlCaretBlink, mlAnchor,
+  }, [pageList, textItems, imageItems, mlText, mlAnchor,
 mlPreferredX /* + any other draw deps */]);
 
 
@@ -194,18 +180,6 @@ useEffect(() => {
 
 const toUnits = (str) => Array.from(str ?? "");
 
-const handleAddImage = async (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-
-  pushSnapshotToUndo(activePage);        // snapshot BEFORE mutation
-  await addImageFromFile(file, activePage, { x: 50, y: 50, scale: 0.5 });
-
-  // If you don't use the effect-driven draw yet, force a draw:
-  // drawCanvas(activePage);
-
-  e.target.value = ""; // allow re-selecting same file
-};
 
 
 
@@ -260,35 +234,6 @@ const handleAddImage = async (e) => {
 
 
 
-// Save image items to local storage
-const saveImageItemsToLocalStorage = (items) => {
-  const serializedImages = items.map((item) => {
-    // if(item.index === activePage) {
-      
-    // }
-    return {
-      data: item.data, // Save base64 data
-      x: item.x,
-      y: item.y,
-      width: item.width,
-      height: item.height,
-      index: item.index
-    }
-  });
-  // if(serializedImages.length > 0) {
-    
-  // }
-  localStorage.setItem('imageItems', JSON.stringify(serializedImages));
-};
-
-
-// Utility function to create an Image element from base64 data
-const createImageElement = (data) => {
-  const img = new Image();
-  img.src = data;
-  return img;
-};
-
 
   useEffect(() => {
     // Add keydown event listener for moving text with arrow keys
@@ -297,333 +242,118 @@ const createImageElement = (data) => {
   }, [isTextSelected, selectedTextIndex, textItems]);
 
 
+useEffect(() => {
+  const refCount = Array.isArray(canvasRefs.current) ? canvasRefs.current.length : 0;
+  const listCount = Array.isArray(pageList) ? pageList.length : 0;
+  const maxIndexFromItems = Math.max(
+    -1,
+    ...[
+      ...(Array.isArray(textItems) ? textItems : []),
+      ...(Array.isArray(imageItems) ? imageItems : []),
+    ].map((it) => (Number.isFinite(it?.index) ? it.index : -1))
+  );
+  const pageCount = Math.max(refCount, listCount, maxIndexFromItems + 1, 0);
 
-  // Function to remove selected text
-const removeSelectedText = () => {
-  let updatedItems = [...textItems];
+  const sharedConfig = { showGrid, APP_FONT_FAMILY };
 
-  // === Remove Multiple Selected Texts ===
-  if (selectedTextIndexes.length > 0) {
-    // Filter out all selected indexes
-    updatedItems = updatedItems.filter((_, i) => !selectedTextIndexes.includes(i));
+  for (let p = 0; p < pageCount; p++) {
+    const canvas = canvasRefs.current?.[p];
+    if (!canvas) continue;
 
-    setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems);
+    const isActive = p === activePage;
+    drawCanvas(p, {
+      canvas,
+      state: {
+        textItems,
+        imageItems,
+        selectedTextIndexes,
+        selectionStart,
+        selectionEnd,
+        isSelecting,
+        isTextBoxEditEnabled,
+        textBox,
+        activePage: p,
+        isMultilineMode: isMultilineMode && isActive,
 
-    // Update only visible page's text items
-    const visibleItems = updatedItems.filter((item) => item.index === activePage);
-    updatePageItems('textItems', visibleItems);
+        // multiline editor only on active page
+        canvasRefs,
+        mlConfig,
+        mlCaret: isActive ? mlCaret : 0,
+        mlAnchor: isActive ? mlAnchor : 0,
+        mlPreferredX: isActive ? mlPreferredX : null,
+        mlText: isActive ? mlText : "",
+        mlCaretBlink: isActive ? mlCaretBlink : false,
+        isMlDragging: isActive ? isMlDragging : false,
 
-    // Clear selection
-    setSelectedTextIndexes([]);
-    setIsTextSelected(false);
-    setSelectedTextIndex(null);
-    return; // prevent running single delete block
-  }
+        fontSize,
+        wrapTextPreservingNewlinesResponsive,
+        resolveTextLayout,
+        layoutMultiline,
+        setMlPreferredX,
 
-  // === Remove Single Selected Text ===
-  if (selectedTextIndex !== null) {
-    updatedItems = updatedItems.filter((_, i) => i !== selectedTextIndex);
-
-    setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems);
-
-    const visibleItems = updatedItems.filter((item) => item.index === activePage);
-    updatePageItems('textItems', visibleItems);
-
-    setIsTextSelected(false);
-    setSelectedTextIndex(null);
-  }
-};
-
-  const saveTextItemsToLocalStorage = (items) => {
-    localStorage.setItem('textItems', JSON.stringify(items));
-  };
-
-const wrapTextPreservingNewlinesResponsive = (text, ctx, initialWidth, fontSize, padding = 10) => {
-  const paragraphs = text.split('\n');
-  const lines = [];
-
-  let maxLineWidth = 0;
-
-  paragraphs.forEach(paragraph => {
-    const words = paragraph.split(' ');
-    let currentLine = '';
-
-    words.forEach((word, index) => {
-      const testLine = currentLine ? currentLine + ' ' + word : word;
-      const testWidth = ctx.measureText(testLine).width;
-
-      if (testWidth + padding * 2 > initialWidth) {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
-
-      // If last word, push it
-      if (index === words.length - 1 && currentLine) {
-        lines.push(currentLine);
-      }
-
-      maxLineWidth = Math.max(maxLineWidth, ctx.measureText(currentLine).width);
-    });
-  });
-
-  const lineHeight = fontSize + 4;
-  const totalHeight = lines.length * lineHeight;
-
-  return {
-    lines,
-    width: maxLineWidth + padding * 2,
-    height: totalHeight + padding * 2
-  };
-};
-
-
-const wrapTextResponsive = (text, maxWidth, ctx) => {
-  const paragraphs = text.split('\n');
-  const lines = [];
-
-  paragraphs.forEach((paragraph) => {
-    const words = paragraph.trim().split(/\s+/);
-    let currentLine = '';
-
-    words.forEach((word, index) => {
-      const testLine = currentLine ? currentLine + ' ' + word : word;
-      const testWidth = ctx.measureText(testLine).width;
-
-      if (testWidth <= maxWidth) {
-        currentLine = testLine;
-      } else {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
-      }
-
-      // Push remaining line after the last word
-      if (index === words.length - 1 && currentLine) {
-        lines.push(currentLine);
-        currentLine = '';
-      }
-    });
-  });
-
-  return lines;
-};
-
-async function drawCanvas(pageIndex) {
-    // Load the exact font you use for measuring/drawing (same as PDF export)
-  await loadLatoOnce("../../public/fonts/Lato-Regular.ttf", APP_FONT_FAMILY);
-  if (document.fonts?.ready) await document.fonts.ready;
-
-
-  const canvas = canvasRefs.current[pageIndex];
-  if (!canvas) return;
-
-
-
-  
-
-  // === Size/scale canvas to match its CSS box ===
-  const rect  = canvas.getBoundingClientRect();
-  const dpr   = window.devicePixelRatio || 1;
-  canvas.width  = Math.round(rect.width  * dpr);
-  canvas.height = Math.round(rect.height * dpr);
-
-  const ctx = canvas.getContext("2d");
-  
-  // Draw in CSS units (no need to think in backing pixels)
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-  // Clear and optional grid in CSS units
-  ctx.clearRect(0, 0, rect.width, rect.height);
-  if (showGrid) drawGrid(ctx, rect.width, rect.height);
-
-   // ========= MULTI-LINE MODE =========
-  if (isMultilineMode) {
-    drawMultilinePage(ctx, pageIndex);
-    // Optionally early return to hide regular items while in multi-line mode:
-  }
-
-  // Helper: resolve text draw position (x, topY) and metrics in CSS units
-  const resolveTextLayout = (item) => {
-    const fontSize   = Number(item.fontSize) || 16;
-    const fontFamily = item.fontFamily || "Lato";
-    const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
-
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.font = `${fontSize}px ${fontFamily}`;
-
-    const m = ctx.measureText(item.text || "");
-    const ascent  = m.actualBoundingBoxAscent;
-    const descent = m.actualBoundingBoxDescent
-    const textWidth  = m.width;
-    const textHeight = ascent + descent;
-
-    // Prefer normalized; DO NOT CLAMP so we can go off-canvas (negative or >1)
-    const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
-
-    const x = hasNorm
-      ? Number(item.xNorm) * rect.width
-      : (Number(item.x) || 0);
-
-    let topY;
-    if (hasNorm) {
-      topY = Number(item.yNormTop) * rect.height; // can be <0 or >rect.height
-    } else {
-      // Legacy: item.y may be baseline; convert to top if needed
-      const anchor = item.anchor || "baseline"; // "top" | "baseline" | "bottom"
-      const rawY = Number(item.y) || 0;
-      if (anchor === "baseline")      topY = rawY - ascent;
-      else if (anchor === "bottom")   topY = rawY - textHeight;
-      else                            topY = rawY; // already top
-    }
-
-    return {
-      x,
-      topY,
-      fontSize,
-      fontFamily,
-      padding,
-      textWidth,
-      textHeight,
-      ascent,
-      descent,
-    };
-  };
-
-  // === DRAW TEXT ITEMS (normalized-first, off-canvas allowed) ===
-  textItems.forEach((item, globalIndex) => {
-    if (item.index !== pageIndex) return;
-
-    const L = resolveTextLayout(item);
-    const boxX = Math.round(L.x)    - L.padding;
-    const boxY = Math.round(L.topY) - L.padding;
-    const boxW = L.textWidth  + L.padding * 2;
-    const boxH = L.textHeight + L.padding * 2;
-
-    // Bounding box when selected
-    if (selectedTextIndexes.includes(globalIndex)) {
-      ctx.strokeStyle = "rgba(30, 144, 255, 0.7)";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(boxX, boxY, boxW, boxH);
-    }
-
-    // Optional vertical guide line
-    ctx.save();
-    ctx.beginPath();
-    ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = "dodgerblue";
-    ctx.moveTo(Math.round(L.x) - L.padding, 0);
-    ctx.lineTo(Math.round(L.x) - L.padding, rect.height);
-    ctx.stroke();
-    ctx.restore();
-
-    // Draw the text (top-anchored at L.topY)
-    ctx.fillStyle = "black";
-    ctx.font = `${L.fontSize}px ${L.fontFamily}`;
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillText(item.text || "", Math.round(L.x), Math.round(L.topY + L.textHeight));
-  });
-
-  // === DRAW IMAGE ITEMS (normalized-first, off-canvas allowed) ===
-  imageItems.forEach((item) => {
-    if (item.index !== pageIndex) return;
-
-    const hasNormPos  = (item.xNorm != null) && (item.yNormTop != null);
-    const hasNormSize = (item.widthNorm != null) && (item.heightNorm != null);
-
-    // DO NOT CLAMP: allow negative / >1
-    const x    = hasNormPos  ? Number(item.xNorm)    * rect.width  : (Number(item.x)      || 0);
-    const yTop = hasNormPos  ? Number(item.yNormTop) * rect.height : (Number(item.y)      || 0);
-    const w    = hasNormSize ? Number(item.widthNorm)  * rect.width  : (Number(item.width)  || 0);
-    const h    = hasNormSize ? Number(item.heightNorm) * rect.height : (Number(item.height) || 0);
-
-    const src = item.data || item.src;
-    const imgEl = createImageElement(src);
-    if (!imgEl || !imgEl.complete || !imgEl.naturalWidth) {
-      if (imgEl) {
-        imgEl.onload = () => requestAnimationFrame(() => drawCanvas(pageIndex));
-      }
-      return;
-    }
-
-    ctx.drawImage(imgEl, Math.round(x), Math.round(yTop), Math.round(w), Math.round(h));
-
-    // Resize handle
-    const handleSize = 10;
-    ctx.fillStyle = "dodgerblue";
-    ctx.fillRect(
-      Math.round(x + w - handleSize / 2),
-      Math.round(yTop + h - handleSize / 2),
-      handleSize,
-      handleSize
-    );
-
-    // Outline
-    ctx.strokeStyle = "black";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(Math.round(x), Math.round(yTop), Math.round(w), Math.round(h));
-  });
-
-  // === DRAW SELECTION RECT ===
-  if (
-    isSelecting &&
-    selectionStart &&
-    selectionEnd &&
-    activePage === pageIndex &&
-    (selectionStart.x !== selectionEnd.x || selectionStart.y !== selectionEnd.y)
-  ) {
-    const width  = selectionEnd.x - selectionStart.x;
-    const height = selectionEnd.y - selectionStart.y;
-
-    ctx.strokeStyle = "dodgerblue";
-    ctx.fillStyle = "rgba(30, 144, 255, 0.3)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(selectionStart.x, selectionStart.y, width, height);
-    ctx.fillRect(selectionStart.x, selectionStart.y, width, height);
-  }
-
-  // === DRAW TEXTBOX ===
-  if (isTextBoxEditEnabled && textBox && activePage === pageIndex) {
-    const padding = textBox.boxPadding || 10;
-
-    ctx.strokeStyle = "black";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(textBox.x, textBox.y, textBox.width, textBox.height);
-
-    // Drag handle
-    const dragPointSize = 10;
-    ctx.fillStyle = "dodgerblue";
-    ctx.fillRect(
-      textBox.x + textBox.width - dragPointSize,
-      textBox.y + textBox.height - dragPointSize,
-      dragPointSize,
-      dragPointSize
-    );
-
-    // Text inside the box (top-anchored)
-    ctx.fillStyle = "black";
-    const boxFontSize = textBox.fontSize || fontSize;
-    ctx.font = `${boxFontSize}px ${APP_FONT_FAMILY}`;
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-
-    const wrapped = wrapTextPreservingNewlinesResponsive(
-      textBox.text,
-      ctx,
-      textBox.width,
-      boxFontSize,
-      padding
-    );
-
-    wrapped.lines.forEach((line, idx) => {
-      ctx.fillText(line, textBox.x + padding, textBox.y + padding + idx * (boxFontSize + 4));
+        redraw: (idx) =>
+          drawCanvas(idx, {
+            canvas: canvasRefs.current?.[idx],
+            state: {
+              textItems,
+              imageItems,
+              selectedTextIndexes,
+              selectionStart,
+              selectionEnd,
+              isSelecting,
+              isTextBoxEditEnabled,
+              textBox,
+              activePage: idx,
+              isMultilineMode: isMultilineMode && idx === activePage,
+              canvasRefs,
+              mlConfig,
+              mlCaret: idx === activePage ? mlCaret : 0,
+              mlAnchor: idx === activePage ? mlAnchor : 0,
+              mlPreferredX: idx === activePage ? mlPreferredX : null,
+              mlText: idx === activePage ? mlText : "",
+              mlCaretBlink: idx === activePage ? mlCaretBlink : false,
+              isMlDragging: idx === activePage ? isMlDragging : false,
+              fontSize,
+              wrapTextPreservingNewlinesResponsive,
+              resolveTextLayout,
+              layoutMultiline,
+              setMlPreferredX,
+            },
+            config: sharedConfig,
+          }),
+      },
+      config: sharedConfig,
     });
   }
-}
+}, [
+  activePage,
+  textItems,
+  imageItems,
+  selectedTextIndexes,
+  selectionStart,
+  selectionEnd,
+  isSelecting,
+  isTextBoxEditEnabled,
+  textBox,
+  isMultilineMode,
+  mlText,
+  mlCaret,
+  mlAnchor,
+  mlPreferredX,
+  mlCaretBlink,
+  isMlDragging,
+  mlConfig,
+  showGrid,
+  APP_FONT_FAMILY,
+  canvasRefs,
+  pageList,
+  wrapTextPreservingNewlinesResponsive,
+  resolveTextLayout,
+  layoutMultiline,
+  setMlPreferredX,
+  fontSize,
+]);
+
 
 
 useLayoutEffect(() => {
@@ -634,6 +364,7 @@ useLayoutEffect(() => {
     drawCanvas(activePage);
   }
 }, [activePage]);
+
 
 
 useLayoutEffect(() => {
@@ -670,47 +401,124 @@ useEffect(() => {
 
 
 
-// changed removePage function (with undo/redo purge)
 const removePage = () => {
-  if (pageList.length <= 1) {
-    alert('Cannot remove the last page.');
+  if (!Array.isArray(pageList) || pageList.length <= 1) {
+    alert("Cannot remove the last page.");
     return;
   }
 
-  const removedPage = activePage;
+  const removedIndex = activePage;
 
-  // Remove page
-  const updatedPages = pageList.filter((_, index) => index !== removedPage);
-
-  // Reindex live items
-  const reindex = (arr) =>
+  // 1) Build reindex helpers
+  const reindexArrayItems = (arr = []) =>
     arr
-      .filter(it => it.index !== removedPage)
-      .map(it => ({
-        ...it,
-        index: it.index > removedPage ? it.index - 1 : it.index
-      }));
+      .filter((it) => it && typeof it.index === "number" && it.index !== removedIndex) // drop items on removed page
+      .map((it) =>
+        it.index > removedIndex ? { ...it, index: it.index - 1 } : it
+      );
 
-  const updatedTextItems  = reindex(textItems);
-  const updatedImageItems = reindex(imageItems);
+  const reindexPagesSlice = (pages = []) => {
+    // Remove the page and reindex embedded item indices so they
+    // always match their new page position.
+    const filtered = pages.filter((_, i) => i !== removedIndex);
+    return filtered.map((pg, newIdx) => ({
+      ...pg,
+      textItems: (pg.textItems || []).map((t) => ({ ...t, index: newIdx })),
+      imageItems: (pg.imageItems || []).map((im) => ({ ...im, index: newIdx })),
+    }));
+  };
 
-  setPages(updatedPages);
-  setTextItems(updatedTextItems);
-  setImageItems(updatedImageItems);
-  saveTextItemsToLocalStorage(updatedTextItems);
-  saveImageItemsToLocalStorage(updatedImageItems);
+  // 2) Compute next state synchronously
+  const nextPages = reindexPagesSlice(pageList);
+  const nextTextItems = reindexArrayItems(textItems || []);
+  const nextImageItems = reindexArrayItems(imageItems || []);
 
-  // Purge and reindex undo/redo stacks for the removed page
-  purgeUndoRedoForRemovedPage(removedPage);
+  // 3) Compute next active page
+  const nextActivePage = (() => {
+    const count = nextPages.length;
+    if (count === 0) return 0;
+    if (activePage === removedIndex) return Math.min(removedIndex, count - 1);
+    if (activePage > removedIndex) return activePage - 1;
+    return activePage;
+  })();
 
-  // Move active page
-  const newActivePage = Math.max(0, removedPage - 1);
-  setActivePage(newActivePage);
+  // 4) Clear selections / drag state to avoid dangling indices
+  setSelectedTextIndexes?.([]);
+  setSelectedTextIndex?.(null);
+  setIsTextSelected?.(false);
+  setSelectionStart?.(null);
+  setSelectionEnd?.(null);
+  setIsSelecting?.(false);
+  setIsDragging?.(false);
+  setIsImageDragging?.(false);
+  setDraggedImageIndex?.(null);
+  setResizingImageIndex?.(null);
 
-  // Optional: clear selections/drag state here if they referenced the removed page
+  // 5) Update refs array to keep in sync with removed page (if you keep manual refs)
+  if (Array.isArray(canvasRefs?.current)) {
+    canvasRefs.current.splice(removedIndex, 1);
+  }
 
-  drawCanvas(newActivePage);
+  // 6) Commit state (pages, items, activePage)
+  setPages(nextPages);
+  setTextItems(nextTextItems);
+  setImageItems(nextImageItems);
+  saveTextItemsToLocalStorage?.(nextTextItems);
+  saveImageItemsToLocalStorage?.(nextImageItems);
+
+  // Undo/redo stacks purge for removed page (if you maintain per-page history)
+  try {
+    purgeUndoRedoForRemovedPage?.(removedIndex);
+  } catch (_) {}
+
+  setActivePage(nextActivePage);
+
+  // 7) Redraw all remaining pages on the next frame (avoids measuring during state flush)
+  requestAnimationFrame(() => {
+    const pageCount = nextPages.length;
+    for (let p = 0; p < pageCount; p++) {
+      const canvas = canvasRefs?.current?.[p];
+      if (!canvas) continue;
+
+      drawCanvas(p, {
+        canvas,
+        state: {
+          // fresh global stores:
+          textItems: nextTextItems,
+          imageItems: nextImageItems,
+
+          // basic UI state (cleared above):
+          selectedTextIndexes: [],
+          selectionStart: null,
+          selectionEnd: null,
+          isSelecting: false,
+          isTextBoxEditEnabled,
+          textBox,
+          activePage: p,
+
+          // Optional multiline editor: only “active” page shows caret/blink
+          isMultilineMode: isMultilineMode && p === nextActivePage,
+          canvasRefs,
+          mlConfig,
+          mlCaret: p === nextActivePage ? mlCaret : 0,
+          mlAnchor: p === nextActivePage ? mlAnchor : 0,
+          mlPreferredX: p === nextActivePage ? mlPreferredX : null,
+          mlText: p === nextActivePage ? mlText : "",
+          mlCaretBlink: p === nextActivePage ? mlCaretBlink : false,
+          isMlDragging: p === nextActivePage ? isMlDragging : false,
+
+          fontSize,
+          wrapTextPreservingNewlinesResponsive,
+          resolveTextLayout,
+          layoutMultiline,
+          setMlPreferredX,
+        },
+        config: { showGrid, APP_FONT_FAMILY },
+      });
+    }
+  });
 };
+
 
 
 
@@ -1426,7 +1234,6 @@ const handleMouseUp = (e) => {
       const y = Math.min(startY, endY);
       const width  = Math.abs(endX - startX);
       const height = Math.abs(endY - startY);
-
       setTextBox({ x, y, width, height, text: "" });
     }
 
@@ -1815,108 +1622,108 @@ useEffect(() => {
 
 
 
-  // Robust per-line layout, preserving newlines, with per-char positions for hit-testing.
-function layoutMultiline(ctx, text, { x, y, maxWidth, maxHeight, fontSize, fontFamily, lineGap }) {
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.font = `${fontSize}px ${fontFamily}`;
+//   // Robust per-line layout, preserving newlines, with per-char positions for hit-testing.
+// function layoutMultiline(ctx, text, { x, y, maxWidth, maxHeight, fontSize, fontFamily, lineGap }) {
+//   ctx.textAlign = "left";
+//   ctx.textBaseline = "top";
+//   ctx.font = `${fontSize}px ${fontFamily}`;
 
-  const probe = ctx.measureText("Mg");
-  const ascent  = probe.actualBoundingBoxAscent
-  const descent = probe.actualBoundingBoxDescent
-  const lineHeight = Math.ceil(ascent + descent + lineGap);
+//   const probe = ctx.measureText("Mg");
+//   const ascent  = probe.actualBoundingBoxAscent
+//   const descent = probe.actualBoundingBoxDescent
+//   const lineHeight = Math.ceil(ascent + descent + lineGap);
 
-  const lines = [];
-  let cursorY = y;
-  let globalIndex = 0; // caret index in code points (Array.from-based)
+//   const lines = [];
+//   let cursorY = y;
+//   let globalIndex = 0; // caret index in code points (Array.from-based)
 
-  const paras = String(text ?? "").split("\n");
+//   const paras = String(text ?? "").split("\n");
 
-  const pushLine = (lineText) => {
-    if (cursorY + lineHeight > y + maxHeight) return false;
-    const units = Array.from(lineText);
-    const charX = [x];
-    let running = 0;
-    for (let i = 0; i < units.length; i++) {
-      running += ctx.measureText(units[i]).width;
-      charX.push(x + running);
-    }
-    lines.push({
-      text: lineText,
-      x,
-      y: cursorY,
-      width: running,
-      height: lineHeight,
-      start: globalIndex,
-      end: globalIndex + units.length, // exclusive
-      charX, // len = units.length + 1
-      ascent, descent,
-    });
-    cursorY += lineHeight;
-    globalIndex += units.length;
-    return true;
-  };
+//   const pushLine = (lineText) => {
+//     if (cursorY + lineHeight > y + maxHeight) return false;
+//     const units = Array.from(lineText);
+//     const charX = [x];
+//     let running = 0;
+//     for (let i = 0; i < units.length; i++) {
+//       running += ctx.measureText(units[i]).width;
+//       charX.push(x + running);
+//     }
+//     lines.push({
+//       text: lineText,
+//       x,
+//       y: cursorY,
+//       width: running,
+//       height: lineHeight,
+//       start: globalIndex,
+//       end: globalIndex + units.length, // exclusive
+//       charX, // len = units.length + 1
+//       ascent, descent,
+//     });
+//     cursorY += lineHeight;
+//     globalIndex += units.length;
+//     return true;
+//   };
 
-  for (let p = 0; p < paras.length; p++) {
-    const para = paras[p];
-    const words = para.split(" ");
+//   for (let p = 0; p < paras.length; p++) {
+//     const para = paras[p];
+//     const words = para.split(" ");
 
-    let current = "";
+//     let current = "";
 
-    for (let w = 0; w < words.length; w++) {
-      const word = words[w];
-      const next = current ? current + " " + word : word;
+//     for (let w = 0; w < words.length; w++) {
+//       const word = words[w];
+//       const next = current ? current + " " + word : word;
 
-      const wordW = ctx.measureText(word).width;
-      const nextW = ctx.measureText(next).width;
+//       const wordW = ctx.measureText(word).width;
+//       const nextW = ctx.measureText(next).width;
 
-      if (wordW > maxWidth) {
-        // Hard break the long word by characters
-        if (current) { if (!pushLine(current)) return { lines, lineHeight, ascent, descent }; current = ""; }
-        const units = Array.from(word);
-        let chunk = "";
-        for (let i = 0; i < units.length; i++) {
-          const tryChunk = chunk + units[i];
-          if (ctx.measureText(tryChunk).width > maxWidth && chunk) {
-            if (!pushLine(chunk)) return { lines, lineHeight, ascent, descent };
-            chunk = units[i];
-          } else {
-            chunk = tryChunk;
-          }
-        }
-        current = chunk;
-      } else if (nextW > maxWidth && current) {
-        // Wrap BEFORE adding word (same lineHeight as any wrapped line)
-        if (!pushLine(current)) return { lines, lineHeight, ascent, descent };
-        current = word;
-      } else {
-        current = next;
-      }
+//       if (wordW > maxWidth) {
+//         // Hard break the long word by characters
+//         if (current) { if (!pushLine(current)) return { lines, lineHeight, ascent, descent }; current = ""; }
+//         const units = Array.from(word);
+//         let chunk = "";
+//         for (let i = 0; i < units.length; i++) {
+//           const tryChunk = chunk + units[i];
+//           if (ctx.measureText(tryChunk).width > maxWidth && chunk) {
+//             if (!pushLine(chunk)) return { lines, lineHeight, ascent, descent };
+//             chunk = units[i];
+//           } else {
+//             chunk = tryChunk;
+//           }
+//         }
+//         current = chunk;
+//       } else if (nextW > maxWidth && current) {
+//         // Wrap BEFORE adding word (same lineHeight as any wrapped line)
+//         if (!pushLine(current)) return { lines, lineHeight, ascent, descent };
+//         current = word;
+//       } else {
+//         current = next;
+//       }
 
-      if (w === words.length - 1) {
-        // Flush last bit of the paragraph
-        if (!pushLine(current)) return { lines, lineHeight, ascent, descent };
-        current = "";
-      }
-    }
+//       if (w === words.length - 1) {
+//         // Flush last bit of the paragraph
+//         if (!pushLine(current)) return { lines, lineHeight, ascent, descent };
+//         current = "";
+//       }
+//     }
 
-    // Handle the explicit newline BETWEEN paragraphs:
-    // - We DO NOT push an extra empty line here (that caused an extra gap).
-    // - We STILL advance globalIndex by 1 to account for the "\n" caret position.
-    // - If the paragraph itself was empty (i.e., user typed a blank line: "\n\n"),
-    //   then we must render a visual blank line: pushLine("").
-    if (p < paras.length - 1) {
-      if (para === "") {
-        // Real blank line requested by the user
-        if (!pushLine("")) return { lines, lineHeight, ascent, descent };
-      }
-      // Count the newline character in the caret index space
-      globalIndex += 1; // the "\n"
-    }
-  }
+//     // Handle the explicit newline BETWEEN paragraphs:
+//     // - We DO NOT push an extra empty line here (that caused an extra gap).
+//     // - We STILL advance globalIndex by 1 to account for the "\n" caret position.
+//     // - If the paragraph itself was empty (i.e., user typed a blank line: "\n\n"),
+//     //   then we must render a visual blank line: pushLine("").
+//     if (p < paras.length - 1) {
+//       if (para === "") {
+//         // Real blank line requested by the user
+//         if (!pushLine("")) return { lines, lineHeight, ascent, descent };
+//       }
+//       // Count the newline character in the caret index space
+//       globalIndex += 1; // the "\n"
+//     }
+//   }
 
-  return { lines, lineHeight, ascent, descent };
-}
+//   return { lines, lineHeight, ascent, descent };
+// }
 
 // Convert a (x,y) click into a caret index
 function hitTestToIndex(x, y, layout) {
@@ -1992,7 +1799,7 @@ function indexToXY(index, layout, preferredX = null, verticalDir = 0) {
 
 
 
-  function pdfToCssMargins(rect, marginsPDF) {
+function pdfToCssMargins(rect, marginsPDF) {
   // scale PDF units → CSS px (respect current canvas rect)
   const sx = rect.width  / PDF_WIDTH;
   const sy = rect.height / PDF_HEIGHT;
@@ -2286,24 +2093,17 @@ const addTextToCanvas = () => {
 
   // Build items (top-anchored). We store 'anchor: "top"' for clarity/compat.
   const itemsToAdd = lines.map((ln) => {
-      // After you compute the canvas top-anchored y (e.g., `yTop`)
-    // let yTop = toCanvasTopLeftY(ln)
-    // console.log("[A] add", {
-    //   page: activePage,
-    //   fontSize: newFontSize,
-    //   yCanvasTop: R(yTop),
-    //   CANVAS_HEIGHT,
-    //   yNormTopExpected: R(yTop / CANVAS_HEIGHT),
-    // });
+      const { xNorm, yNormTop } = resolveTopLeft(ln.text, PDF_WIDTH, PDF_HEIGHT);
     return {
       text: ln.text,
+      fontSize: newFontSize,
+      boxPadding: padding,
       x: ln.x,
       y: ln.y,
-      fontSize: fontSizeToUse,
-      boxPadding: padding,
       index: activePage,
-      anchor: "top",
-      fontFamily,            // optional, helps keep draw/export consistent
+      xNorm: +xNorm.toFixed(6),
+      yNormTop: +yNormTop.toFixed(6),
+      fontFamily
     }
   });
 
@@ -2656,26 +2456,46 @@ const addTextToCanvasMlMode = () => {
 
 const addTextToCanvas2 = (textBox) => {
     if (textBox?.text?.trim()) {
+
+    const canvas = canvasRefs.current[activePage];
+    if (!canvas) return;
+
+    const { ctx } = setupCanvasA4(canvasRefs.current[activePage], /* portrait? */ true);
+    if (!ctx) return;
+
+
     const padding = newFontSize * 0.2;
-    const ctx = canvasRefs.current[activePage].getContext('2d');
     const innerWidth = textBox.width - padding * 2;
     const lines = wrapTextResponsive(textBox.text, innerWidth, ctx);
     const lineHeight = newFontSize + 5;
 
-    const textItemsToAdd = lines.map((line, i) => ({
-      text: line,
+
+
+    const textItemsToAdd = lines.map((line, i) =>{
+      return {text: line,
       fontSize: newFontSize,
       boxPadding: padding,
       x: textBox.x + padding,
       y: textBox.y + 20 + i * lineHeight,
-      index: activePage,
-    }));
+      index: activePage}
+    });
+    
+      // Update global textItems
+  setTextItems((prev) => [...prev, ...textItemsToAdd]);
 
-    const updatedItems = [...textItems, ...textItemsToAdd];
-    setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems);
-    updatePageItems('textItems', updatedItems);
+    // Sync into the pages slice so persistence/refresh works
+  setPages(prev => {
+    const next = [...prev];
+    const page = next[activePage] || { textItems: [], imageItems: [] };
+    next[activePage] = {
+      ...page,
+      textItems: [...(page.textItems || []), ...textItemsToAdd.map(it => ({ ...it }))], // spread preserves xNorm/yNormTop
+    };
+    return next;
+  });
+
     setTextBox(null);
+    setNewFontSize(fontSize);
     drawCanvas(activePage);
   }
 };
@@ -3028,18 +2848,18 @@ async function saveAllPagesAsPDF() {
 
 
 
-  const updatePageItems = (type, items) => {
-    const updatedPages = [...pageList];
-    updatedPages.map((page, index) => {
-      if (index === activePage){
-        updatedPages[activePage][type] = items;
-        setPages(updatedPages);
-      } else {
-        return ;
-      }
-    })
+  // const updatePageItems = (type, items) => {
+  //   const updatedPages = [...pageList];
+  //   updatedPages.map((page, index) => {
+  //     if (index === activePage){
+  //       updatedPages[activePage][type] = items;
+  //       setPages(updatedPages);
+  //     } else {
+  //       return ;
+  //     }
+  //   })
 
-  };
+  // };
 
 
 useEffect(() => {
@@ -3177,8 +2997,19 @@ const saveEditedText = () => {
       index: activePage,
       boxPadding: editingFontSize * 0.2,
     };
-    setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems); // Save to localStorage
+      // Update global textItems
+  setTextItems(updatedItems);
+
+    // Sync into the pages slice so persistence/refresh works
+  setPages(prev => {
+    const next = [...prev];
+    const page = next[activePage] || { textItems: [], imageItems: [] };
+    next[activePage] = {
+      ...page,
+      textItems: updatedItems, // spread preserves xNorm/yNormTop
+    };
+    return next;
+  });
     closeEditModal(); // Close the modal
     drawCanvas(activePage);
   }

@@ -2,8 +2,10 @@ import { useCallback, useState } from "react";
 import type { Point, ImageItem, Page } from "../types/editor";
 import { readFileAsDataURL } from "../utils/files/readFileAsDataURL";
 import { loadImageDimensions } from "../utils/images/loadImageDimensions";
-
+import { useHistory } from "../hooks/useHistory";
+import { usePages } from "../hooks/usePages";
 type AddOpts = { x?: number; y?: number; scale?: number };
+
 
 export function useImages() {
   const [imageItems, setImageItems] = useState<ImageItem[]>([]);
@@ -12,6 +14,9 @@ export function useImages() {
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [resizingImageIndex, setResizingImageIndex] = useState<number | null>(null);
   const [resizeStart, setResizeStart] = useState<Point>({ x: 0, y: 0 });
+
+  const pages = usePages();
+  const history = useHistory();
 
   /**
    * Hydrate global imageItems from persisted pages (adds .index to each).
@@ -58,6 +63,52 @@ export function useImages() {
     []
   );
 
+const saveImageItemsToLocalStorage = useCallback(
+    async (items:any) => {
+  const serializedImages = items.map((item:ImageItem) => {
+    // if(item.index === activePage) {
+      
+    // }
+    return {
+      data: item.data, // Save base64 data
+      x: item.x,
+      y: item.y,
+      width: item.width,
+      height: item.height,
+      index: item.index
+    }
+  });
+  // if(serializedImages.length > 0) {
+    
+  // }
+  localStorage.setItem('imageItems', JSON.stringify(serializedImages));
+},[]);
+
+
+const handleAddImage = useCallback(
+    async (e:any) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      history.pushSnapshotToUndo(pages.activePage);        // snapshot BEFORE mutation
+      await addImageFromFile(file, pages.activePage, { x: 50, y: 50, scale: 0.5 });
+
+      // If you don't use the effect-driven draw yet, force a draw:
+      // drawCanvas(activePage);
+
+      e.target.value = ""; // allow re-selecting same file
+},[]);
+
+// Utility function to create an Image element from base64 data
+const createImageElement = useCallback(
+    (data:any) => {
+      const img = new Image();
+      img.src = data;
+      return img;
+},[]);
+
+
+
   return {
     imageItems, setImageItems,
     isImageDragging, setIsImageDragging,
@@ -67,5 +118,8 @@ export function useImages() {
     resizeStart, setResizeStart,
     hydrateFromPages,
     addImageFromFile,           // ← new action
+    handleAddImage,
+    saveImageItemsToLocalStorage,
+    createImageElement
   };
 }

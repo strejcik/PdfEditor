@@ -1,4 +1,13 @@
-import { createContext, useContext, PropsWithChildren, useMemo, useRef, useLayoutEffect, useEffect } from "react";
+import {
+  createContext,
+  useContext,
+  PropsWithChildren,
+  useMemo,
+  useRef,
+  useLayoutEffect,
+  useEffect,
+} from "react";
+
 import { useUiPanels } from "../hooks/useUiPanels";
 import { useHistory } from "../hooks/useHistory";
 import { usePages } from "../hooks/usePages";
@@ -7,7 +16,7 @@ import { useSelection } from "../hooks/useSelection";
 import { useTextBox } from "../hooks/useTextBox";
 import { useImages } from "../hooks/useImages";
 import { usePdf } from "../hooks/usePdf";
-import { useMultiLineMode } from '../hooks/useMultiLineMode';
+import { useMultiLineMode } from "../hooks/useMultiLineMode";
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -39,25 +48,37 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const multiline = useMultiLineMode();
   const history = useHistory();
 
-  // Keep latest slices in refs so bound getters/setters always see fresh data
+  // Keep latest slices in refs so history bindings always read current data
   const textRef = useRef(text);
   const imagesRef = useRef(images);
-  const hydratedOnceRef = useRef(false);
+  useEffect(() => {
+    textRef.current = text;
+    imagesRef.current = images;
+  }, [text, images]);
 
-  // Update refs every render
-  useEffect(() => { textRef.current = text; imagesRef.current = images; }, [text, images]);
+  /**
+   * 🔁 Re-hydrate text & image stores EVERY TIME pages change.
+   * This ensures all pages (not just the first) are reflected in item stores.
+   * If your hydrateFromPages merges, you can keep using it; otherwise derive flat arrays.
+   */
+  useEffect(() => {
+    const pageList = pages.pages ?? [];
+    if (!Array.isArray(pageList) || pageList.length === 0) return;
 
-useEffect(() => {
-  if (hydratedOnceRef.current) return;
-  if (!pages.pages || pages.pages.length === 0) return;
+    // Prefer explicit, side-effect-free derivation:
+    const allText = pageList.flatMap((p) => p?.textItems ?? []);
+    const allImages = pageList.flatMap((p) => p?.imageItems ?? []);
 
-  text.hydrateFromPages?.(pages.pages);
-  images.hydrateFromPages?.(pages.pages);
+    // Set into item stores (replace with your setters if named differently)
+    text.setTextItems?.(allText);
+    images.setImageItems?.(allImages);
 
-  hydratedOnceRef.current = true;
-}, [pages.pages]);
+    // If you also keep counts/indices per page in those stores, update them here as well.
+  }, [pages.pages, text.setTextItems, images.setImageItems]);
 
-  // Bind ONCE before paint; functions read from refs → always up to date
+  /**
+   * Bind history sources once; the getters pull from refs so they see fresh arrays.
+   */
   useLayoutEffect(() => {
     history.bindSources(
       () => textRef.current.textItems,
@@ -67,9 +88,20 @@ useEffect(() => {
     );
   }, [history]);
 
-  const value = useMemo<EditorContextValue>(() => ({
-    ui, history, pages, text, selection, textBox, images, pdf, multiline
-  }), [ui, history, pages, text, selection, textBox, images, pdf, multiline]);
+  const value = useMemo<EditorContextValue>(
+    () => ({
+      ui,
+      history,
+      pages,
+      text,
+      selection,
+      textBox,
+      images,
+      pdf,
+      multiline,
+    }),
+    [ui, history, pages, text, selection, textBox, images, pdf, multiline]
+  );
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
 }

@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Page } from "../types/editor";
 import { loadPages, savePages, normalizePages } from "../utils/persistance/pagesStorage"
 export function usePages() {
   const [pages, setPages] = useState<Page[]>([]);
-  const [activePage, setActivePage] = useState(0);
+  const [activePage, setActivePage] = useState<number>(0);
   const canvasRefs = useRef<HTMLCanvasElement[]>([]);
 
   // Load once on mount
@@ -27,5 +27,20 @@ export function usePages() {
     }
   }, [pages]);
 
-  return { pages, setPages, activePage, setActivePage, canvasRefs };
+
+const updatePageItems = useCallback(
+  <K extends keyof Page>(key: K, items: Page[K]) => {
+    setPages(prevPages => {
+      const updatedPages = [...prevPages];
+      updatedPages[activePage] = {
+        ...updatedPages[activePage],
+        [key]: items,
+      };
+      return updatedPages;
+    });
+  },
+  [activePage, setPages]
+);
+
+  return { pages, setPages, activePage, setActivePage, canvasRefs, updatePageItems};
 }
