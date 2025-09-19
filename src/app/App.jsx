@@ -395,8 +395,10 @@ useEffect(() => {
 
    // Add a new page
    const addNewPage = () => {
-    setPages((prev) => [...prev, { textItems: [], imageItems: [] }]);
-    setActivePage(pageList.length); // Switch to the new page
+    if(pageList.length >= 1) {
+      setPages((prev) => [...prev, { textItems: [], imageItems: [] }]);
+      setActivePage(pageList.length); // Switch to the new page
+    }
   };
 
 
@@ -3195,7 +3197,7 @@ return (
               <input
                 type="file"
                 accept="image/*"
-                onChange={handleAddImage}
+                onChange={(e) => {handleAddImage(e, activePage)}}
                 style={{ marginBottom: '10px', width: '100%' }}
               />
               <button
@@ -3272,7 +3274,7 @@ return (
                     setRedoStack({});
                     setTextItems([]);
                     setImageItems([]);
-                    setPages([{}]);       // single placeholder page
+                    setPages([{"textItems":[],"imageItems":[]}]);       // single placeholder page
                     setActivePage(0);
 
                     // Optional: clear selection / editing states if you keep them

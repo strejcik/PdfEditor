@@ -61,6 +61,8 @@ export function EditorProvider({ children }: PropsWithChildren) {
    * This ensures all pages (not just the first) are reflected in item stores.
    * If your hydrateFromPages merges, you can keep using it; otherwise derive flat arrays.
    */
+  
+  
   useEffect(() => {
     const pageList = pages.pages ?? [];
     if (!Array.isArray(pageList) || pageList.length === 0) return;

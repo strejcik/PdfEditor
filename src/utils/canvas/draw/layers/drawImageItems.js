@@ -1,4 +1,8 @@
-import { useImages } from '../../../../hooks/useImages';
+const createImageElement = (data) => {
+      const img = new Image();
+      img.src = data;
+      return img;
+}
 
 export function drawImageItems(ctx, rect, pageIndex, state) {
   const { imageItems } = state;
@@ -15,7 +19,7 @@ export function drawImageItems(ctx, rect, pageIndex, state) {
     const h    = hasNormSize ? Number(item.heightNorm) * rect.height : (Number(item.height) || 0);
 
     const src = item.data || item.src;
-    const imgEl = useImages.createImageElement(src); // keep your existing helper
+    const imgEl = createImageElement(src); // keep your existing helper
     if (!imgEl || !imgEl.complete || !imgEl.naturalWidth) {
       if (imgEl) imgEl.onload = () => requestAnimationFrame(() => state.redraw?.(pageIndex));
       return;
