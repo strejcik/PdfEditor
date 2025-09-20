@@ -7,16 +7,17 @@
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
+    "@types/react": "^18.3.23",
+    "@vitejs/plugin-react": "^4.7.0",
     "axios": "1.12.0",
     "legacy": "^0.0.3",
     "pdf-lib": "^1.17.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-scripts": "^5.0.1",
-    "web-vitals": "^2.1.4",
-    "@types/react": "^18.3.23",
-    "@vitejs/plugin-react": "^4.7.0",
-    "vite": "7.1.5"
+    "serve": "^14.2.5",
+    "vite": "7.1.5",
+    "web-vitals": "^2.1.4"
   },
   "overrides": {
     "nth-check": "2.1.1",
@@ -25,9 +26,9 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
     "preview": "vite preview",
-    "start": "vite preview --port $PORT",
+    "start": "serve -s build",
+    "build": "vite build",
     "heroku-postbuild": "npm run build"
   },
   "eslintConfig": {
