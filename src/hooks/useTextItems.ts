@@ -164,77 +164,65 @@ const wrapTextPreservingNewlinesResponsive = (
 }
 
 
+function resolveTextLayoutForHit(item:any, ctx:any, canvas:any) {
+  const rect = canvas.getBoundingClientRect();
+  const cssW = rect.width;
+  const cssH = rect.height;
 
+  const fontSize   = Number(item.fontSize) || 16;
+  const fontFamily = item.fontFamily || "Lato";
+  const padding    = item.boxPadding != null ? Number(item.boxPadding) : Math.round(fontSize * 0.2);
 
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = `${fontSize}px ${fontFamily}`;
 
-/**
- * Wrap text into lines that fit within maxWidth using a canvas 2D context.
- * - Preserves empty lines between paragraphs
- * - Breaks overlong words by characters when needed
- *
- * @param {string} text
- * @param {number} maxWidth  // in canvas CSS px (respecting your DPR transform)
- * @param {CanvasRenderingContext2D} ctx // ctx.font must be set by caller
- * @returns {string[]} lines
- */
-// const wrapTextResponsive = (text:string, maxWidth:number, ctx: CanvasRenderingContext2D) => {
-//   if (!text) return [];
+  const m = ctx.measureText(item.text || "");
+  const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
+  const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.20;
+  const textWidth  = m.width;
+  const textHeight = ascent + descent;
+  ctx.restore();
 
-//   const lines = [];
-//   const paragraphs = String(text).split("\n"); // preserve blank lines
+  const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
 
-//   for (let p = 0; p < paragraphs.length; p++) {
-//     const paragraph = paragraphs[p];
+  // ❌ no clamping — allow negative / > canvas values
+  const x = hasNorm
+    ? Number(item.xNorm) * cssW
+    : (Number(item.x) || 0);
 
-//     // keep blank line as an empty line (visual newline)
-//     if (paragraph.trim().length === 0) {
-//       lines.push("");
-//       continue;
-//     }
+  let topY;
+  if (hasNorm) {
+    // ❌ no clamping
+    topY = Number(item.yNormTop) * cssH;
+  } else {
+    // Legacy pixel mode: convert baseline/bottom to top
+    const rawY = Number(item.y) || 0;
+    const anchor = item.anchor || "baseline"; // keep legacy default
+    if (anchor === "baseline")      topY = rawY - ascent;
+    else if (anchor === "bottom")   topY = rawY - textHeight;
+    else                            topY = rawY; // already top
+  }
 
-//     const words = paragraph.split(/\s+/);
-//     let current = "";
-
-//     for (let w = 0; w < words.length; w++) {
-//       const word = words[w];
-//       const next = current ? current + " " + word : word;
-
-//       const wordWidth = ctx.measureText(word).width;
-//       const nextWidth = ctx.measureText(next).width;
-
-//       if (wordWidth > maxWidth) {
-//         // Break long word by characters
-//         if (current) {
-//           lines.push(current);
-//           current = "";
-//         }
-//         let chunk = "";
-//         for (const ch of [...word]) {
-//           const tryChunk = chunk + ch;
-//           if (ctx.measureText(tryChunk).width > maxWidth && chunk) {
-//             lines.push(chunk);
-//             chunk = ch;
-//           } else {
-//             chunk = tryChunk;
-//           }
-//         }
-//         current = chunk; // leftover continues the line
-//       } else if (nextWidth > maxWidth && current) {
-//         lines.push(current);
-//         current = word;
-//       } else {
-//         current = next;
-//       }
-
-//       if (w === words.length - 1 && current) {
-//         lines.push(current);
-//         current = "";
-//       }
-//     }
-//   }
-
-//   return lines;
-// }
+  return {
+    x,
+    topY,
+    fontSize,
+    fontFamily,
+    padding,
+    textWidth,
+    textHeight,
+    ascent,
+    descent,
+    box: {
+      x: x - padding,
+      y: topY - padding,
+      w: textWidth + padding * 2,
+      h: textHeight + padding * 2,
+    },
+  };
+}
 
 const wrapTextResponsive = (text:string, maxWidth:number, ctx: CanvasRenderingContext2D) => {
   const paragraphs = text.split('\n');
@@ -348,6 +336,7 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     wrapTextPreservingNewlinesResponsive,
     wrapTextResponsive,
     resolveTextLayout,
+    resolveTextLayoutForHit,
     // hydration
     hydrateFromPages,
   };

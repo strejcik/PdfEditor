@@ -146,12 +146,34 @@ const addImageFromFile = useCallback(
 );
 
 
+// Resolve image rect in CSS units (prefers normalized fields).
+function resolveImageRectCss(item:any, canvas:any) {
+  const rect = canvas.getBoundingClientRect();
+  const cssW = rect.width;
+  const cssH = rect.height;
+
+  const hasNormPos  = (item.xNorm != null) && (item.yNormTop != null);
+  const hasNormSize = (item.widthNorm != null) && (item.heightNorm != null);
+
+  // ❌ no clamp on positions
+  const x = hasNormPos  ? Number(item.xNorm)    * cssW : (Number(item.x)      || 0);
+  const y = hasNormPos  ? Number(item.yNormTop) * cssH : (Number(item.y)      || 0);
+
+  // No clamp on size either; just coerce to finite and >= 0
+  const wPx = hasNormSize ? Number(item.widthNorm)  * cssW : (Number(item.width)  || 0);
+  const hPx = hasNormSize ? Number(item.heightNorm) * cssH : (Number(item.height) || 0);
+  const w = Number.isFinite(wPx) ? Math.max(0, wPx) : 0;
+  const h = Number.isFinite(hPx) ? Math.max(0, hPx) : 0;
+
+  return { x, y, w, h, cssW, cssH };
+}
+
+
 
 
 
 const handleAddImage = useCallback(
     async (e:any, activePage:number) => {
-      console.log('aaaaaaaaaa');
       const file = e.target.files?.[0];
       if (!file) return;
       history.pushSnapshotToUndo(activePage);        // snapshot BEFORE mutation
@@ -183,6 +205,7 @@ const createImageElement = useCallback(
     addImageFromFile,           // ← new action
     handleAddImage,
     saveImageItemsToLocalStorage,
-    createImageElement
+    createImageElement,
+    resolveImageRectCss
   };
 }

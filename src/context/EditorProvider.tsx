@@ -17,6 +17,7 @@ import { useTextBox } from "../hooks/useTextBox";
 import { useImages } from "../hooks/useImages";
 import { usePdf } from "../hooks/usePdf";
 import { useMultiLineMode } from "../hooks/useMultiLineMode";
+import { useMouse } from '../hooks/useMouse';
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -28,6 +29,7 @@ type EditorContextValue = {
   images: ReturnType<typeof useImages>;
   pdf: ReturnType<typeof usePdf>;
   multiline: ReturnType<typeof useMultiLineMode>;
+  mouse: ReturnType<typeof useMouse>;
 };
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -47,6 +49,7 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const pdf = usePdf();
   const multiline = useMultiLineMode();
   const history = useHistory();
+  const mouse = useMouse();
 
   // Keep latest slices in refs so history bindings always read current data
   const textRef = useRef(text);
@@ -101,8 +104,9 @@ export function EditorProvider({ children }: PropsWithChildren) {
       images,
       pdf,
       multiline,
+      mouse
     }),
-    [ui, history, pages, text, selection, textBox, images, pdf, multiline]
+    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse]
   );
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
