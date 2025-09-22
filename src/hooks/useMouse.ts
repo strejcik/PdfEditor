@@ -432,9 +432,208 @@ export function useMouse() {
       }
     };
 
+
+
+    const handleMouseUp = (e:any, opts:any) => {
+      const {
+        canvasRefs,
+        activePage,
+        editingIndex,
+        textItems,
+        resolveTextLayoutForHit,
+        setSelectedTextIndexes,
+        textBox,
+        setSelectionEnd,
+        selectionEnd,
+        isResizing,
+        setTextBox,
+        drawCanvas,
+        isSelecting,
+        selectionStart,
+        resizingImageIndex,
+        isImageDragging,
+        isDragging,
+        setIsResizing,
+        setIsDragging,
+        setInitialPositions,
+        setDragStart,
+        pushSnapshotToUndo,
+        setResizingImageIndex,
+        setIsImageDragging,
+        setDraggedImageIndex,
+        setIsTextSelected,
+        setSelectedTextIndex,
+        isTextBoxEditEnabled,
+        setIsSelecting,
+        setShouldClearSelectionBox,
+        setSelectionStart,
+        history
+      } = opts;
+
+      if (editingIndex !== null) {
+        e.preventDefault();
+      }
+      const canvas = canvasRefs.current[activePage];
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+    
+      const selX0 = Math.min(selectionStart?.x || 0, selectionEnd?.x || 0);
+      const selY0 = Math.min(selectionStart?.y || 0, selectionEnd?.y || 0);
+      const selW  = Math.abs((selectionEnd?.x || 0) - (selectionStart?.x || 0));
+      const selH  = Math.abs((selectionEnd?.y || 0) - (selectionStart?.y || 0));
+      const selectionRect = { x: selX0, y: selY0, width: selW, height: selH };
+    
+      const getCanvasPoint = (evt:any, el:any) => {
+        const r = el.getBoundingClientRect();
+        return { x: evt.clientX - r.left, y: evt.clientY - r.top };
+      };
+    
+      if (isResizing) setIsResizing(false);
+    
+     if (isDragging) {
+    setIsDragging(false);
+    setInitialPositions([]);
+    setDragStart({ x: 0, y: 0 });
+    if (typeof pushSnapshotToUndo === "function") {
+      pushSnapshotToUndo(activePage);
+    } else if (history?.pushSnapshotToUndo) {
+      history.pushSnapshotToUndo(activePage);
+    }
+  }
+
+  if (resizingImageIndex !== null) setResizingImageIndex(null);
+  if (isImageDragging) {
+    setIsImageDragging(false);
+    setDraggedImageIndex(null);
+    setDragStart({ x: 0, y: 0 });
+    if (typeof pushSnapshotToUndo === "function") {
+      pushSnapshotToUndo(activePage);
+    } else if (history?.pushSnapshotToUndo) {
+      history.pushSnapshotToUndo(activePage);
+    }
+  }
+    
+      if (isSelecting) {
+        const selectedIndexes = [];
+        const updatedInitials = [];
+    
+        for (let i = 0; i < textItems.length; i++) {
+          const item = textItems[i];
+          if (item.index !== activePage) continue;
+    
+          const L = resolveTextLayoutForHit(item, ctx, canvas);
+          const b = L.box;
+    
+          const intersects =
+            selectionRect.x < b.x + b.w &&
+            selectionRect.x + selectionRect.width > b.x &&
+            selectionRect.y < b.y + b.h &&
+            selectionRect.y + selectionRect.height > b.y;
+    
+          if (intersects) {
+            selectedIndexes.push(i);
+            updatedInitials.push({ index: i, xTop: L.x, yTop: L.topY, activePage });
+          }
+        }
+    
+        if (selectedIndexes.length > 0) {
+          setSelectedTextIndexes(selectedIndexes);
+          setInitialPositions(updatedInitials);
+          setIsTextSelected(true);
+        } else {
+          setSelectedTextIndexes([]);
+          setSelectedTextIndex(null);
+          setIsTextSelected(false);
+        }
+    
+        if (isTextBoxEditEnabled && !textBox && selectionStart && selectionEnd) {
+          const startX = selectionStart.x;
+          const startY = selectionStart.y;
+          const endX   = selectionEnd.x;
+          const endY   = selectionEnd.y;
+    
+          const x = Math.min(startX, endX);
+          const y = Math.min(startY, endY);
+          const width  = Math.abs(endX - startX);
+          const height = Math.abs(endY - startY);
+          setTextBox({ x, y, width, height, text: "" });
+        }
+    
+        setIsSelecting(false);
+        setShouldClearSelectionBox(true);
+      } else {
+        // --- SINGLE-ITEM PICK on click/tap ---
+        const pt = getCanvasPoint(e, canvas); // <- use event coordinates, not selectionStart/End
+    
+        const pointInRect = (px:any, py:any, r:any) =>
+          px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+    
+        let pickedIdx = null;
+    
+        // Pass 1: choose the TOPMOST item that contains the point (iterate from end)
+        for (let i = textItems.length - 1; i >= 0; i--) {
+          const item = textItems[i];
+          if (item.index !== activePage) continue;
+    
+          const L = resolveTextLayoutForHit(item, ctx, canvas);
+          const b = L.box; // {x,y,w,h} – tight glyph bbox
+    
+          if (pointInRect(pt.x, pt.y, b)) {
+            pickedIdx = i;
+            break; // topmost found
+          }
+        }
+    
+        // Pass 2: if none contain, snap to nearest within a small threshold
+        if (pickedIdx === null) {
+          const NEAR_THRESHOLD = 6; // px
+          let bestDist = Infinity;
+    
+          for (let i = textItems.length - 1; i >= 0; i--) {
+            const item = textItems[i];
+            if (item.index !== activePage) continue;
+    
+            const L = resolveTextLayoutForHit(item, ctx, canvas);
+            const b = L.box;
+    
+            const dx =
+              pt.x < b.x ? b.x - pt.x : pt.x > b.x + b.w ? pt.x - (b.x + b.w) : 0;
+            const dy =
+              pt.y < b.y ? b.y - pt.y : pt.y > b.y + b.h ? pt.y - (b.y + b.h) : 0;
+            const dist = Math.hypot(dx, dy);
+    
+            if (dist <= NEAR_THRESHOLD && dist < bestDist) {
+              bestDist = dist;
+              pickedIdx = i;
+            }
+          }
+        }
+    
+        if (pickedIdx !== null) {
+          // Select exactly one item (use GLOBAL index, not page index)
+          setSelectedTextIndexes([pickedIdx]);
+          setSelectedTextIndex(pickedIdx);
+          setIsTextSelected(true);
+    
+          const Lbest = resolveTextLayoutForHit(textItems[pickedIdx], ctx, canvas);
+          setInitialPositions([{ index: pickedIdx, xTop: Lbest.x, yTop: Lbest.topY, activePage }]);
+        } else {
+          // Clicked empty space: clear selection
+          setSelectedTextIndexes([]);
+          setSelectedTextIndex(null);
+          setIsTextSelected(false);
+        }
+      }
+    
+      setSelectionStart(null);
+      setSelectionEnd(null);
+      drawCanvas(activePage);
+    };
+
     return {
         handleMouseDown,
-        handleMouseMove
+        handleMouseMove,
+        handleMouseUp
     }
 
 }

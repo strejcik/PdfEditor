@@ -157,7 +157,11 @@ useEffect(() => {
     
     mouse: {
       handleMouseDown,
-      handleMouseMove
+      handleMouseMove,
+      handleMouseUp
+    },
+    keyboard: {
+      handleKeyDown
     },
 
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
@@ -434,430 +438,55 @@ useEffect(() => {
 }, [shouldClearSelectionBox]);
 
 
-const handleMouseUp = (e) => {
-  if (editingIndex !== null) {
-    e.preventDefault();
-  }
-  const canvas = canvasRefs.current[activePage];
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-
-  const selX0 = Math.min(selectionStart?.x || 0, selectionEnd?.x || 0);
-  const selY0 = Math.min(selectionStart?.y || 0, selectionEnd?.y || 0);
-  const selW  = Math.abs((selectionEnd?.x || 0) - (selectionStart?.x || 0));
-  const selH  = Math.abs((selectionEnd?.y || 0) - (selectionStart?.y || 0));
-  const selectionRect = { x: selX0, y: selY0, width: selW, height: selH };
-
-  const getCanvasPoint = (evt, el) => {
-    const r = el.getBoundingClientRect();
-    return { x: evt.clientX - r.left, y: evt.clientY - r.top };
-  };
-
-  if (isResizing) setIsResizing(false);
-
-  if (isDragging) {
-    setIsDragging(false);
-    setInitialPositions([]);
-    setDragStart({ x: 0, y: 0 });
-    if (typeof pushSnapshotToUndo === "function") {
-      pushSnapshotToUndo(activePage);
-    } else if (history?.pushSnapshotToUndo) {
-      history.pushSnapshotToUndo(activePage);
-    }
-  }
-
-  if (resizingImageIndex !== null) setResizingImageIndex(null);
-  if (isImageDragging) {
-    setIsImageDragging(false);
-    setDraggedImageIndex(null);
-    setDragStart({ x: 0, y: 0 });
-    if (typeof pushSnapshotToUndo === "function") {
-      pushSnapshotToUndo(activePage);
-    } else if (history?.pushSnapshotToUndo) {
-      history.pushSnapshotToUndo(activePage);
-    }
-  }
-
-  if (isSelecting) {
-    const selectedIndexes = [];
-    const updatedInitials = [];
-
-    for (let i = 0; i < textItems.length; i++) {
-      const item = textItems[i];
-      if (item.index !== activePage) continue;
-
-      const L = resolveTextLayoutForHit(item, ctx, canvas);
-      const b = L.box;
-
-      const intersects =
-        selectionRect.x < b.x + b.w &&
-        selectionRect.x + selectionRect.width > b.x &&
-        selectionRect.y < b.y + b.h &&
-        selectionRect.y + selectionRect.height > b.y;
-
-      if (intersects) {
-        selectedIndexes.push(i);
-        updatedInitials.push({ index: i, xTop: L.x, yTop: L.topY, activePage });
-      }
-    }
-
-    if (selectedIndexes.length > 0) {
-      setSelectedTextIndexes(selectedIndexes);
-      setInitialPositions(updatedInitials);
-      setIsTextSelected(true);
-    } else {
-      setSelectedTextIndexes([]);
-      setSelectedTextIndex(null);
-      setIsTextSelected(false);
-    }
-
-    if (isTextBoxEditEnabled && !textBox && selectionStart && selectionEnd) {
-      const startX = selectionStart.x;
-      const startY = selectionStart.y;
-      const endX   = selectionEnd.x;
-      const endY   = selectionEnd.y;
-
-      const x = Math.min(startX, endX);
-      const y = Math.min(startY, endY);
-      const width  = Math.abs(endX - startX);
-      const height = Math.abs(endY - startY);
-      setTextBox({ x, y, width, height, text: "" });
-    }
-
-    setIsSelecting(false);
-    setShouldClearSelectionBox(true);
-  } else {
-    // --- SINGLE-ITEM PICK on click/tap ---
-    const pt = getCanvasPoint(e, canvas); // <- use event coordinates, not selectionStart/End
-
-    const pointInRect = (px, py, r) =>
-      px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
-
-    let pickedIdx = null;
-
-    // Pass 1: choose the TOPMOST item that contains the point (iterate from end)
-    for (let i = textItems.length - 1; i >= 0; i--) {
-      const item = textItems[i];
-      if (item.index !== activePage) continue;
-
-      const L = resolveTextLayoutForHit(item, ctx, canvas);
-      const b = L.box; // {x,y,w,h} – tight glyph bbox
-
-      if (pointInRect(pt.x, pt.y, b)) {
-        pickedIdx = i;
-        break; // topmost found
-      }
-    }
-
-    // Pass 2: if none contain, snap to nearest within a small threshold
-    if (pickedIdx === null) {
-      const NEAR_THRESHOLD = 6; // px
-      let bestDist = Infinity;
-
-      for (let i = textItems.length - 1; i >= 0; i--) {
-        const item = textItems[i];
-        if (item.index !== activePage) continue;
-
-        const L = resolveTextLayoutForHit(item, ctx, canvas);
-        const b = L.box;
-
-        const dx =
-          pt.x < b.x ? b.x - pt.x : pt.x > b.x + b.w ? pt.x - (b.x + b.w) : 0;
-        const dy =
-          pt.y < b.y ? b.y - pt.y : pt.y > b.y + b.h ? pt.y - (b.y + b.h) : 0;
-        const dist = Math.hypot(dx, dy);
-
-        if (dist <= NEAR_THRESHOLD && dist < bestDist) {
-          bestDist = dist;
-          pickedIdx = i;
-        }
-      }
-    }
-
-    if (pickedIdx !== null) {
-      // Select exactly one item (use GLOBAL index, not page index)
-      setSelectedTextIndexes([pickedIdx]);
-      setSelectedTextIndex(pickedIdx);
-      setIsTextSelected(true);
-
-      const Lbest = resolveTextLayoutForHit(textItems[pickedIdx], ctx, canvas);
-      setInitialPositions([{ index: pickedIdx, xTop: Lbest.x, yTop: Lbest.topY, activePage }]);
-    } else {
-      // Clicked empty space: clear selection
-      setSelectedTextIndexes([]);
-      setSelectedTextIndex(null);
-      setIsTextSelected(false);
-    }
-  }
-
-  setSelectionStart(null);
-  setSelectionEnd(null);
-  drawCanvas(activePage);
-};
-
-
-
 
 
 // optional: keep some state in refs to avoid stale closures
 const selectedTextIndexesRef = useRef(selectedTextIndexes);
 useEffect(() => { selectedTextIndexesRef.current = selectedTextIndexes; }, [selectedTextIndexes]);
 
-const handleKeyDown = useCallback((e) => {
-  const tag = (e.target?.tagName || "").toLowerCase();
-  const typingInDOMField =
-    tag === "input" || tag === "textarea" || e.target?.isContentEditable;
-
-
-  // Ctrl + A: select all textItems on the active page
-  if (e.ctrlKey && (e.key === "a" || e.key === "A") && !isMultilineMode) {
-    e.preventDefault();
-
-    // Build ids only for the active page (no undefined holes)
-    const allIds = textItems
-      .map((it, idx) => (it.index === activePage ? idx : null))
-      .filter((v) => v !== null);
-
-    setSelectedTextIndexes(allIds);
-    setIsTextSelected(allIds.length > 0);
-    setSelectedTextIndex(allIds.length ? allIds[allIds.length - 1] : null);
-    return;
-  }
-
-  if (e.key === "Delete" && !isMultilineMode) {
-    e.preventDefault();
-    const toRemove = selectedTextIndexesRef.current;
-    if (toRemove.length > 0) {
-      const updated = textItems.filter((_, i) => !toRemove.includes(i));
-      setTextItems(updated);
-      saveTextItemsToLocalStorage(updated);
-      updatePageItems("textItems", updated.filter(it => it.index === activePage));
-      setSelectedTextIndexes([]);
-      setIsTextSelected(false);
-      setSelectedTextIndex(null);
-      return;
-    }
-  }
-
-  // TextBox inline typing
-  if (isTextBoxEditEnabled && textBox && !typingInDOMField && !isMultilineMode) {
-    let updatedText = textBox.text;
-    if (e.key === "Enter")       updatedText += "\n";
-    else if (e.key === "Backspace") updatedText = updatedText.slice(0, -1);
-    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey)
-      updatedText += e.key;
-    else return;
-
-    const ctx = canvasRefs.current[activePage].getContext("2d");
-    ctx.font = `${textBox.fontSize || fontSize}px Arial`;
-    const result = wrapTextPreservingNewlinesResponsive(
-      updatedText, ctx, textBox.width, fontSize, textBox.boxPadding || 10
-    );
-    setTextBox({ ...textBox, text: updatedText, width: result.width, height: result.height });
-  }
-
-  // MULTI-LINE MODE
-  if (isMultilineMode && !typingInDOMField) {
-    // ignore meta shortcuts except shift for selection
-    if (e.metaKey || e.ctrlKey) return;
-
-    const units = toUnits(mlText);
-    const clamp = (v) => Math.max(0, Math.min(v, units.length));
-
-    // selection helpers
-    const hasSel = mlCaret !== mlAnchor;
-    const selA = Math.min(mlCaret, mlAnchor);
-    const selB = Math.max(mlCaret, mlAnchor);
-
-    // prepare layout for navigation
-    const canvas = canvasRefs.current[activePage];
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const ctx = canvas.getContext("2d");
-    const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
-    const layout = layoutMultiline(ctx, mlText, {
-      x: m.left, y: m.top,
-      maxWidth: rect.width - (m.left + m.right),
-      maxHeight: rect.height - (m.top + m.bottom),
-      fontSize: mlConfig.fontSize,
-      fontFamily: mlConfig.fontFamily,
-      lineGap: mlConfig.lineGap
-    });
-
-    const moveCaret = (newPos, keepAnchor=false) => {
-      const pos = clamp(newPos);
-      setMlCaret(pos);
-      if (!keepAnchor) setMlAnchor(pos);
-      const { x } = indexToXY(pos, layout);
-      setMlPreferredX(x);
-    };
-
-    // Navigation
-    if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      if (hasSel && !e.shiftKey) {
-        moveCaret(selA, false); // collapse to start
-      } else {
-        moveCaret(mlCaret - 1, e.shiftKey);
-      }
-      return;
-    }
-    if (e.key === "ArrowRight") {
-      e.preventDefault();
-      if (hasSel && !e.shiftKey) {
-        moveCaret(selB, false); // collapse to end
-      } else {
-        moveCaret(mlCaret + 1, e.shiftKey);
-      }
-      return;
-    }
-    if (e.key === "Home") {
-      e.preventDefault();
-      // go to line start
-      const { line } = indexToXY(mlCaret, layout);
-      if (line) moveCaret(line.start, e.shiftKey);
-      return;
-    }
-    if (e.key === "End") {
-      e.preventDefault();
-      const { line } = indexToXY(mlCaret, layout);
-      if (line) moveCaret(line.end, e.shiftKey);
-      return;
-    }
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-      e.preventDefault();
-      const dir = (e.key === "ArrowUp") ? -1 : 1;
-      const { x, line } = indexToXY(mlCaret, layout);
-      const targetX = mlPreferredX ?? x;
-
-      let li = layout.lines.findIndex(L => mlCaret >= L.start && mlCaret <= L.end);
-      if (li === -1) li = 0;
-      const newLi = li + dir;
-      if (newLi >= 0 && newLi < layout.lines.length) {
-        const L = layout.lines[newLi];
-        // find column by nearest boundary to targetX
-        let bestCol = 0, bestDist = Infinity;
-        for (let c = 0; c < L.charX.length; c++) {
-          const d = Math.abs(L.charX[c] - targetX);
-          if (d < bestDist) { bestDist = d; bestCol = c; }
-        }
-        if(e.key === "ArrowUp") {
-          moveCaret(L.start + bestCol, e.shiftKey);
-        }
-        if(e.key === "ArrowDown") {
-          moveCaret((L.start + bestCol) + dir, e.shiftKey);
-        }
-      }
-      return;
-    }
-
-    // Editing
-    if (e.key === "Enter") {
-      e.preventDefault();
-      let next = mlText;
-      if (hasSel) next = toUnits(next).slice(0, selA).join("") + "\n" + toUnits(next).slice(selB).join("");
-      else        next = toUnits(next).slice(0, mlCaret).join("") + "\n" + toUnits(next).slice(mlCaret).join("");
-      setMlText(next);
-      const newPos = hasSel ? selA + 1 : mlCaret + 1;
-      setMlCaret(newPos);
-      setMlAnchor(newPos);
-      return;
-    }
-    if (e.key === "Backspace") {
-      e.preventDefault();
-      if (hasSel) {
-        const next = toUnits(mlText).slice(0, selA).concat(toUnits(mlText).slice(selB)).join("");
-        setMlText(next); moveCaret(selA, false);
-      } else if (mlCaret > 0) {
-        const arr = toUnits(mlText);
-        arr.splice(mlCaret - 1, 1);
-        setMlText(arr.join("")); moveCaret(mlCaret - 1, false);
-      }
-      return;
-    }
-    if (e.key === "Delete") {
-      e.preventDefault();
-      if (hasSel) {
-        const next = toUnits(mlText).slice(0, selA).concat(toUnits(mlText).slice(selB)).join("");
-        setMlText(next); moveCaret(selA, false);
-      } else {
-        const arr = toUnits(mlText);
-        if (mlCaret < arr.length) { arr.splice(mlCaret, 1); setMlText(arr.join("")); }
-      }
-      return;
-    }
-
-    // Insert printable character
-    if (e.key.length === 1) {
-      e.preventDefault();
-      const ch = e.key;
-      let arr = toUnits(mlText);
-      if (hasSel) {
-        arr = arr.slice(0, selA).concat([ch], arr.slice(selB));
-        setMlText(arr.join("")); moveCaret(selA + 1, false);
-      } else {
-        if(arr.length === 0) {
-          const ch = e.key;
-
-          // Current text as grapheme array
-          const units = toUnits(mlText);
-
-
-          let newUnits, newPos;
-
-          if (hasSel) {
-            // Replace selection with the typed char
-            newUnits = units.slice(0, selA).concat([ch], units.slice(selB));
-            newPos = selA + 1;
-          } else {
-            // Insert at caret
-            newUnits = units.slice(0, mlCaret).concat([ch], units.slice(mlCaret));
-            newPos = mlCaret + 1;              // ← caret after the newly inserted char
-          }
-
-          const newText = newUnits.join("");
-          setMlText(newText);
-
-          // Set caret & anchor AFTER text so it lands after the new char
-          setMlCaret(newPos);
-          setMlAnchor(newPos);
-          return ;
-        }
-        arr.splice(mlCaret, 0, ch);
-        setMlText(arr.join(""));
-        setMlCaret(mlCaret + 1);
-        setMlAnchor(mlCaret + 1);
-      }
-      return;
-    }
-
-    return; // handled multiline
-  }
-}, [
-  // keep these minimal—avoid re-creating handler constantly
-  activePage,
-  canvasRefs,
-  fontSize,
-  isTextBoxEditEnabled,
-  textBox,
-  textItems,
-  isMultilineMode,
-  mlText,
-  mlCaret, mlAnchor, mlPreferredX, activePage, mlConfig,
-  setSelectedTextIndexes,
-  setIsTextSelected,
-  setSelectedTextIndex,
-  setTextItems,
-  setMlText,
-]);
 
 useEffect(() => {
   // Use document for better reliability; capture=false is fine
-  document.addEventListener("keydown", handleKeyDown, { passive: false });
+  const listener = (event) => handleKeyDown(event,{
+    canvasRefs,
+    fontSize,
+    isTextBoxEditEnabled,
+    textBox,
+    textItems,
+    isMultilineMode,
+    mlText,
+    mlCaret, 
+    mlAnchor, 
+    mlPreferredX, 
+    activePage, 
+    mlConfig,
+    setSelectedTextIndexes,
+    setIsTextSelected,
+    setSelectedTextIndex,
+    setTextItems,
+    setMlText,
+    selectedTextIndexesRef,
+    saveTextItemsToLocalStorage,
+    updatePageItems,
+    wrapTextPreservingNewlinesResponsive,
+    setTextBox,
+    toUnits,
+    pdfToCssMargins,
+    layoutMultiline,
+    setMlCaret,
+    setMlAnchor,
+    indexToXY,
+    setMlPreferredX
+  });
+
+  document.addEventListener("keydown", listener, { passive: false });
+
   return () => {
-    document.removeEventListener("keydown", handleKeyDown);
+    document.removeEventListener("keydown", listener);
   };
 }, [handleKeyDown]);  // <-- depend on the handler itself
+
+
 
   const handleTextMove = (e) => {
     
@@ -1047,98 +676,6 @@ function wrapParagraphsToWidth(ctx, text, {
   return { lines: out, lineHeight, clipped };
 }
 
-
-
-function drawMultilinePage(ctx, pageIndex) {
-if (pageIndex !== activePage) return;
-
-  const canvas = canvasRefs.current[pageIndex];
-  const rect = canvas.getBoundingClientRect();
-
-  // margins in CSS px
-  const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
-
-  const x = m.left;
-  const y = m.top;
-  const maxWidth  = Math.max(0, rect.width  - (m.left + m.right));
-  const maxHeight = Math.max(0, rect.height - (m.top  + m.bottom));
-
-  ctx.save();
-  ctx.strokeStyle = "rgba(0,0,0,0.1)";
-  ctx.setLineDash([4,4]);
-  ctx.strokeRect(x, y, maxWidth, maxHeight);
-  ctx.restore();
-
-  // layout
-  ctx.font = `${mlConfig.fontSize}px ${mlConfig.fontFamily}`;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-
-  const layout = layoutMultiline(ctx, mlText, {
-    x, y, maxWidth, maxHeight,
-    fontSize: mlConfig.fontSize,
-    fontFamily: mlConfig.fontFamily,
-    lineGap: mlConfig.lineGap
-  });
-
-  // ---- Selection highlight ----
-  const selA = Math.min(mlCaret, mlAnchor);
-  const selB = Math.max(mlCaret, mlAnchor);
-  const hasSelection = selB > selA;
-
-  if (hasSelection) {
-    ctx.save();
-    ctx.fillStyle = "rgba(30,144,255,0.25)";
-    for (const L of layout.lines) {
-      const s = Math.max(selA, L.start);
-      const e = Math.min(selB, L.end);
-      if (e <= s) continue;
-
-      const startCol = s - L.start;
-      const endCol   = e - L.start;
-      const startX = L.charX[startCol];
-      const endX   = L.charX[endCol];
-
-      const highlightX = Math.max(x, startX);
-      const highlightW = Math.max(0, Math.min(x + maxWidth, endX) - highlightX);
-      if (highlightW > 0) {
-        ctx.fillRect(highlightX, L.y, highlightW, L.height);
-      }
-    }
-    ctx.restore();
-  }
-
-  // ---- Draw text ----
-  ctx.fillStyle = "black";
-  for (const L of layout.lines) {
-    ctx.fillText(L.text, L.x, L.y);
-  }
-
-  // ---- Draw caret (blink) ----
-  if (isMultilineMode && !hasSelection && mlCaretBlink) {
-    const { x: cx, y: cy, line } = indexToXY(mlCaret, layout);
-    const caretTop = cy;
-    const caretBottom = cy + (line ? line.height : layout.lineHeight);
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(cx + 0.5, caretTop);
-    ctx.lineTo(cx + 0.5, caretBottom);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "black";
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  // Keep preferredX in sync with current caret column
-  const { x: curX } = indexToXY(mlCaret, layout);
-  if (mlPreferredX == null || !isMlDragging) {
-    // store latest "natural" x so up/down can honor it
-    setMlPreferredX(curX);
-  }
-
-  // Expose layout for hit-testing by other handlers if needed
-  return layout;
-}
 
 
 
@@ -2583,7 +2120,40 @@ return (
                                                                           saveTextItemsToLocalStorage,
                                                                           fontSize,
           })}
-          onMouseUp={(e) => handleCanvasMouseUpMl(e) ? undefined : handleMouseUp(e)}
+          onMouseUp={(e) => handleCanvasMouseUpMl(e) ? undefined : handleMouseUp(e,{
+                                                                          canvasRefs,
+                                                                          activePage,
+                                                                          editingIndex,
+                                                                          textItems,
+                                                                          resolveTextLayoutForHit,
+                                                                          setSelectedTextIndexes,
+                                                                          textBox,
+                                                                          setSelectionEnd,
+                                                                          selectionEnd,
+                                                                          isResizing,
+                                                                          setTextBox,
+                                                                          drawCanvas,
+                                                                          isSelecting,
+                                                                          selectionStart,
+                                                                          resizingImageIndex,
+                                                                          isImageDragging,
+                                                                          isDragging,
+                                                                          setIsResizing,
+                                                                          setIsDragging,
+                                                                          setInitialPositions,
+                                                                          setDragStart,
+                                                                          pushSnapshotToUndo,
+                                                                          setResizingImageIndex,
+                                                                          setIsImageDragging,
+                                                                          setDraggedImageIndex,
+                                                                          setIsTextSelected,
+                                                                          setSelectedTextIndex,
+                                                                          isTextBoxEditEnabled,
+                                                                          setIsSelecting,
+                                                                          setShouldClearSelectionBox,
+                                                                          setSelectionStart,
+                                                                          history
+      })}
           onDoubleClick={handleDoubleClick}
           onClick={() => setActivePage(index)}
         />
