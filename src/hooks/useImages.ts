@@ -14,8 +14,7 @@ export function useImages() {
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [resizingImageIndex, setResizingImageIndex] = useState<number | null>(null);
   const [resizeStart, setResizeStart] = useState<Point>({ x: 0, y: 0 });
-
-  const pages = usePages();
+  
   const history = useHistory();
 
   /**
