@@ -42,12 +42,12 @@ export function useImages() {
   // optional, if you want normalized fields persisted too
   canvasWidth?: number;
   canvasHeight?: number;
+  setPages:any
 };
 
 const saveImageItemsToLocalStorage = useCallback(
     async (items:any) => {
   const serializedImages = items.map((item:ImageItem) => {
-    console.log('1');
 
     return {
       data: item.data, // Save base64 data
@@ -107,15 +107,16 @@ const addImageFromFile = useCallback(
       ...(heightNorm !== undefined ? { heightNorm } : {}),
     } as unknown as ImageItem;
 
+    
+
     // 4) Update global imageItems
     setImageItems?.((prev: ImageItem[] = []) => {
       const merged = [...prev, newItem];
       saveImageItemsToLocalStorage?.(merged);
       return merged;
     });
-
     // 5) Update per-page slice in `pages`
-    pages.setPages?.((prev: any[]) => {
+    opts?.setPages?.((prev: any[]) => {
       const next = Array.isArray(prev) ? [...prev] : [];
       const page = next[pageIndex] || { textItems: [], imageItems: [] };
 
@@ -126,7 +127,6 @@ const addImageFromFile = useCallback(
       const exists = currentImages.some(
         (img) => img.data === newItem.data && img.index === newItem.index
       );
-
       next[pageIndex] = {
         ...page,
         textItems: Array.isArray(page.textItems) ? [...page.textItems] : [],
@@ -170,12 +170,12 @@ function resolveImageRectCss(item:any, canvas:any) {
 
 
 const handleAddImage = useCallback(
-    async (e:any, activePage:number) => {
+    async (e:any, activePage:number, setPages: any) => {
       const file = e.target.files?.[0];
       if (!file) return;
       history.pushSnapshotToUndo(activePage);        // snapshot BEFORE mutation
       e.target.value = ""; // allow re-selecting same file
-      await addImageFromFile(file, activePage, { x: 50, y: 50, scale: 0.5 });
+      await addImageFromFile(file, activePage, { x: 50, y: 50, scale: 0.5, canvasHeight:842, canvasWidth: 595, setPages});
 
       // If you don't use the effect-driven draw yet, force a draw:
       // drawCanvas(activePage);

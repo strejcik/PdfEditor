@@ -835,6 +835,8 @@ setPages(prev => {
   setNewText("");
   setNewFontSize(fontSize);
   setMaxWidth(200);
+
+  drawCanvas(activePage);
 };
 
 
@@ -1919,7 +1921,7 @@ return (
               <input
                 type="file"
                 accept="image/*"
-                onChange={(e) => {handleAddImage(e, activePage)}}
+                onChange={(e) => {handleAddImage(e, activePage, setPages)}}
                 style={{ marginBottom: '10px', width: '100%' }}
               />
               <button
