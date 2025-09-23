@@ -74,7 +74,8 @@ const saveTextItemsToLocalStorage = useCallback((items: any) => {
 
 
 // Function to remove selected text
-const removeSelectedText  = useCallback(() => {
+const removeSelectedText  = useCallback((opts: any) => {
+  const {updatePageItems, activePage} = opts;
   let updatedItems = [...textItemsState];
   // === Remove Multiple Selected Texts ===
   if (selectedTextIndexes.length > 0) {
@@ -85,8 +86,8 @@ const removeSelectedText  = useCallback(() => {
     saveTextItemsToLocalStorage(updatedItems);
 
     // Update only visible page's text items
-    const visibleItems = updatedItems.filter((item) => item.index === pages.activePage);
-    pages.updatePageItems('textItems', visibleItems);
+    const visibleItems = updatedItems.filter((item) => item.index === activePage);
+    updatePageItems('textItems', visibleItems);
 
     // Clear selection
     setSelectedTextIndexes([]);
@@ -101,8 +102,8 @@ const removeSelectedText  = useCallback(() => {
     setTextItems(updatedItems);
     saveTextItemsToLocalStorage(updatedItems);
 
-    const visibleItems = updatedItems.filter((item) => item.index === pages.activePage);
-    pages.updatePageItems('textItems', visibleItems);
+    const visibleItems = updatedItems.filter((item) => item.index === activePage);
+    updatePageItems('textItems', visibleItems);
 
     setIsTextSelected(false);
     setSelectedTextIndex(null);

@@ -1900,7 +1900,7 @@ return (
                   ...btnStyle,
                   opacity: selectedTextIndex === null && selectedTextIndexes.length < 1 ? 0.5 : 1
                 }}
-                onClick={removeSelectedText}
+                onClick={() => removeSelectedText({updatePageItems, activePage})}
                 disabled={selectedTextIndex === null && selectedTextIndexes.length < 1}
               >
                 Remove Text
