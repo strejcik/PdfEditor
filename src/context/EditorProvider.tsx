@@ -96,6 +96,11 @@ export function EditorProvider({ children }: PropsWithChildren) {
     );
   }, [history]);
 
+  // inside EditorProvider
+useLayoutEffect(() => {
+  history.bindFromSlices(text, images, pages); // 👈 pass ALL three
+}, [history, text, images, pages]);
+
   const value = useMemo<EditorContextValue>(
     () => ({
       ui,

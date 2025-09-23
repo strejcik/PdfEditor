@@ -494,11 +494,7 @@ export function useMouse() {
     setIsDragging(false);
     setInitialPositions([]);
     setDragStart({ x: 0, y: 0 });
-    if (typeof pushSnapshotToUndo === "function") {
-      pushSnapshotToUndo(activePage);
-    } else if (history?.pushSnapshotToUndo) {
-      history.pushSnapshotToUndo(activePage);
-    }
+    pushSnapshotToUndo(activePage);
   }
 
   if (resizingImageIndex !== null) setResizingImageIndex(null);
@@ -506,11 +502,7 @@ export function useMouse() {
     setIsImageDragging(false);
     setDraggedImageIndex(null);
     setDragStart({ x: 0, y: 0 });
-    if (typeof pushSnapshotToUndo === "function") {
-      pushSnapshotToUndo(activePage);
-    } else if (history?.pushSnapshotToUndo) {
-      history.pushSnapshotToUndo(activePage);
-    }
+    pushSnapshotToUndo(activePage);
   }
     
       if (isSelecting) {

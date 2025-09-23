@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UndoRedoState, TextItem, ImageItem } from "../types/editor";
 import { remapStacksAfterPageRemoval } from "../utils/history/remapStacksAfterPageRemoval";
-import { useTextItems } from "../hooks/useTextItems";
+
 type Snapshot = { textItems?: TextItem[]; imageItems?: ImageItem[] };
 
 const MAX_SNAPSHOTS = 100;
 
+// ---------- storage helpers ----------
 const save = (k: string, v: any) => {
   try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
 };
@@ -59,19 +60,23 @@ const belongsToPage = (it: any, page: number) => {
 };
 
 type SetItems<T> = (next: T[] | ((prev: T[]) => T[])) => void;
-type TextSliceLike = { textItems: TextItem[]; setTextItems: SetItems<TextItem> };
+type TextSliceLike  = { textItems: TextItem[]; setTextItems: SetItems<TextItem> };
 type ImageSliceLike = { imageItems: ImageItem[]; setImageItems: SetItems<ImageItem> };
+type PagesSliceLike = { pages: Array<{ textItems?: TextItem[]; imageItems?: ImageItem[] }>; setPages: (updater: any) => void };
 
 export function useHistory() {
   const [undoStack, setUndoStack] = useState<UndoRedoState>({});
   const [redoStack, setRedoStack] = useState<UndoRedoState>({});
-  const text = useTextItems();
-  const textRef = useRef(text);
+
   // Bound sources (getters + setters) stored in refs
   const getTextItemsRef = useRef<() => TextItem[]>(() => []);
   const getImageItemsRef = useRef<() => ImageItem[]>(() => []);
+  const getPagesRef     = useRef<() => PagesSliceLike["pages"]>(() => []);
+
   const setTextItemsRef = useRef<SetItems<TextItem> | null>(null);
   const setImageItemsRef = useRef<SetItems<ImageItem> | null>(null);
+  const setPagesRef      = useRef<PagesSliceLike["setPages"] | null>(null);
+
   const isBoundRef = useRef(false);
 
   useEffect(() => {
@@ -85,28 +90,41 @@ export function useHistory() {
     getImageItems: () => ImageItem[],
     setTextItems?: SetItems<TextItem>,
     setImageItems?: SetItems<ImageItem>,
+    getPages?: () => PagesSliceLike["pages"],
+    setPages?: PagesSliceLike["setPages"],
   ) => {
     getTextItemsRef.current = getTextItems;
     getImageItemsRef.current = getImageItems;
     if (setTextItems) setTextItemsRef.current = setTextItems;
     if (setImageItems) setImageItemsRef.current = setImageItems;
+
+    if (getPages) getPagesRef.current = getPages;
+    if (setPages) setPagesRef.current = setPages;
+
     isBoundRef.current = true;
   }, []);
 
-// ✅ HIGH-LEVEL: bind directly from the actual slices you already created in Provider
-const bindFromSlices = useCallback((text: TextSliceLike, images: ImageSliceLike) => {
-  // Store slices in closures that always read the latest values
-  getTextItemsRef.current = () => text.textItems;
-  getImageItemsRef.current = () => images.imageItems;
-  setTextItemsRef.current = text.setTextItems;
-  setImageItemsRef.current = images.setImageItems;
-  isBoundRef.current = true;
-}, []);
+  // High-level binder (pass slices)
+  const bindFromSlices = useCallback(
+    (text: TextSliceLike, images: ImageSliceLike, pages?: PagesSliceLike) => {
+      getTextItemsRef.current  = () => text.textItems;
+      getImageItemsRef.current = () => images.imageItems;
+      setTextItemsRef.current  = text.setTextItems;
+      setImageItemsRef.current = images.setImageItems;
+
+      if (pages) {
+        getPagesRef.current = () => pages.pages;
+        setPagesRef.current = pages.setPages;
+      }
+      isBoundRef.current = true;
+    },
+    []
+  );
 
   const takeCurrentPageSnapshot = useCallback((page: number): Snapshot => {
     if (!isBoundRef.current) {
       if (process.env.NODE_ENV !== "production") {
-        console.warn("[history] Not bound yet. Call history.bindFromSlices(text, images) in your Provider.");
+        console.warn("[history] Not bound yet. Call history.bindFromSlices(text, images, pages) in your Provider.");
       }
       return { textItems: [], imageItems: [] };
     }
@@ -114,7 +132,7 @@ const bindFromSlices = useCallback((text: TextSliceLike, images: ImageSliceLike)
     const imageItems = getImageItemsRef.current();
 
     const textOnPage = (textItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
-    const imgsOnPage  = (imageItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
+    const imgsOnPage = (imageItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
 
     if (process.env.NODE_ENV !== "production") {
       if ((textItems?.length ?? 0) > 0 && textOnPage.length === 0) {
@@ -128,30 +146,56 @@ const bindFromSlices = useCallback((text: TextSliceLike, images: ImageSliceLike)
     return { textItems: textOnPage, imageItems: imgsOnPage };
   }, []);
 
+  /**
+   * 🔧 Apply snapshot to *both* flat slices and the pages slice for `page`.
+   * This was the missing piece that made applyPageSnapshot look like it “didn’t work”.
+   */
   const applyPageSnapshot = useCallback((page: number, snap?: Snapshot) => {
     if (!snap) return;
-    const setText = setTextItemsRef.current;
+
+    const setText  = setTextItemsRef.current;
     const setImage = setImageItemsRef.current;
+    const setPages = setPagesRef.current;
+
     if (!setText || !setImage) {
       if (process.env.NODE_ENV !== "production") {
         console.warn("[history] Setters not bound. Call bindFromSlices or bindSources with setters.");
       }
       return;
     }
+
     const currentText = getTextItemsRef.current();
     const currentImgs = getImageItemsRef.current();
 
     const nextText = [
       ...currentText.filter(it => !belongsToPage(it, page)),
-      ...((snap.textItems || []).map(deepClone)),
+      ...((snap.textItems || []).map(x => deepClone(x))),
     ];
     const nextImgs = [
       ...currentImgs.filter(it => !belongsToPage(it, page)),
-      ...((snap.imageItems || []).map(deepClone)),
+      ...((snap.imageItems || []).map(x => deepClone(x))),
     ];
 
+    // 1) Update flat slices
     setText(nextText);
     setImage(nextImgs);
+
+    // 2) Update pages slice (if bound)
+    if (setPages) {
+      const nextPageText = (snap.textItems || []).map(x => deepClone(x));
+      const nextPageImgs = (snap.imageItems || []).map(x => deepClone(x));
+
+      setPages((prev: PagesSliceLike["pages"]) => {
+        const next = Array.isArray(prev) ? [...prev] : [];
+        const pageObj = next[page] || { textItems: [], imageItems: [] };
+        next[page] = {
+          ...pageObj,
+          textItems: nextPageText,
+          imageItems: nextPageImgs,
+        };
+        return next;
+      });
+    }
   }, []);
 
   // Capture snapshot and clear redo for that page
@@ -172,7 +216,7 @@ const bindFromSlices = useCallback((text: TextSliceLike, images: ImageSliceLike)
     });
   }, [takeCurrentPageSnapshot]);
 
-  // UNDO: pop from undo → push current to redo → apply popped snapshot
+  // UNDO
   const fnUndoStack = useCallback((page: number) => {
     const pageUndo: Snapshot[] = (undoStack as any)[page] || [];
     if (pageUndo.length === 0) return false;
@@ -200,7 +244,7 @@ const bindFromSlices = useCallback((text: TextSliceLike, images: ImageSliceLike)
     return true;
   }, [undoStack, takeCurrentPageSnapshot, applyPageSnapshot]);
 
-  // REDO: pop from redo → push current to undo → apply popped snapshot
+  // REDO
   const fnRedoStack = useCallback((page: number) => {
     const pageRedo: Snapshot[] = (redoStack as any)[page] || [];
     if (pageRedo.length === 0) return false;
@@ -245,14 +289,23 @@ const bindFromSlices = useCallback((text: TextSliceLike, images: ImageSliceLike)
     undoStack,
     redoStack,
     bindSources,      // low-level (functions)
-    bindFromSlices,   // high-level (pass slices)
+    bindFromSlices,   // high-level (pass slices, include pages if you want pages updates)
     pushSnapshotToUndo,
     purgeUndoRedoForRemovedPage,
     fnUndoStack,
     fnRedoStack,
     setUndoStack,
     setRedoStack,
-  }), [undoStack, redoStack, bindSources, bindFromSlices, pushSnapshotToUndo, purgeUndoRedoForRemovedPage, fnUndoStack, fnRedoStack]);
+  }), [
+    undoStack,
+    redoStack,
+    bindSources,
+    bindFromSlices,
+    pushSnapshotToUndo,
+    purgeUndoRedoForRemovedPage,
+    fnUndoStack,
+    fnRedoStack
+  ]);
 
   return api;
 }

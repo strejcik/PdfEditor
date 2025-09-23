@@ -21,10 +21,10 @@ export function useImages() {
    * Hydrate global imageItems from persisted pages (adds .index to each).
    */
   const hydrateFromPages = useCallback((pages: Page[]) => {
-    // const merged = pages.flatMap((p, i) =>
-    //   (p?.imageItems ?? []).map((img: any) => ({ ...img, index: i }))
-    // );
-    // setImageItems(merged as ImageItem[]);
+    const merged = pages.flatMap((p, i) =>
+      (p?.imageItems ?? []).map((img: any) => ({ ...img, index: i }))
+    );
+    setImageItems(merged as ImageItem[]);
   }, []);
 
   /**

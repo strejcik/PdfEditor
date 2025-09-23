@@ -835,8 +835,6 @@ setPages(prev => {
   setNewText("");
   setNewFontSize(fontSize);
   setMaxWidth(200);
-
-  drawCanvas(activePage);
 };
 
 
