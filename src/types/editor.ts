@@ -20,6 +20,7 @@ export type ImageItem = {
   width:number;
   xNorm: number;
   yNorm: number;
+  yNormTop: number;
   widthNorm: number;
   heightNorm: number;
   x:number;

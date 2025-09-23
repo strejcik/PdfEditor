@@ -47,21 +47,21 @@ export function useImages() {
 const saveImageItemsToLocalStorage = useCallback(
     async (items:any) => {
   const serializedImages = items.map((item:ImageItem) => {
-    // if(item.index === activePage) {
-      
-    // }
+    console.log('1');
+
     return {
       data: item.data, // Save base64 data
       x: item.x,
       y: item.y,
       width: item.width,
       height: item.height,
-      index: item.index
+      index: item.index,
+      xNorm: item.xNorm,
+      yNormTop: item.yNormTop,
+      widthNorm: item.widthNorm,
+      heightNorm: item.heightNorm,
     }
   });
-  // if(serializedImages.length > 0) {
-    
-  // }
   localStorage.setItem('imageItems', JSON.stringify(serializedImages));
 },[]);
 
@@ -98,7 +98,6 @@ const addImageFromFile = useCallback(
         : undefined;
 
     const newItem = {
-      type: "image",
       data: dataUrl,          // base64 data URI
       x, y, width, height,    // CSS px (top-left)
       index: pageIndex,
@@ -106,8 +105,6 @@ const addImageFromFile = useCallback(
       ...(yNormTop !== undefined ? { yNormTop } : {}),
       ...(widthNorm !== undefined ? { widthNorm } : {}),
       ...(heightNorm !== undefined ? { heightNorm } : {}),
-      pixelWidth: naturalW,
-      pixelHeight: naturalH,
     } as unknown as ImageItem;
 
     // 4) Update global imageItems
