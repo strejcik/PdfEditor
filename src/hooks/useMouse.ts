@@ -622,10 +622,71 @@ export function useMouse() {
       drawCanvas(activePage);
     };
 
+
+
+
+
+
+
+
+
+
+
+  const handleCanvasMouseDownMl = (e:any, opts:any) => {
+    const {
+      isMultilineMode,
+      activePage,
+      canvasRefs,
+      pdfToCssMargins,
+      layoutMultiline,
+      mlConfig,
+      mlText,
+      hitTestToIndex,
+      setMlCaret,
+      setMlAnchor,
+      setMlPreferredX,
+      indexToXY,
+      setIsMlDragging
+    } = opts;
+    if (!isMultilineMode) return false; // let your normal handlers run
+    const canvas = canvasRefs.current[activePage];
+    if (!canvas) return true;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
+    const y = (e.touches?.[0]?.clientY ?? e.clientY) - rect.top;
+
+    const ctx = canvas.getContext("2d");
+    const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
+    const layout = layoutMultiline(ctx, mlText, {
+      x: m.left, y: m.top,
+      maxWidth: rect.width - (m.left + m.right),
+      maxHeight: rect.height - (m.top + m.bottom),
+      fontSize: mlConfig.fontSize,
+      fontFamily: mlConfig.fontFamily,
+      lineGap: mlConfig.lineGap
+    });
+
+    const idx = hitTestToIndex(x, y, layout);
+
+    if (e.shiftKey) {
+      // extend selection
+      setMlCaret(idx);
+      // keep anchor
+    } else {
+      setMlCaret(idx);
+      setMlAnchor(idx);
+    }
+    setMlPreferredX(indexToXY(idx, layout).x);
+    setIsMlDragging(true);
+    return true; // consumed
+};
+
     return {
         handleMouseDown,
         handleMouseMove,
-        handleMouseUp
+        handleMouseUp,
+        handleCanvasMouseDownMl
     }
 
 }

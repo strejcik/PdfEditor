@@ -30,6 +30,7 @@ const layoutMultiline = (ctx:CanvasRenderingContext2D, text: string, { x, y, max
   const ascent  = probe.actualBoundingBoxAscent
   const descent = probe.actualBoundingBoxDescent
   const lineHeight = Math.ceil(ascent + descent + lineGap);
+  const lH = 0;
 
   const lines: any = [];
   let cursorY = y;
@@ -111,10 +112,12 @@ const layoutMultiline = (ctx:CanvasRenderingContext2D, text: string, { x, y, max
     // - If the paragraph itself was empty (i.e., user typed a blank line: "\n\n"),
     //   then we must render a visual blank line: pushLine("").
     if (p < paras.length - 1) {
-      if (para === "") {
-        // Real blank line requested by the user
-        if (!pushLine("")) return { lines, lineHeight, ascent, descent };
-      }
+      
+      // if (para === "") {
+      //   // Real blank line requested by the user
+      //   if (!pushLine("")) return { lines, lineHeight, ascent, descent };
+      // }
+
       // Count the newline character in the caret index space
       globalIndex += 1; // the "\n"
     }
