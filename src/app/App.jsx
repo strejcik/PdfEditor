@@ -159,7 +159,12 @@ useEffect(() => {
       handleMouseDown,
       handleMouseMove,
       handleMouseUp,
-      handleCanvasMouseDownMl
+      handleCanvasMouseMoveMl,
+      handleCanvasMouseDownMl,
+      handleCanvasMouseUpMl,
+      pdfToCssMargins,
+      indexToXY,
+      addTextToCanvasMlMode
     },
     keyboard: {
       handleKeyDown
@@ -476,8 +481,8 @@ useEffect(() => {
     layoutMultiline,
     setMlCaret,
     setMlAnchor,
-    indexToXY,
-    setMlPreferredX
+    setMlPreferredX,
+    indexToXY
   });
 
   document.addEventListener("keydown", listener, { passive: false });
@@ -512,67 +517,6 @@ useEffect(() => {
   };
 
 
-// Convert a (x,y) click into a caret index
-function hitTestToIndex(x, y, layout) {
-  const { lines } = layout;
-  if (lines.length === 0) return 0;
-
-  // Find line by y
-  let line = null;
-  for (let i = 0; i < lines.length; i++) {
-    const L = lines[i];
-    if (y >= L.y && y < L.y + L.height) { line = L; break; }
-  }
-  if (!line) {
-    // above first or below last
-    if (y < lines[0].y) return 0;
-    const last = lines[lines.length - 1];
-    return last.end; // end of last line
-  }
-
-  // Find nearest caret boundary by x (charX array)
-  const { charX, start, end } = line; // charX length = (end-start)+1
-  if (x <= charX[0]) return start;
-  if (x >= charX[charX.length - 1]) return end;
-
-  // binary search or linear (short lines are fine)
-  let best = start, bestDist = Infinity;
-  for (let i = 0; i < charX.length; i++) {
-    const dist = Math.abs(x - charX[i]);
-    if (dist < bestDist) { best = start + i; bestDist = dist; }
-  }
-  return best;
-}
-
-// Convert a caret index → (x,y, line metrics)
-function indexToXY(index, layout, preferredX = null, verticalDir = 0) {
-  const { lines, lineHeight } = layout;
-  if (lines.length === 0) return { x: 0, y: 0, line: null };
-
-  // clamp index into total range
-  const totalStart = lines[0].start;
-  const totalEnd   = lines[lines.length - 1].end;
-  const idx = Math.max(totalStart, Math.min(index, totalEnd));
-
-  // find current line
-  let li = lines.findIndex(L => idx >= L.start && idx <= L.end);
-  if (li === -1) { // in between (shouldn't happen), default to closest
-    li = (idx < lines[0].start) ? 0 : lines.length - 1;
-  }
-  let line = lines[li];
-
-  // column within line
-  const col = idx - line.start;
-  let x;
-  if (verticalDir !== 0 && preferredX != null) {
-    x = preferredX; // keep preferred X when moving up/down
-  } else {
-    x = line.charX[col];
-  }
-  const y = line.y;
-
-  return { x, y, line };
-}
 
 
 
@@ -586,166 +530,10 @@ function indexToXY(index, layout, preferredX = null, verticalDir = 0) {
 
 
 
-function pdfToCssMargins(rect, marginsPDF) {
-  // scale PDF units → CSS px (respect current canvas rect)
-  const sx = rect.width  / PDF_WIDTH;
-  const sy = rect.height / PDF_HEIGHT;
-  return {
-    left:   marginsPDF.left   * sx,
-    right:  marginsPDF.right  * sx,
-    top:    marginsPDF.top    * sy,
-    bottom: marginsPDF.bottom * sy,
-  };
-}
-
-// returns { lines: [{text,x,y}], lineHeight, clipped:boolean }
-function wrapParagraphsToWidth(ctx, text, {
-  x, y, maxWidth, fontSize, fontFamily, lineGap = 0, maxHeight = Infinity
-}) {
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.font = `${fontSize}px ${fontFamily}`;
-
-  // robust line height from tight metrics
-  const probe = ctx.measureText("Mg");
-  const ascent  = probe.actualBoundingBoxAscent;
-  const descent = probe.actualBoundingBoxDescent
-  const lineHeight = Math.ceil(ascent + descent + lineGap);
-
-  const out = [];
-  let cursorY = y;
-  let clipped = false;
-
-  const paragraphs = String(text ?? "").split("\n");
-
-  for (let p = 0; p < paragraphs.length; p++) {
-    const para = paragraphs[p];
-    // collapse multiple spaces visually but keep a single space for wrapping
-    // (optional: remove this if you want literal spaces)
-    const words = para.split(" ");
-
-    let current = "";
-
-    const pushLine = (s) => {
-      if (cursorY + lineHeight > y + maxHeight) { clipped = true; return false; }
-      out.push({ text: s, x: Math.round(x), y: Math.round(cursorY) });
-      cursorY += lineHeight;
-      return true;
-    };
-
-    for (let w = 0; w < words.length; w++) {
-      const word = words[w];
-      const next = current ? current + " " + word : word;
-
-      const wordWidth = ctx.measureText(word).width;
-      const nextWidth = ctx.measureText(next).width;
-
-      if (wordWidth > maxWidth) {
-        // break the long word by characters
-        if (current) { if (!pushLine(current)) return { lines: out, lineHeight, clipped }; current = ""; }
-        let chunk = "";
-        for (let i = 0; i < word.length; i++) {
-          const tryChunk = chunk + word[i];
-          const cW = ctx.measureText(tryChunk).width;
-          if (cW > maxWidth && chunk) {
-            if (!pushLine(chunk)) return { lines: out, lineHeight, clipped: true };
-            chunk = word[i];
-          } else {
-            chunk = tryChunk;
-          }
-        }
-        current = chunk; // leftover continues on this line
-      } else if (nextWidth > maxWidth && current) {
-        if (!pushLine(current)) return { lines: out, lineHeight, clipped: true };
-        current = word;
-      } else {
-        current = next;
-      }
-
-      if (w === words.length - 1) {
-        if (!pushLine(current)) return { lines: out, lineHeight, clipped: true };
-        current = "";
-      }
-    }
-
-    // blank line (paragraph break)
-    if (para === "") {
-      // if (!pushLine("")) return { lines: out, lineHeight, clipped: true };
-    }
-  }
-
-  return { lines: out, lineHeight, clipped };
-}
 
 
 
 
-// const handleCanvasMouseDownMl = (e) => {
-//   if (!isMultilineMode) return false; // let your normal handlers run
-//   const canvas = canvasRefs.current[activePage];
-//   if (!canvas) return true;
-
-//   const rect = canvas.getBoundingClientRect();
-//   const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
-//   const y = (e.touches?.[0]?.clientY ?? e.clientY) - rect.top;
-
-//   const ctx = canvas.getContext("2d");
-//   const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
-//   const layout = layoutMultiline(ctx, mlText, {
-//     x: m.left, y: m.top,
-//     maxWidth: rect.width - (m.left + m.right),
-//     maxHeight: rect.height - (m.top + m.bottom),
-//     fontSize: mlConfig.fontSize,
-//     fontFamily: mlConfig.fontFamily,
-//     lineGap: mlConfig.lineGap
-//   });
-
-//   const idx = hitTestToIndex(x, y, layout);
-
-//   if (e.shiftKey) {
-//     // extend selection
-//     setMlCaret(idx);
-//     // keep anchor
-//   } else {
-//     setMlCaret(idx);
-//     setMlAnchor(idx);
-//   }
-//   setMlPreferredX(indexToXY(idx, layout).x);
-//   setIsMlDragging(true);
-//   return true; // consumed
-// };
-
-const handleCanvasMouseMoveMl = (e) => {
-  if (!isMultilineMode || !isMlDragging) return false;
-
-  const canvas = canvasRefs.current[activePage];
-  if (!canvas) return true;
-
-  const rect = canvas.getBoundingClientRect();
-  const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
-  const y = (e.touches?.[0]?.clientY ?? e.clientY) - rect.top;
-
-  const ctx = canvas.getContext("2d");
-  const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
-  const layout = layoutMultiline(ctx, mlText, {
-    x: m.left, y: m.top,
-    maxWidth: rect.width - (m.left + m.right),
-    maxHeight: rect.height - (m.top + m.bottom),
-    fontSize: mlConfig.fontSize,
-    fontFamily: mlConfig.fontFamily,
-    lineGap: mlConfig.lineGap
-  });
-
-  const idx = hitTestToIndex(x, y, layout);
-  setMlCaret(idx);
-  return true;
-};
-
-const handleCanvasMouseUpMl = (e) => {
-  if (!isMultilineMode) return false;
-  setIsMlDragging(false);
-  return true;
-};
 
 
 
@@ -1051,111 +839,6 @@ const addTextToCanvas3 = (items = []) => {
 };
 
 
-
-
-
-
-
-
-const addTextToCanvasMlMode = () => {
-  const canvas = canvasRefs.current[activePage];
-  if (!canvas) return;
-
-  const ctx = canvasRefs.current[activePage].getContext('2d');
-
-
-
-
-
-
-
-
-
-
-  const rect = canvasRefs.current[activePage].getBoundingClientRect();
-
-  // convert PDF margins to CSS px
-  const m = pdfToCssMargins(rect, mlConfig.marginsPDF);
-
-  // layout zone
-  const x = m.left;
-  const y = m.top;
-  const maxWidth  = Math.max(0, rect.width  - (m.left + m.right));
-  const maxHeight = Math.max(0, rect.height - (m.top  + m.bottom));
-
-
-
-  let { lines } = wrapParagraphsToWidth(ctx, mlText, {
-    x, y,
-    maxWidth,
-    maxHeight,
-    fontSize: mlConfig.fontSize,
-    fontFamily: mlConfig.fontFamily,
-    lineGap: mlConfig.lineGap,
-  });
-
-
-  const padding = newFontSize * 0.2;
-  lines = lines.map(line => {
-    if(line.text.length > 0) {
-      return {
-        index: activePage,
-        x: line.x,
-        y: line.y,
-        anchor: 'top',
-        padding: padding,
-        fontFamily: 'Lato',
-        fontSize: 20,
-        text: line.text
-      }
-    } else {
-      return {}
-    }
-    
-  });
-
-//   // Sync into the pages slice so persistence/refresh works
-// setPages(prev => {
-//   const next = [...prev];
-//   const page = next[activePage] || { textItems: [], imageItems: [] };
-//   next[activePage] = {
-//     ...page,
-//     textItems: [...(page.textItems || []), l], // spread preserves xNorm/yNormTop
-//   };
-//   return next;
-// });
-
-
-
-  // const updatedItems = [...textItems, ...lines];
-  // console.log(updatedItems);
-  // pushSnapshotToUndo(activePage);
-  // setTextItems(updatedItems);
-  // saveTextItemsToLocalStorage(updatedItems);
-  // updatePageItems('textItems', updatedItems);
-  // drawCanvas(activePage);
-
-
-  // Snapshot BEFORE state change for undo
-  pushSnapshotToUndo(activePage);
-
-  // Sync into the pages slice so persistence/refresh works
-  setPages(prev => {
-    const next = [...prev];
-    const page = next[activePage] || { textItems: [], imageItems: [] };
-    next[activePage] = {
-      ...page,
-      textItems: [...(page.textItems || []), ...lines], // spread preserves xNorm/yNormTop
-    };
-    return next;
-  });
-
-  const updatedItems = [...textItems, ...lines];
-  setTextItems(updatedItems);
-  
-  // force refresh
-  return window.location.reload(false);
-}
 
 const addTextToCanvas2 = (textBox) => {
     if (textBox?.text?.trim()) {
@@ -1967,7 +1650,17 @@ return (
               <button onClick={() => {
                 toggleMultilineMode();
                 if(isMultilineMode === true) {
-                  addTextToCanvasMlMode();
+                  addTextToCanvasMlMode({    
+                    canvasRefs,
+                    activePage,
+                    mlConfig,
+                    mlText,
+                    newFontSize,
+                    pushSnapshotToUndo,
+                    setPages,
+                    setTextItems,
+                    textItems
+                  });
                   setMlText('');
                 }
               }}>
@@ -2073,11 +1766,9 @@ return (
             layoutMultiline,
             mlConfig,
             mlText,
-            hitTestToIndex,
             setMlCaret,
             setMlAnchor,
             setMlPreferredX,
-            indexToXY,
             setIsMlDragging
           }) ? undefined : handleMouseDown(e,{ 
             canvasRefs,
@@ -2104,7 +1795,17 @@ return (
             setIsResizing,
             setSelectionStart,
             setSelectionEnd})}
-          onMouseMove={(e) => handleCanvasMouseMoveMl(e) ? undefined : handleMouseMove(e,{
+          onMouseMove={(e) => handleCanvasMouseMoveMl(e,{
+                isMultilineMode,
+                isMlDragging,
+                canvasRefs,
+                activePage,
+                pdfToCssMargins,
+                mlConfig,
+                layoutMultiline,
+                mlText,
+                setMlCaret,
+          }) ? undefined : handleMouseMove(e,{
                                                                           canvasRefs,
                                                                           activePage,
                                                                           editingIndex,
@@ -2135,7 +1836,7 @@ return (
                                                                           saveTextItemsToLocalStorage,
                                                                           fontSize,
           })}
-          onMouseUp={(e) => handleCanvasMouseUpMl(e) ? undefined : handleMouseUp(e,{
+          onMouseUp={(e) => handleCanvasMouseUpMl(e, { isMultilineMode, setIsMlDragging}) ? undefined : handleMouseUp(e,{
                                                                           canvasRefs,
                                                                           activePage,
                                                                           editingIndex,
