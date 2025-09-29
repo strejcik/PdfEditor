@@ -9,6 +9,9 @@ import { loadLatoOnce } from "../utils/font/fontLoader";
 import {useHandleAddImage} from "../hooks/useHandleAddImage";
 import { drawCanvas } from '../utils/canvas/draw/drawCanvas'
 // Clip everything to the page box (matches canvas clipping)
+
+import {importStateFromJson} from '../utils/json/importStateFromJson'
+
 import {
   pushGraphicsState, popGraphicsState,
   moveTo, lineTo, closePath, clip, endPath,
@@ -42,6 +45,10 @@ const App = () => {
   const pdfWidth = PDF_WIDTH;
   const pdfHeight = PDF_HEIGHT;
   const fontsReadyRef = useRef(null);
+
+
+  const jsonRef = useRef(null);
+  const onJsonPick = () => jsonRef.current?.click();
 
 useEffect(() => {
     fontsReadyRef.current = loadLatoOnce("../../public/fonts/Lato-Regular.ttf", "Lato");
@@ -1490,6 +1497,103 @@ const handleFileChange = (event) => {
 
 
 
+function exportStateToJson(pagesKey = "pages", textItemsKey = "textItems", imageItemsKey = "imageItems", filename = "state.json") {
+  const safeParse = (raw)=> {
+    if (!raw) return null;
+    try {
+      // Support double-encoded JSON (string of JSON inside JSON)
+      const first = JSON.parse(raw);
+      if (typeof first === "string") {
+        try { return JSON.parse(first)} catch { return first}
+      }
+      return first
+    } catch {
+      return null;
+    }
+  };
+
+  // 1) Read everything we can from localStorage
+  const pagesLS = safeParse(localStorage.getItem(pagesKey));
+  const textItemsLS = safeParse(localStorage.getItem(textItemsKey)) || [];
+  const imageItemsLS = safeParse(localStorage.getItem(imageItemsKey)) || [];
+
+  // 2) Build pages if not present or malformed
+  const isPageShape = (p) =>
+    p && typeof p === "object" &&
+    Array.isArray(p.textItems) &&
+    Array.isArray(p.imageItems);
+
+  let pages= Array.isArray(pagesLS) && pagesLS.every(isPageShape) ? pagesLS : null;
+
+  if (!pages) {
+    // Group standalone items by page index
+    const maxIndex = Math.max(
+      -1,
+      ...textItemsLS.map((t) => Number.isFinite(t?.index) ? Number(t.index) : -1),
+      ...imageItemsLS.map((i) => Number.isFinite(i?.index) ? Number(i.index) : -1)
+    );
+    const pageCount = Math.max(0, maxIndex + 1);
+    const grouped = Array.from({ length: pageCount }, () => ({ textItems: [], imageItems: [] }));
+
+    textItemsLS.forEach((t) => {
+      const idx = Number.isFinite(t?.index) ? Number(t.index) : 0;
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [] };
+      grouped[idx].textItems.push(t);
+    });
+    imageItemsLS.forEach((img) => {
+      const idx = Number.isFinite(img?.index) ? Number(img.index) : 0;
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [] };
+      grouped[idx].imageItems.push(img);
+    });
+
+    pages = grouped;
+  }
+
+  // 3) Prepare final payload (keep flat arrays too, for convenience)
+  const payload = {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    pages,
+    textItems: textItemsLS,
+    imageItems: imageItemsLS,
+  };
+
+  // 4) Download as state.json
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+
+  return payload; // handy if you want to inspect or test
+}
+
+
+
+
+
+
+  const onJSONChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.currentTarget.value = ""; // allow re-selecting the same file
+    if (!file) return;
+    try {
+      await importStateFromJson(file, {
+        setPages, setTextItems, setImageItems,
+        pagesKey:"pages", textItemsKey:"textItem", imageItemsKey:"imageItems",
+      });
+      // You could toast/snackbar here: "State loaded"
+    } catch (err) {
+      console.error("Failed to import state.json", err);
+      alert("Invalid or corrupted state.json");
+    }
+  };
+
+
 return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif', position: 'relative'}}>
     {/* Sidebar */}
@@ -1670,6 +1774,34 @@ return (
           )
         },
         {
+          title: 'State',
+          icon: '💾',
+          content: (
+            <>
+             <>
+              <button style={btnStyle} onClick={() => {
+                exportStateToJson();
+              }}>
+                Save as JSON
+              </button>
+             </>
+
+              <>
+                <input
+                  ref={jsonRef}
+                  type="file"
+                  accept="application/json"
+                  style={{ display: "none" }}
+                  onChange={onJSONChange}
+                />
+                <button type="button" style={btnStyle} onClick={onJsonPick}>
+                  Load JSON
+                </button>
+              </>
+            </>
+          )
+        },
+        {
           title: 'Data',
           icon: '🗑️',
           content: (
@@ -1712,7 +1844,7 @@ return (
               </button>
             </>
           )
-        }
+        },
       ].map((section, index) => (
         
         <div key={index} style={{ marginTop: '20px' }}>
