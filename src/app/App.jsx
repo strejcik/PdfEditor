@@ -8,6 +8,7 @@ import fontkit from "@pdf-lib/fontkit";
 import { loadLatoOnce } from "../utils/font/fontLoader";
 import {useHandleAddImage} from "../hooks/useHandleAddImage";
 import { drawCanvas } from '../utils/canvas/draw/drawCanvas'
+import { useClipboard } from "../hooks/useClipboard";
 // Clip everything to the page box (matches canvas clipping)
 
 import {importStateFromJson} from '../utils/json/importStateFromJson'
@@ -45,7 +46,6 @@ const App = () => {
   const pdfWidth = PDF_WIDTH;
   const pdfHeight = PDF_HEIGHT;
   const fontsReadyRef = useRef(null);
-
 
   const jsonRef = useRef(null);
   const onJsonPick = () => jsonRef.current?.click();
@@ -179,7 +179,7 @@ useEffect(() => {
 
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
   } = useEditor(); // ✅ correct
-
+  useClipboard(useEditor());
 
 
 

@@ -21,14 +21,34 @@ export function drawTextItems(ctx, rect, pageIndex, state /* {textItems, selecte
       ctx.strokeRect(boxX, boxY, boxW, boxH);
     }
 
-    ctx.save();
-    ctx.beginPath();
-    ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = "dodgerblue";
-    ctx.moveTo(Math.round(L.x) - L.padding, 0);
-    ctx.lineTo(Math.round(L.x) - L.padding, rect.height);
-    ctx.stroke();
-    ctx.restore();
+  const left   = Math.round(L.x - L.padding);
+  const top    = Math.round(L.topY - L.padding);
+  const right  = Math.round(L.x + L.textWidth + L.padding);
+  const bottom = Math.round(L.topY + L.textHeight + L.padding);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.setLineDash([5, 5]);
+  ctx.strokeStyle = "dodgerblue";
+
+  // Left (vertical) — existing
+  ctx.moveTo(left, 0);
+  ctx.lineTo(left, rect.height);
+
+  // Top (horizontal)
+  ctx.moveTo(0, top);
+  ctx.lineTo(rect.width, top);
+
+  // Right (vertical)
+  ctx.moveTo(right, 0);
+  ctx.lineTo(right, rect.height);
+
+  // Bottom (horizontal)
+  ctx.moveTo(0, bottom);
+  ctx.lineTo(rect.width, bottom);
+
+  ctx.stroke();
+  ctx.restore();
 
     ctx.fillStyle = "black";
     ctx.font = `${L.fontSize}px ${L.fontFamily}`;

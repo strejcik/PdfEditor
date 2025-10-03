@@ -19,6 +19,7 @@ import { usePdf } from "../hooks/usePdf";
 import { useMultiLineMode } from "../hooks/useMultiLineMode";
 import { useMouse } from '../hooks/useMouse';
 import { useKeyboard } from '../hooks/useKeyboard';
+import { useClipboard } from "../hooks/useClipboard";
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -113,7 +114,7 @@ useLayoutEffect(() => {
       pdf,
       multiline,
       mouse,
-      keyboard
+      keyboard,
     }),
     [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard]
   );

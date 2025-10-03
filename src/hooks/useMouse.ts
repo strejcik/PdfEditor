@@ -435,49 +435,140 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
           return;
         }
     
-        // Single selection (+ optional snapping)
-        if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
-          const selIdx = selectedTextIndexes[0];
-          const item   = updated[selIdx];
-          const init   = initialPositions[0];
-          if (!item || item.index !== activePage) return;
-    
-          let newX = init.xTop + dx;
-          let newY = init.yTop + dy;
-    
-          // Snap to other left edges (optional)
-          const padding = (item.fontSize || fontSize) * 0.2;
-          const draggedLeft = newX - padding;
-          const snapThreshold = 4;
-    
-          for (let i = 0; i < textItems.length; i++) {
-            if (i === selIdx) continue;
-            const other = textItems[i];
-            if (other.index !== activePage) continue;
-    
-            const Lother = resolveTextLayoutForHit(other, ctx, canvas);
-            const otherPadding = (other.fontSize || fontSize) * 0.2;
-            const otherLeft = Lother.x - otherPadding;
-    
-            if (Math.abs(draggedLeft - otherLeft) < snapThreshold) {
-              newX = otherLeft + padding;
-              break;
-            }
-          }
-    
-          item.x = newX;
-          item.y = newY;
-          item.anchor = "top";
-    
-          item.xNorm    = rect.width  ? (newX / rect.width)  : 0; // NO clamp
-          item.yNormTop = rect.height ? (newY / rect.height) : 0; // NO clamp
-    
-          setTextItems(updated);
-          updatePageItems('textItems', updated.filter(i => i.index === activePage));
-          saveTextItemsToLocalStorage(updated);
-          drawCanvas(activePage);
-          return;
-        }
+        // Single selection (+ full-edge snapping: left/right/top/bottom)
+if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
+  const selIdx = selectedTextIndexes[0];
+  const item   = updated[selIdx];
+  const init   = initialPositions[0];
+  if (!item || item.index !== activePage) return;
+
+  // Proposed new top-anchored draw point before snapping
+  let newX = init.xTop + dx;
+  let newY = init.yTop + dy;
+
+  // Get metrics for the dragged item at its *current* (pre-drag) state
+  // We'll derive constant offsets from draw point → box edges, then
+  // reuse those offsets to compute the dragged box at (newX, newY).
+  const Lself = resolveTextLayoutForHit(item, ctx, canvas);
+  const selfBox = Lself.box; // {x,y,w,h} – padded/tight box you use in hit & draw
+
+  // Offsets from draw point (x, topY) to the box's top-left corner
+  // These are stable for this item (given same font/text).
+  const offsetBx = selfBox.x - Lself.x;      // how far box-left is from drawX
+  const offsetBy = selfBox.y - Lself.topY;   // how far box-top  is from topY
+
+  // Given a tentative (newX, newY), compute the dragged box edges
+  const computeDraggedBox = (X:any, Y:any) => {
+    const left   = X + offsetBx;
+    const top    = Y + offsetBy;
+    const right  = left + selfBox.w;
+    const bottom = top  + selfBox.h;
+    return { left, top, right, bottom };
+  };
+
+  const dragged0 = computeDraggedBox(newX, newY);
+
+  // Snap threshold in CSS px
+  const SNAP = 4;
+
+  // We'll track the best snap per axis independently
+  let bestDX = Infinity;
+  let bestDY = Infinity;
+  let snapX  = null;
+  let snapY  = null;
+
+  // Check against every *other* text item on the same page
+  for (let i = 0; i < textItems.length; i++) {
+    if (i === selIdx) continue;
+    const other = textItems[i];
+    if (other.index !== activePage) continue;
+
+    const Lother   = resolveTextLayoutForHit(other, ctx, canvas);
+    const otherBox = Lother.box; // same padded/tight box as used in drawing/hit
+
+    // Other edges
+    const oLeft   = otherBox.x;
+    const oRight  = otherBox.x + otherBox.w;
+    const oTop    = otherBox.y;
+    const oBottom = otherBox.y + otherBox.h;
+
+    // Current dragged edges
+    const dLeft   = dragged0.left;
+    const dRight  = dragged0.right;
+    const dTop    = dragged0.top;
+    const dBottom = dragged0.bottom;
+
+    // --- X-axis snapping candidates ---
+    // Snap left↔left
+    {
+      const dxCandidate = oLeft - dLeft;
+      const abs = Math.abs(dxCandidate);
+      if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+    }
+    // Snap left↔right
+    {
+      const dxCandidate = oRight - dLeft;
+      const abs = Math.abs(dxCandidate);
+      if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+    }
+    // Snap right↔left
+    {
+      const dxCandidate = oLeft - dRight;
+      const abs = Math.abs(dxCandidate);
+      if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+    }
+    // Snap right↔right
+    {
+      const dxCandidate = oRight - dRight;
+      const abs = Math.abs(dxCandidate);
+      if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+    }
+
+    // --- Y-axis snapping candidates ---
+    // Snap top↔top
+    {
+      const dyCandidate = oTop - dTop;
+      const abs = Math.abs(dyCandidate);
+      if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
+    }
+    // Snap top↔bottom
+    {
+      const dyCandidate = oBottom - dTop;
+      const abs = Math.abs(dyCandidate);
+      if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
+    }
+    // Snap bottom↔top
+    {
+      const dyCandidate = oTop - dBottom;
+      const abs = Math.abs(dyCandidate);
+      if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
+    }
+    // Snap bottom↔bottom
+    {
+      const dyCandidate = oBottom - dBottom;
+      const abs = Math.abs(dyCandidate);
+      if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
+    }
+  }
+
+  // Apply best snap per axis (if any)
+  if (snapX !== null) newX = snapX;
+  if (snapY !== null) newY = snapY;
+
+  // Commit
+  item.x = newX;
+  item.y = newY;
+  item.anchor = "top";
+
+  item.xNorm    = rect.width  ? (newX / rect.width)  : 0; // NO clamp
+  item.yNormTop = rect.height ? (newY / rect.height) : 0; // NO clamp
+
+  setTextItems(updated);
+  updatePageItems('textItems', updated.filter(i => i.index === activePage));
+  saveTextItemsToLocalStorage(updated);
+  drawCanvas(activePage);
+  return;
+}
     
         // Fallback: move all selected by delta
         selectedTextIndexes.forEach((idx:any) => {
