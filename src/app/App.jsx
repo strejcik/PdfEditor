@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useCallback} from 'react';
+import React, { useRef, useEffect, useLayoutEffect} from 'react';
 import axios from 'axios';
 import './App.css'
 import { DEFAULT_FONT_SIZE, CELL_SIZE, BOX_PADDING, CANVAS_WIDTH, CANVAS_HEIGHT, PDF_WIDTH, PDF_HEIGHT } from "../config/constants";
@@ -9,9 +9,8 @@ import { loadLatoOnce } from "../utils/font/fontLoader";
 import {useHandleAddImage} from "../hooks/useHandleAddImage";
 import { drawCanvas } from '../utils/canvas/draw/drawCanvas'
 import { useClipboard } from "../hooks/useClipboard";
-// Clip everything to the page box (matches canvas clipping)
-
 import {importStateFromJson} from '../utils/json/importStateFromJson'
+import RulerOverlay from '../utils/ruler/RulerOverlay'
 
 import {
   pushGraphicsState, popGraphicsState,
@@ -1592,240 +1591,283 @@ function exportStateToJson(pagesKey = "pages", textItemsKey = "textItems", image
       alert("Invalid or corrupted state.json");
     }
   };
+  
 
+  useEffect(() => {
+    const c = canvasRefs.current[activePage];
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, c.width, c.height);
+  }, []);
 
 return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: 'Arial, sans-serif', position: 'relative'}}>
-    {/* Sidebar */}
-    <div
+<div
+    style={{
+      display: "flex",
+      height: "100vh",         // lock viewport height
+      overflow: "hidden",      // prevent page-level scroll
+      fontFamily: "Arial, sans-serif",
+      background: "#fafbfc",
+    }}
+  >
+    {/* Sidebar (left) */}
+    <aside
       style={{
-        width: '260px',
-        backgroundColor: '#f4f6f8',
-        padding: '20px 10px',
-        borderRight: '1px solid #ddd',
-        display: 'flex',
-        flexDirection: 'column',
-        overflowY: 'auto',
-        height: '100vh',
-        boxShadow: '2px 0 6px rgba(0,0,0,0.05)',
-        scrollbarWidth: 'thin'
+        width: 260,
+        backgroundColor: "#f4f6f8",
+        padding: "20px 10px",
+        borderRight: "1px solid #ddd",
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
+        boxShadow: "2px 0 6px rgba(0,0,0,0.05)",
+        scrollbarWidth: "thin",
+        flexShrink: 0, // don't shrink
       }}
     >
-      <h2 style={{ margin: 0, fontSize: '20px', color: '#333' }}>📄 PdfEditor</h2>
+      <h2 style={{ margin: 0, fontSize: 20, color: "#333" }}>📄 PdfEditor</h2>
 
       {[
         {
-          title: 'PDF',
-          icon: '📂',
+          title: "PDF",
+          icon: "📂",
           content: (
             <>
               <input
                 type="file"
                 accept="application/pdf"
                 onChange={handleFileChange}
-                style={{ marginBottom: '10px', width: '100%' }}
+                style={{ marginBottom: 10, width: "100%" }}
               />
-              <button style={btnStyle} onClick={uploadPdfToServer}>Upload PDF</button>
-              <button style={btnStyle} onClick={saveAllPagesAsPDF}>Save as PDF</button>
+              <button style={btnStyle} onClick={uploadPdfToServer}>
+                Upload PDF
+              </button>
+              <button style={btnStyle} onClick={saveAllPagesAsPDF}>
+                Save as PDF
+              </button>
             </>
-          )
+          ),
         },
         {
-          title: 'Pages',
-          icon: '📄',
+          title: "Pages",
+          icon: "📄",
           content: (
             <>
-              <button style={btnStyle} onClick={addNewPage}>Add Page</button>
-              <button style={btnStyle} onClick={() => removePage({
-                setSelectedTextIndexes,
-                setSelectedTextIndex,
-                setIsTextSelected,
-                setSelectionStart,
-                setSelectionEnd,
-                setIsSelecting,
-                setIsDragging,
-                setIsImageDragging,
-                setDraggedImageIndex,
-                setResizingImageIndex,
-                setTextItems,
-                setImageItems,
-                saveTextItemsToLocalStorage,
-                saveImageItemsToLocalStorage,
-                purgeUndoRedoForRemovedPage,
-                textItems,
-                imageItems,
-                isTextBoxEditEnabled,
-                textBox,
-                activePage,
-                isMultilineMode,
-                canvasRefs,
-                mlConfig,
-                mlCaret,
-                mlAnchor,
-                mlPreferredX,
-                mlText,
-                mlCaretBlink,
-                isMlDragging,
-                fontSize,
-                wrapTextPreservingNewlinesResponsive,
-                resolveTextLayout,
-                layoutMultiline,
-                setMlPreferredX,
-                showGrid, 
-                APP_FONT_FAMILY,
-                drawCanvas})}>Remove Page</button>
+              <button style={btnStyle} onClick={addNewPage}>
+                Add Page
+              </button>
+              <button
+                style={btnStyle}
+                onClick={() =>
+                  removePage({
+                    setSelectedTextIndexes,
+                    setSelectedTextIndex,
+                    setIsTextSelected,
+                    setSelectionStart,
+                    setSelectionEnd,
+                    setIsSelecting,
+                    setIsDragging,
+                    setIsImageDragging,
+                    setDraggedImageIndex,
+                    setResizingImageIndex,
+                    setTextItems,
+                    setImageItems,
+                    saveTextItemsToLocalStorage,
+                    saveImageItemsToLocalStorage,
+                    purgeUndoRedoForRemovedPage,
+                    textItems,
+                    imageItems,
+                    isTextBoxEditEnabled,
+                    textBox,
+                    activePage,
+                    isMultilineMode,
+                    canvasRefs,
+                    mlConfig,
+                    mlCaret,
+                    mlAnchor,
+                    mlPreferredX,
+                    mlText,
+                    mlCaretBlink,
+                    isMlDragging,
+                    fontSize,
+                    wrapTextPreservingNewlinesResponsive,
+                    resolveTextLayout,
+                    layoutMultiline,
+                    setMlPreferredX,
+                    showGrid,
+                    APP_FONT_FAMILY,
+                    drawCanvas,
+                  })
+                }
+              >
+                Remove Page
+              </button>
             </>
-          )
+          ),
         },
         {
-          title: 'Text',
-          icon: '🔤',
+          title: "Text",
+          icon: "🔤",
           content: (
             <>
-              <button style={btnStyle} onClick={() => setShowAddTextModal(true)}>Add Text</button>
+              <button style={btnStyle} onClick={() => setShowAddTextModal(true)}>
+                Add Text
+              </button>
               <button
                 style={{
                   ...btnStyle,
-                  opacity: selectedTextIndex === null && selectedTextIndexes.length < 1 ? 0.5 : 1
+                  opacity:
+                    selectedTextIndex === null && selectedTextIndexes.length < 1
+                      ? 0.5
+                      : 1,
                 }}
-                onClick={() => removeSelectedText({updatePageItems, activePage})}
+                onClick={() => removeSelectedText({ updatePageItems, activePage })}
                 disabled={selectedTextIndex === null && selectedTextIndexes.length < 1}
               >
                 Remove Text
               </button>
               <button style={btnStyle} onClick={toggleGrid}>
-                {showGrid ? 'Hide Grid' : 'Show Grid'}
+                {showGrid ? "Hide Grid" : "Show Grid"}
               </button>
             </>
-          )
+          ),
         },
         {
-          title: 'Images',
-          icon: '🖼️',
+          title: "Images",
+          icon: "🖼️",
           content: (
             <>
               <input
                 type="file"
                 accept="image/*"
-                onChange={(e) => {handleAddImage(e, activePage, setPages)}}
-                style={{ marginBottom: '10px', width: '100%' }}
+                onChange={(e) => {
+                  handleAddImage(e, activePage, setPages);
+                }}
+                style={{ marginBottom: 10, width: "100%" }}
               />
               <button
-                style={{ ...btnStyle, opacity: selectedImageIndex === null ? 0.5 : 1 }}
+                style={{
+                  ...btnStyle,
+                  opacity: selectedImageIndex === null ? 0.5 : 1,
+                }}
                 onClick={deleteSelectedImage}
                 disabled={selectedImageIndex === null}
               >
                 Delete Image
               </button>
             </>
-          )
+          ),
         },
         {
-          title: 'TextBox',
-          icon: '📝',
+          title: "TextBox",
+          icon: "📝",
           content: (
             <button
               style={btnStyle}
               onClick={() => {
-                setIsTextBoxEditEnabled(prev => !prev);
+                setIsTextBoxEditEnabled((prev) => !prev);
                 if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
                 setTextBox(null);
               }}
             >
-              {isTextBoxEditEnabled ? 'Save TextBox' : 'Enable TextBox Edit'}
+              {isTextBoxEditEnabled ? "Save TextBox" : "Enable TextBox Edit"}
             </button>
-          )
+          ),
         },
         {
-          title: 'History',
-          icon: '⏪',
+          title: "History",
+          icon: "⏪",
           content: (
             <>
-              <button style={btnStyle} onClick={handleUndo}>Undo</button>
-              <button style={btnStyle} onClick={handleRedo}>Redo</button>
-            </>
-          )
-        },
-        {
-          title: 'MultiLine Mode',
-          icon: '║',
-          content: (
-            <>
-              <button onClick={() => {
-                toggleMultilineMode();
-                if(isMultilineMode === true) {
-                  addTextToCanvasMlMode({    
-                    canvasRefs,
-                    activePage,
-                    mlConfig,
-                    mlText,
-                    newFontSize,
-                    pushSnapshotToUndo,
-                    setPages,
-                    setTextItems,
-                    textItems
-                  });
-                  setMlText('');
-                }
-              }}>
-                {isMultilineMode ? "Exit Multi-line mode" : "Multi-line mode"}
+              <button style={btnStyle} onClick={handleUndo}>
+                Undo
+              </button>
+              <button style={btnStyle} onClick={handleRedo}>
+                Redo
               </button>
             </>
-          )
+          ),
         },
         {
-          title: 'State',
-          icon: '💾',
-          content: (
-            <>
-             <>
-              <button style={btnStyle} onClick={() => {
-                exportStateToJson();
-              }}>
-                Save as JSON
-              </button>
-             </>
-
-              <>
-                <input
-                  ref={jsonRef}
-                  type="file"
-                  accept="application/json"
-                  style={{ display: "none" }}
-                  onChange={onJSONChange}
-                />
-                <button type="button" style={btnStyle} onClick={onJsonPick}>
-                  Load JSON
-                </button>
-              </>
-            </>
-          )
-        },
-        {
-          title: 'Data',
-          icon: '🗑️',
+          title: "MultiLine Mode",
+          icon: "║",
           content: (
             <>
               <button
-                style={{ ...btnStyle, backgroundColor: '#ff4d4f', color: 'white' }}
+                style={btnStyle}
                 onClick={() => {
-                  if (window.confirm('Are you sure you want to clear all saved data?')) {
-                    // Clear persistent storage
-                    localStorage.removeItem('undoStack');
-                    localStorage.removeItem('redoStack');
-                    localStorage.removeItem('pages');
-                    localStorage.removeItem('textItems');
-                    localStorage.removeItem('imageItems');
+                  toggleMultilineMode();
+                  if (isMultilineMode === true) {
+                    addTextToCanvasMlMode({
+                      canvasRefs,
+                      activePage,
+                      mlConfig,
+                      mlText,
+                      newFontSize,
+                      pushSnapshotToUndo,
+                      setPages,
+                      setTextItems,
+                      textItems,
+                    });
+                    setMlText("");
+                  }
+                }}
+              >
+                {isMultilineMode ? "Exit Multi-line mode" : "Multi-line mode"}
+              </button>
+            </>
+          ),
+        },
+        {
+          title: "State",
+          icon: "💾",
+          content: (
+            <>
+              <button
+                style={btnStyle}
+                onClick={() => {
+                  exportStateToJson();
+                }}
+              >
+                Save as JSON
+              </button>
 
-                    // Reset state to a single blank page
+              <input
+                ref={jsonRef}
+                type="file"
+                accept="application/json"
+                style={{ display: "none" }}
+                onChange={onJSONChange}
+              />
+              <button type="button" style={btnStyle} onClick={onJsonPick}>
+                Load JSON
+              </button>
+            </>
+          ),
+        },
+        {
+          title: "Data",
+          icon: "🗑️",
+          content: (
+            <>
+              <button
+                style={{ ...btnStyle, backgroundColor: "#ff4d4f", color: "white" }}
+                onClick={() => {
+                  if (window.confirm("Are you sure you want to clear all saved data?")) {
+                    localStorage.removeItem("undoStack");
+                    localStorage.removeItem("redoStack");
+                    localStorage.removeItem("pages");
+                    localStorage.removeItem("textItems");
+                    localStorage.removeItem("imageItems");
+
                     setUndoStack({});
                     setRedoStack({});
                     setTextItems([]);
                     setImageItems([]);
-                    setPages([{"textItems":[],"imageItems":[]}]);       // single placeholder page
+                    setPages([{ textItems: [], imageItems: [] }]);
                     setActivePage(0);
 
-                    // Optional: clear selection / editing states if you keep them
                     setSelectedTextIndex?.(null);
                     setSelectedTextIndexes?.([]);
                     setSelectedImageIndex?.(null);
@@ -1835,7 +1877,7 @@ return (
                     setResizingImageIndex?.(null);
                     setTextBox?.(null);
                     setIsTextSelected(false);
-                    // Redraw fresh first page
+
                     drawCanvas(0);
                   }
                 }}
@@ -1843,216 +1885,278 @@ return (
                 Clear Data
               </button>
             </>
-          )
+          ),
         },
-      ].map((section, index) => (
-        
-        <div key={index} style={{ marginTop: '20px' }}>
+      ].map((section, idx) => (
+        <div key={idx} style={{ marginTop: 20 }}>
           <h4
             style={{
-              marginBottom: '10px',
-              color: '#333',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer'
+              marginBottom: 10,
+              color: "#333",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              cursor: "pointer",
             }}
             onClick={() =>
-              setOpenSections(prev => ({
+              setOpenSections((prev) => ({
                 ...prev,
-                [section.title]: !prev[section.title]
+                [section.title]: !prev[section.title],
               }))
             }
           >
             <span>{section.icon}</span>
             <span>{section.title}</span>
           </h4>
-          {openSections[section.title] && <div style={{ paddingLeft: '8px' }}>{section.content}</div>}
+          {openSections[section.title] && (
+            <div style={{ paddingLeft: 8 }}>{section.content}</div>
+          )}
         </div>
       ))}
-    </div>
+    </aside>
 
-    {/* Canvas Area */}
-    <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
-      {pageList.map((_, index) => (
-        <canvas
-          key={index}
-          ref={(el) => (canvasRefs.current[index] = el)}
-          style={{
-            display: 'block',
-            width: canvasWidth,
-            height: canvasHeight,
-            border: activePage === index ? '1px solid dodgerblue' : '1px solid #ccc',
-            backgroundColor: 'white',
-            pointerEvents: 'auto',
-            userSelect: 'none',
-            MozUserSelect: 'none',
-            WebkitUserSelect: 'none',
-            marginBottom: '20px'
-          }}
-          onMouseDown={(e) => handleCanvasMouseDownMl(e, {
-            isMultilineMode,
-            activePage,
-            canvasRefs,
-            pdfToCssMargins,
-            layoutMultiline,
-            mlConfig,
-            mlText,
-            setMlCaret,
-            setMlAnchor,
-            setMlPreferredX,
-            setIsMlDragging
-          }) ? undefined : handleMouseDown(e,{ 
-            canvasRefs,
-            activePage,
-            editingIndex,
-            imageItems,
-            resolveImageRectCss,
-            setResizingImageIndex,
-            setResizeStart,
-            setIsSelecting,
-            setSelectedImageIndex,
-            setDraggedImageIndex,
-            setIsImageDragging,
-            setDragStart,
-            textItems,
-            resolveTextLayoutForHit,
-            setIsTextSelected,
-            setSelectedTextIndex,
-            selectedTextIndexes,
-            setSelectedTextIndexes,
-            setIsDragging,
-            setInitialPositions,
-            textBox,
-            setIsResizing,
-            setSelectionStart,
-            setSelectionEnd})}
-          onMouseMove={(e) => handleCanvasMouseMoveMl(e,{
-                isMultilineMode,
-                isMlDragging,
-                canvasRefs,
-                activePage,
-                pdfToCssMargins,
-                mlConfig,
-                layoutMultiline,
-                mlText,
-                setMlCaret,
-          }) ? undefined : handleMouseMove(e,{
-                                                                          canvasRefs,
-                                                                          activePage,
-                                                                          editingIndex,
-                                                                          imageItems,
-                                                                          textItems,
-                                                                          resolveTextLayoutForHit,
-                                                                          selectedTextIndexes,
-                                                                          setSelectedTextIndexes,
-                                                                          textBox,
-                                                                          setSelectionEnd,
-                                                                          isResizing,
-                                                                          wrapTextResponsive,
-                                                                          setTextBox,
-                                                                          drawCanvas,
-                                                                          isSelecting,
-                                                                          selectionStart,
-                                                                          resizingImageIndex,
-                                                                          resizeStart,
-                                                                          setImageItems,
-                                                                          saveImageItemsToLocalStorage,
-                                                                          updatePageItems,
-                                                                          isImageDragging,
-                                                                          draggedImageIndex,
-                                                                          dragStart,
-                                                                          isDragging,
-                                                                          initialPositions,
-                                                                          setTextItems,
-                                                                          saveTextItemsToLocalStorage,
-                                                                          fontSize,
-          })}
-          onMouseUp={(e) => handleCanvasMouseUpMl(e, { isMultilineMode, setIsMlDragging}) ? undefined : handleMouseUp(e,{
-                                                                          canvasRefs,
-                                                                          activePage,
-                                                                          editingIndex,
-                                                                          textItems,
-                                                                          resolveTextLayoutForHit,
-                                                                          setSelectedTextIndexes,
-                                                                          textBox,
-                                                                          setSelectionEnd,
-                                                                          selectionEnd,
-                                                                          isResizing,
-                                                                          setTextBox,
-                                                                          drawCanvas,
-                                                                          isSelecting,
-                                                                          selectionStart,
-                                                                          resizingImageIndex,
-                                                                          isImageDragging,
-                                                                          isDragging,
-                                                                          setIsResizing,
-                                                                          setIsDragging,
-                                                                          setInitialPositions,
-                                                                          setDragStart,
-                                                                          pushSnapshotToUndo,
-                                                                          setResizingImageIndex,
-                                                                          setIsImageDragging,
-                                                                          setDraggedImageIndex,
-                                                                          setIsTextSelected,
-                                                                          setSelectedTextIndex,
-                                                                          isTextBoxEditEnabled,
-                                                                          setIsSelecting,
-                                                                          setShouldClearSelectionBox,
-                                                                          setSelectionStart,
-                                                                          history
-      })}
-          onDoubleClick={handleDoubleClick}
-          onClick={() => setActivePage(index)}
-        />
-      ))}
-    </div>
+    {/* Main (right) */}
+    <main
+      style={{
+        flex: 1,
+        minWidth: 0, // important to prevent overflow with flex children
+        overflow: "auto",
+        padding: 20,
+      }}
+    >
+      {/* We **do not** fix the container to CANVAS_WIDTH/HEIGHT; let it scroll naturally */}
+      <div
+        style={{
+          position: "relative",
+          display: "grid",
+          gridTemplateColumns: "1fr", // one page per row; change to 'auto auto' for 2-column grid
+          justifyContent: "start",
+          alignContent: "start",
+          gap: 35,
+        }}
+      >
+        {pageList.map((_, index) => {
+          const isActive = activePage === index;
+
+          const pageWrapStyle = {
+            position: "relative",
+            display: "inline-block",
+            boxShadow: "0 0 0 1px #ddd",
+          };
+
+          const canvasStyle = {
+            display: "block",
+            width: CANVAS_WIDTH,
+            height: CANVAS_HEIGHT,
+            backgroundColor: "white",
+            border: isActive ? "1px solid dodgerblue" : "1px solid #ccc",
+            userSelect: "none",
+            MozUserSelect: "none",
+            WebkitUserSelect: "none",
+            pointerEvents: "auto",
+          };
+
+          const overlayWrapStyle = {
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            zIndex: 5,
+          };
+
+          return (
+            <div key={index} style={pageWrapStyle} onClick={() => setActivePage(index)}>
+              <canvas
+                ref={(el) => (canvasRefs.current[index] = el)}
+                style={canvasStyle}
+                onMouseDown={(e) =>
+                  handleCanvasMouseDownMl(e, {
+                    isMultilineMode,
+                    activePage,
+                    canvasRefs,
+                    pdfToCssMargins,
+                    layoutMultiline,
+                    mlConfig,
+                    mlText,
+                    setMlCaret,
+                    setMlAnchor,
+                    setMlPreferredX,
+                    setIsMlDragging,
+                  })
+                    ? undefined
+                    : handleMouseDown(e, {
+                        canvasRefs,
+                        activePage,
+                        editingIndex,
+                        imageItems,
+                        resolveImageRectCss,
+                        setResizingImageIndex,
+                        setResizeStart,
+                        setIsSelecting,
+                        setSelectedImageIndex,
+                        setDraggedImageIndex,
+                        setIsImageDragging,
+                        setDragStart,
+                        textItems,
+                        resolveTextLayoutForHit,
+                        setIsTextSelected,
+                        setSelectedTextIndex,
+                        selectedTextIndexes,
+                        setSelectedTextIndexes,
+                        setIsDragging,
+                        setInitialPositions,
+                        textBox,
+                        setIsResizing,
+                        setSelectionStart,
+                        setSelectionEnd,
+                      })
+                }
+                onMouseMove={(e) =>
+                  handleCanvasMouseMoveMl(e, {
+                    isMultilineMode,
+                    isMlDragging,
+                    canvasRefs,
+                    activePage,
+                    pdfToCssMargins,
+                    mlConfig,
+                    layoutMultiline,
+                    mlText,
+                    setMlCaret,
+                  })
+                    ? undefined
+                    : handleMouseMove(e, {
+                        canvasRefs,
+                        activePage,
+                        editingIndex,
+                        imageItems,
+                        textItems,
+                        resolveTextLayoutForHit,
+                        selectedTextIndexes,
+                        setSelectedTextIndexes,
+                        textBox,
+                        setSelectionEnd,
+                        isResizing,
+                        wrapTextResponsive,
+                        setTextBox,
+                        drawCanvas,
+                        isSelecting,
+                        selectionStart,
+                        resizingImageIndex,
+                        resizeStart,
+                        setImageItems,
+                        saveImageItemsToLocalStorage,
+                        updatePageItems,
+                        isImageDragging,
+                        draggedImageIndex,
+                        dragStart,
+                        isDragging,
+                        initialPositions,
+                        setTextItems,
+                        saveTextItemsToLocalStorage,
+                        fontSize,
+                      })
+                }
+                onMouseUp={(e) =>
+                  handleCanvasMouseUpMl(e, { isMultilineMode, setIsMlDragging })
+                    ? undefined
+                    : handleMouseUp(e, {
+                        canvasRefs,
+                        activePage,
+                        editingIndex,
+                        textItems,
+                        resolveTextLayoutForHit,
+                        setSelectedTextIndexes,
+                        textBox,
+                        setSelectionEnd,
+                        selectionEnd,
+                        isResizing,
+                        setTextBox,
+                        drawCanvas,
+                        isSelecting,
+                        selectionStart,
+                        resizingImageIndex,
+                        isImageDragging,
+                        isDragging,
+                        setIsResizing,
+                        setIsDragging,
+                        setInitialPositions,
+                        setDragStart,
+                        pushSnapshotToUndo,
+                        setResizingImageIndex,
+                        setIsImageDragging,
+                        setDraggedImageIndex,
+                        setIsTextSelected,
+                        setSelectedTextIndex,
+                        isTextBoxEditEnabled,
+                        setIsSelecting,
+                        setShouldClearSelectionBox,
+                        setSelectionStart,
+                        history,
+                      })
+                }
+                onDoubleClick={handleDoubleClick}
+              />
+
+              {isActive && (
+                <div style={overlayWrapStyle}>
+                  <RulerOverlay
+                    canvasRef={{ current: canvasRefs.current[index] }}
+                    zoom={1}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </main>
 
     {/* Add Text Modal */}
     {showAddTextModal && (
-      <div style={{
-        position: 'fixed',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        backgroundColor: 'white',
-        padding: '20px',
-        border: '1px solid #ccc',
-        boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
-        zIndex: 1000
-      }}>
+      <div
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          backgroundColor: "white",
+          padding: 20,
+          border: "1px solid #ccc",
+          boxShadow: "0px 0px 10px rgba(0, 0, 0, 0.1)",
+          zIndex: 1000,
+        }}
+      >
         <h2>Add New Text</h2>
         <input
           type="text"
           value={newText}
           onChange={(e) => setNewText(e.target.value)}
           placeholder="Enter text here"
-          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+          style={{ marginBottom: 10, display: "block", width: "100%" }}
         />
         <input
           type="number"
           value={newFontSize}
           onChange={(e) => setNewFontSize(parseInt(e.target.value, 10))}
           placeholder="Font Size"
-          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+          style={{ marginBottom: 10, display: "block", width: "100%" }}
         />
         <input
           type="number"
           value={maxWidth}
           onChange={(e) => setMaxWidth(parseInt(e.target.value, 10))}
           placeholder="Enter max width (e.g., 200)"
-          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+          style={{ marginBottom: 10, display: "block", width: "100%" }}
         />
         <div>
           <button onClick={addTextToCanvas}>Ok</button>
           <button
             onClick={() => {
               setShowAddTextModal(false);
-              setNewText('');
+              setNewText("");
               setMaxWidth(200);
               setNewFontSize(fontSize);
             }}
-            style={{ marginLeft: '10px' }}
+            style={{ marginLeft: 10 }}
           >
             Cancel
           </button>
@@ -2062,35 +2166,37 @@ return (
 
     {/* Edit Text Modal */}
     {isEditing && (
-      <div style={{
-        position: 'fixed',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        backgroundColor: 'white',
-        padding: '20px',
-        border: '1px solid #ccc',
-        boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)',
-        zIndex: 1000
-      }}>
+      <div
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          backgroundColor: "white",
+          padding: 20,
+          border: "1px solid #ccc",
+          boxShadow: "0px 0px 10px rgba(0,0,0,0.1)",
+          zIndex: 1000,
+        }}
+      >
         <h2>Edit Text</h2>
         <input
           type="text"
           value={editingText}
           onChange={(e) => setEditingText(e.target.value)}
           placeholder="Edit text here"
-          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+          style={{ marginBottom: 10, display: "block", width: "100%" }}
         />
         <input
           type="number"
           value={editingFontSize}
           onChange={(e) => setEditingFontSize(parseInt(e.target.value, 10))}
           placeholder="Font Size"
-          style={{ marginBottom: '10px', display: 'block', width: '100%' }}
+          style={{ marginBottom: 10, display: "block", width: "100%" }}
         />
         <div>
           <button onClick={saveEditedText}>Save</button>
-          <button onClick={closeEditModal} style={{ marginLeft: '10px' }}>
+          <button onClick={closeEditModal} style={{ marginLeft: 10 }}>
             Cancel
           </button>
         </div>
@@ -2098,6 +2204,7 @@ return (
     )}
   </div>
 );
+
 
 
 }
