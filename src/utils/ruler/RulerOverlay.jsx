@@ -168,11 +168,6 @@ const RulerOverlay = forwardRef(
 
       const onMove = (e) => {
         lastPosRef.current = getPos(e);
-        console.log(
-          `mouse: x=${Math.round(lastPosRef.current.x)}, y=${Math.round(
-            lastPosRef.current.y
-          )}`
-        );
         scheduleOverlayDraw();
       };
 

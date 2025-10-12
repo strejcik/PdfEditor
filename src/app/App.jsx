@@ -1496,36 +1496,111 @@ const handleFileChange = (event) => {
 
 
 
-function exportStateToJson(pagesKey = "pages", textItemsKey = "textItems", imageItemsKey = "imageItems", filename = "state.json") {
-  const safeParse = (raw)=> {
-    if (!raw) return null;
-    try {
-      // Support double-encoded JSON (string of JSON inside JSON)
-      const first = JSON.parse(raw);
-      if (typeof first === "string") {
-        try { return JSON.parse(first)} catch { return first}
-      }
-      return first
-    } catch {
-      return null;
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === "object") {
+    const out = {};
+    // Collect keys except "checksum"
+    const keys = Object.keys(value).filter(k => k !== "checksum").sort();
+    for (const k of keys) {
+      out[k] = canonicalize(value[k]);
     }
-  };
+    return out;
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    return String(value); // "NaN", "Infinity", "-Infinity"
+  }
+  return value;
+}
 
-  // 1) Read everything we can from localStorage
+/** Deterministic JSON string (stable at all depths, checksum removed). */
+function canonicalStringify(obj) {
+  const canon = canonicalize(obj);
+  return JSON.stringify(canon);
+}
+
+/* -------------------- Strong checksum (SHA-256, canonical) -------------------- */
+async function computeChecksum(obj) {
+  const json = canonicalStringify(obj); // excludes checksum
+  if (window.crypto?.subtle) {
+    try {
+      const enc = new TextEncoder().encode(json);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", enc);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch {
+      // fall through
+    }
+  }
+  // Fallback (non-crypto) if SubtleCrypto is unavailable
+  let h = 0;
+  for (let i = 0; i < json.length; i++) {
+    h = (h << 5) - h + json.charCodeAt(i);
+    h |= 0;
+  }
+  return "fallback_" + Math.abs(h).toString(16);
+}
+
+/* -------------------- Verify checksum (excludes checksum during hash) -------------------- */
+async function verifyChecksum(payload) {
+  if (!payload || typeof payload !== "object") {
+    return { ok: false, reason: "Invalid payload" };
+  }
+  if (!("checksum" in payload)) {
+    return { ok: false, reason: "Missing checksum" };
+  }
+  const expected = String(payload.checksum || "");
+  const actual = await computeChecksum(payload); // checksum removed inside
+  return { ok: expected === actual, expected, actual };
+}
+
+/* -------------------- Helpers -------------------- */
+function safeParse(raw) {
+  if (!raw) return null;
+  try {
+    const first = JSON.parse(raw);
+    if (typeof first === "string") {
+      try { return JSON.parse(first); } catch { return first; }
+    }
+    return first;
+  } catch {
+    return null;
+  }
+}
+
+async function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.onerror = reject;
+    fr.readAsText(file);
+  });
+}
+
+/* -------------------- Export (now with proper checksum) -------------------- */
+async function exportStateToJson(
+  pagesKey = "pages",
+  textItemsKey = "textItems",
+  imageItemsKey = "imageItems",
+  filename = "state.json"
+) {
+  // 1) Read from localStorage
   const pagesLS = safeParse(localStorage.getItem(pagesKey));
   const textItemsLS = safeParse(localStorage.getItem(textItemsKey)) || [];
   const imageItemsLS = safeParse(localStorage.getItem(imageItemsKey)) || [];
 
-  // 2) Build pages if not present or malformed
+  // 2) Ensure valid pages array
   const isPageShape = (p) =>
     p && typeof p === "object" &&
     Array.isArray(p.textItems) &&
     Array.isArray(p.imageItems);
 
-  let pages= Array.isArray(pagesLS) && pagesLS.every(isPageShape) ? pagesLS : null;
+  let pages = Array.isArray(pagesLS) && pagesLS.every(isPageShape) ? pagesLS : null;
 
   if (!pages) {
-    // Group standalone items by page index
+    // Build pages from flat items
     const maxIndex = Math.max(
       -1,
       ...textItemsLS.map((t) => Number.isFinite(t?.index) ? Number(t.index) : -1),
@@ -1548,16 +1623,19 @@ function exportStateToJson(pagesKey = "pages", textItemsKey = "textItems", image
     pages = grouped;
   }
 
-  // 3) Prepare final payload (keep flat arrays too, for convenience)
+  // 3) Build payload (without checksum first)
   const payload = {
-    version: 1,
+    version: 2,
     savedAt: new Date().toISOString(),
     pages,
     textItems: textItemsLS,
     imageItems: imageItemsLS,
   };
 
-  // 4) Download as state.json
+  // 4) Compute checksum over canonical form (checksum excluded)
+  payload.checksum = await computeChecksum(payload);
+
+  // 5) Download
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1568,29 +1646,43 @@ function exportStateToJson(pagesKey = "pages", textItemsKey = "textItems", image
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 
-  return payload; // handy if you want to inspect or test
+  return payload;
 }
 
+/* -------------------- Import handler (with checksum enforcement) -------------------- */
+const onJSONChange = async (e) => {
+  const file = e.target.files?.[0];
+  e.currentTarget.value = ""; // allow re-selecting same file next time
+  if (!file) return;
 
+  try {
+    const text = await readFileAsText(file);
+    const parsed = JSON.parse(text);
 
+    const { ok, expected, actual, reason } = await verifyChecksum(parsed);
 
-
-
-  const onJSONChange = async (e) => {
-    const file = e.target.files?.[0];
-    e.currentTarget.value = ""; // allow re-selecting the same file
-    if (!file) return;
-    try {
-      await importStateFromJson(file, {
-        setPages, setTextItems, setImageItems,
-        pagesKey:"pages", textItemsKey:"textItem", imageItemsKey:"imageItems",
-      });
-      // You could toast/snackbar here: "State loaded"
-    } catch (err) {
-      console.error("Failed to import state.json", err);
-      alert("Invalid or corrupted state.json");
+    if (!ok) {
+      const msg = reason === "Missing checksum"
+        ? "This file has no checksum. Import anyway?"
+        : `Checksum mismatch.\nExpected: ${expected}\nActual:   ${actual}\nImport anyway?`;
+      const proceed = window.confirm(msg);
+      if (!proceed) return;
     }
-  };
+
+    // If you already have an `importStateFromJson`, keep using it:
+    await importStateFromJson(file, {
+      setPages,
+      setTextItems,
+      setImageItems,
+      pagesKey: "pages",
+      textItemsKey: "textItems",
+      imageItemsKey: "imageItems",
+    });
+  } catch (err) {
+    console.error("Failed to import state.json", err);
+    alert("Invalid or corrupted state.json");
+  }
+};
   
 
   useEffect(() => {
