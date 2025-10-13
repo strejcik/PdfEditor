@@ -1493,82 +1493,114 @@ const handleFileChange = (event) => {
   setSelectedFile(file);
 };
 
-
-
-
+// ---------- canonical helpers ----------
 function canonicalize(value) {
-  if (Array.isArray(value)) {
-    return value.map(canonicalize);
-  }
+  if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === "object") {
     const out = {};
-    // Collect keys except "checksum"
-    const keys = Object.keys(value).filter(k => k !== "checksum").sort();
-    for (const k of keys) {
-      out[k] = canonicalize(value[k]);
-    }
+    const keys = Object.keys(value).filter(k => k !== "checksum" && k !== "checksumRaw").sort();
+    for (const k of keys) out[k] = canonicalize(value[k]);
     return out;
   }
-  if (typeof value === "number" && !Number.isFinite(value)) {
-    return String(value); // "NaN", "Infinity", "-Infinity"
-  }
+  if (typeof value === "number" && !Number.isFinite(value)) return String(value);
   return value;
 }
-
-/** Deterministic JSON string (stable at all depths, checksum removed). */
 function canonicalStringify(obj) {
-  const canon = canonicalize(obj);
-  return JSON.stringify(canon);
+  return JSON.stringify(canonicalize(obj));
 }
 
-/* -------------------- Strong checksum (SHA-256, canonical) -------------------- */
-async function computeChecksum(obj) {
-  const json = canonicalStringify(obj); // excludes checksum
+// ---------- hashing ----------
+async function sha256String(str) {
   if (window.crypto?.subtle) {
-    try {
-      const enc = new TextEncoder().encode(json);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", enc);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-    } catch {
-      // fall through
-    }
+    const enc = new TextEncoder().encode(str);
+    const buf = await crypto.subtle.digest("SHA-256", enc);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
   }
-  // Fallback (non-crypto) if SubtleCrypto is unavailable
+  // fallback (non-crypto)
   let h = 0;
-  for (let i = 0; i < json.length; i++) {
-    h = (h << 5) - h + json.charCodeAt(i);
-    h |= 0;
-  }
+  for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; }
   return "fallback_" + Math.abs(h).toString(16);
 }
-
-/* -------------------- Verify checksum (excludes checksum during hash) -------------------- */
-async function verifyChecksum(payload) {
-  if (!payload || typeof payload !== "object") {
-    return { ok: false, reason: "Invalid payload" };
-  }
-  if (!("checksum" in payload)) {
-    return { ok: false, reason: "Missing checksum" };
-  }
-  const expected = String(payload.checksum || "");
-  const actual = await computeChecksum(payload); // checksum removed inside
-  return { ok: expected === actual, expected, actual };
+async function computeChecksum(obj) {
+  return sha256String(canonicalStringify(obj));
 }
 
-/* -------------------- Helpers -------------------- */
-function safeParse(raw) {
-  if (!raw) return null;
-  try {
-    const first = JSON.parse(raw);
-    if (typeof first === "string") {
-      try { return JSON.parse(first); } catch { return first; }
-    }
-    return first;
-  } catch {
-    return null;
+// ---------- export with raw checksum ----------
+async function exportStateToJson(
+  pagesKey = "pages",
+  textItemsKey = "textItems",
+  imageItemsKey = "imageItems",
+  filename = "state.json"
+) {
+  const safeParse = (raw) => {
+    if (!raw) return null;
+    try {
+      const first = JSON.parse(raw);
+      if (typeof first === "string") { try { return JSON.parse(first); } catch { return first; } }
+      return first;
+    } catch { return null; }
+  };
+
+  const pagesLS = safeParse(localStorage.getItem(pagesKey));
+  const textItemsLS = safeParse(localStorage.getItem(textItemsKey)) || [];
+  const imageItemsLS = safeParse(localStorage.getItem(imageItemsKey)) || [];
+
+  const isPageShape = (p) => p && typeof p === "object" && Array.isArray(p.textItems) && Array.isArray(p.imageItems);
+  let pages = Array.isArray(pagesLS) && pagesLS.every(isPageShape) ? pagesLS : null;
+  if (!pages) {
+    const maxIndex = Math.max(
+      -1,
+      ...textItemsLS.map(t => Number.isFinite(t?.index) ? +t.index : -1),
+      ...imageItemsLS.map(i => Number.isFinite(i?.index) ? +i.index : -1),
+    );
+    const pageCount = Math.max(0, maxIndex + 1);
+    const grouped = Array.from({ length: pageCount }, () => ({ textItems: [], imageItems: [] }));
+    textItemsLS.forEach(t => { const i = Number.isFinite(t?.index) ? +t.index : 0; (grouped[i] ??= {textItems:[],imageItems:[]}).textItems.push(t); });
+    imageItemsLS.forEach(i => { const p = Number.isFinite(i?.index) ? +i.index : 0; (grouped[p] ??= {textItems:[],imageItems:[]}).imageItems.push(i); });
+    pages = grouped;
   }
+
+  // Base payload (no checksums)
+  const base = {
+    version: 2,
+    savedAt: new Date().toISOString(),
+    pages,
+    textItems: textItemsLS,
+    imageItems: imageItemsLS,
+  };
+
+  // Canonical checksum (object-based)
+  const checksum = await computeChecksum(base);
+
+  // Prepare object WITH checksums, but leave checksumRaw blank for now
+  const withBlank = { ...base, checksum, checksumRaw: "" };
+
+  // Serialize once with blank checksumRaw — we will hash this exact text
+  const textWithBlank = JSON.stringify(withBlank, null, 2);
+
+  // Raw text checksum (detects any textual edit)
+  const checksumRaw = await sha256String(textWithBlank);
+
+  // Final object
+  const finalObj = { ...withBlank, checksumRaw };
+  const finalText = JSON.stringify(finalObj, null, 2);
+
+  // Download
+  const blob = new Blob([finalText], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+
+  return finalObj;
 }
+
+
+
 
 async function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -1579,97 +1611,80 @@ async function readFileAsText(file) {
   });
 }
 
-/* -------------------- Export (now with proper checksum) -------------------- */
-async function exportStateToJson(
-  pagesKey = "pages",
-  textItemsKey = "textItems",
-  imageItemsKey = "imageItems",
-  filename = "state.json"
-) {
-  // 1) Read from localStorage
-  const pagesLS = safeParse(localStorage.getItem(pagesKey));
-  const textItemsLS = safeParse(localStorage.getItem(textItemsKey)) || [];
-  const imageItemsLS = safeParse(localStorage.getItem(imageItemsKey)) || [];
-
-  // 2) Ensure valid pages array
-  const isPageShape = (p) =>
-    p && typeof p === "object" &&
-    Array.isArray(p.textItems) &&
-    Array.isArray(p.imageItems);
-
-  let pages = Array.isArray(pagesLS) && pagesLS.every(isPageShape) ? pagesLS : null;
-
-  if (!pages) {
-    // Build pages from flat items
-    const maxIndex = Math.max(
-      -1,
-      ...textItemsLS.map((t) => Number.isFinite(t?.index) ? Number(t.index) : -1),
-      ...imageItemsLS.map((i) => Number.isFinite(i?.index) ? Number(i.index) : -1)
-    );
-    const pageCount = Math.max(0, maxIndex + 1);
-    const grouped = Array.from({ length: pageCount }, () => ({ textItems: [], imageItems: [] }));
-
-    textItemsLS.forEach((t) => {
-      const idx = Number.isFinite(t?.index) ? Number(t.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [] };
-      grouped[idx].textItems.push(t);
-    });
-    imageItemsLS.forEach((img) => {
-      const idx = Number.isFinite(img?.index) ? Number(img.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [] };
-      grouped[idx].imageItems.push(img);
-    });
-
-    pages = grouped;
-  }
-
-  // 3) Build payload (without checksum first)
-  const payload = {
-    version: 2,
-    savedAt: new Date().toISOString(),
-    pages,
-    textItems: textItemsLS,
-    imageItems: imageItemsLS,
-  };
-
-  // 4) Compute checksum over canonical form (checksum excluded)
-  payload.checksum = await computeChecksum(payload);
-
-  // 5) Download
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-
-  return payload;
+// Replace the checksumRaw value with "" while preserving surrounding formatting.
+function blankChecksumRawInText(jsonText) {
+  // Matches: "checksumRaw" : "anything including escapes"
+  // and replaces the string with empty string ""
+  return jsonText.replace(
+    /("checksumRaw"\s*:\s*)"(?:[^"\\]|\\.)*"/,
+    '$1""'
+  );
 }
 
-/* -------------------- Import handler (with checksum enforcement) -------------------- */
+async function verifyDualChecksums(originalText) {
+  // Parse first to get fields
+  let parsed;
+  try {
+    parsed = JSON.parse(originalText);
+  } catch {
+    return { ok: false, reason: "Invalid JSON", fail: "parse" };
+  }
+
+  // 1) Raw checksum check
+  if (typeof parsed.checksumRaw !== "string") {
+    return { ok: false, reason: "Missing checksumRaw", fail: "raw-missing" };
+  }
+  const blanked = blankChecksumRawInText(originalText);
+  const actualRaw = await sha256String(blanked);
+  const okRaw = parsed.checksumRaw === actualRaw;
+
+  // 2) Canonical object checksum (optional but recommended)
+  if (typeof parsed.checksum !== "string") {
+    return { ok: false, reason: "Missing checksum", fail: "canon-missing", okRaw };
+  }
+  // Exclude both checksums for canonical hashing
+  const { checksum, checksumRaw, ...rest } = parsed;
+  const actualCanon = await computeChecksum(rest);
+  const okCanon = parsed.checksum === actualCanon;
+
+  return {
+    ok: okRaw && okCanon,
+    okRaw,
+    okCanon,
+    expectedRaw: parsed.checksumRaw,
+    actualRaw,
+    expectedCanon: parsed.checksum,
+    actualCanon,
+    parsed, // return parsed for the caller
+  };
+}
+
+// Example onChange handler that enforces both checks
 const onJSONChange = async (e) => {
   const file = e.target.files?.[0];
-  e.currentTarget.value = ""; // allow re-selecting same file next time
+  e.currentTarget.value = "";
   if (!file) return;
 
   try {
     const text = await readFileAsText(file);
-    const parsed = JSON.parse(text);
+    const result = await verifyDualChecksums(text);
 
-    const { ok, expected, actual, reason } = await verifyChecksum(parsed);
-
-    if (!ok) {
-      const msg = reason === "Missing checksum"
-        ? "This file has no checksum. Import anyway?"
-        : `Checksum mismatch.\nExpected: ${expected}\nActual:   ${actual}\nImport anyway?`;
-      const proceed = window.confirm(msg);
+    if (!result.ok) {
+      let msg = "Checksum verification failed.\n";
+      if (result.fail === "parse") msg += "Reason: invalid JSON.";
+      else {
+        if (result.okRaw === false) {
+          msg += `Raw text mismatch.\nExpectedRaw: ${result.expectedRaw}\nActualRaw:   ${result.actualRaw}\n`;
+        }
+        if (result.okCanon === false) {
+          msg += `Canonical mismatch.\nExpected: ${result.expectedCanon}\nActual:   ${result.actualCanon}\n`;
+        }
+      }
+      const proceed = window.confirm(`${msg}\nImport anyway?`);
       if (!proceed) return;
     }
 
-    // If you already have an `importStateFromJson`, keep using it:
+    // Apply state (your existing helper)
     await importStateFromJson(file, {
       setPages,
       setTextItems,
@@ -1683,6 +1698,7 @@ const onJSONChange = async (e) => {
     alert("Invalid or corrupted state.json");
   }
 };
+
   
 
   useEffect(() => {
