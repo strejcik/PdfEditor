@@ -262,7 +262,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         resizingImageIndex,
         resizeStart,
         setImageItems,
-        saveImageItemsToLocalStorage,
+        saveImageItemsToIndexedDB,
         updatePageItems,
         isImageDragging,
         draggedImageIndex,
@@ -270,7 +270,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         isDragging,
         initialPositions,
         setTextItems,
-        saveTextItemsToLocalStorage,
+        saveTextItemsToIndexedDB,
         fontSize,
     } = opts;
 
@@ -372,7 +372,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         item.heightNorm = rect.height ? (newH / rect.height) : 0;
     
         setImageItems(updated);
-        saveImageItemsToLocalStorage(updated);
+        saveImageItemsToIndexedDB(updated);
         updatePageItems('imageItems', updated.filter(i => i.index === activePage));
         drawCanvas(activePage);
         return;
@@ -398,7 +398,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         item.yNormTop = rect.height ? (newY / rect.height) : 0;
     
         setImageItems(updated);
-        saveImageItemsToLocalStorage(updated);
+        saveImageItemsToIndexedDB(updated);
         updatePageItems('imageItems', updated.filter(i => i.index === activePage));
         drawCanvas(activePage);
         return;
@@ -430,7 +430,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
     
           setTextItems(updated);
           updatePageItems('textItems', updated.filter(i => i.index === activePage));
-          saveTextItemsToLocalStorage(updated);
+          saveTextItemsToIndexedDB(updated);
           drawCanvas(activePage);
           return;
         }
@@ -565,7 +565,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
 
   setTextItems(updated);
   updatePageItems('textItems', updated.filter(i => i.index === activePage));
-  saveTextItemsToLocalStorage(updated);
+  saveTextItemsToIndexedDB(updated);
   drawCanvas(activePage);
   return;
 }
@@ -587,7 +587,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     
         setTextItems(updated);
         updatePageItems('textItems', updated.filter(t => t.index === activePage));
-        saveTextItemsToLocalStorage(updated);
+        saveTextItemsToIndexedDB(updated);
         drawCanvas(activePage);
       }
     };

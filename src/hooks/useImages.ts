@@ -44,12 +44,43 @@ export function useImages() {
   setPages:any
 };
 
-const saveImageItemsToLocalStorage = useCallback(
-    async (items:any) => {
-  const serializedImages = items.map((item:ImageItem) => {
+/** Opens (or creates) an IndexedDB named "PdfEditorDB" with objectStore "imageItems" */
+function openImageItemsDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("PdfEditorDB", 3);
+    request.onupgradeneeded = (event:any) => {
+      const db = event.target.result;
+      // Create stores if missing (we can future-proof by ensuring both exist)
+      if (!db.objectStoreNames.contains("textItems")) {
+        db.createObjectStore("textItems", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("imageItems")) {
+        db.createObjectStore("imageItems", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("pages")) {
+        db.createObjectStore("pages", { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
 
-    return {
-      data: item.data, // Save base64 data
+/** Replaces localStorage.setItem("imageItems", JSON.stringify(serializedImages)) */
+const saveImageItemsToIndexedDB = useCallback(async (items:any) => {
+  if (!window.indexedDB) {
+    console.error("IndexedDB not supported in this browser.");
+    return;
+  }
+
+  try {
+    const db:any = await openImageItemsDB();
+    const tx = db.transaction("imageItems", "readwrite");
+    const store = tx.objectStore("imageItems");
+
+    // Serialize image data (preserving your structure)
+    const serializedImages = (items || []).map((item:any) => ({
+      data: item.data, // base64 data
       x: item.x,
       y: item.y,
       width: item.width,
@@ -59,10 +90,21 @@ const saveImageItemsToLocalStorage = useCallback(
       yNormTop: item.yNormTop,
       widthNorm: item.widthNorm,
       heightNorm: item.heightNorm,
-    }
-  });
-  localStorage.setItem('imageItems', JSON.stringify(serializedImages));
-},[]);
+    }));
+
+    // Store a single record under a fixed key ("main")
+    store.put({ id: "main", data: serializedImages });
+
+    await new Promise((resolve:any, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    db.close();
+  } catch (err) {
+    console.error("Failed to save imageItems to IndexedDB", err);
+  }
+}, []);
 
 const addImageFromFile = useCallback(
   async (file: File, pageIndex: number, opts?: AddOpts): Promise<ImageItem | null> => {
@@ -111,7 +153,7 @@ const addImageFromFile = useCallback(
     // 4) Update global imageItems
     setImageItems?.((prev: ImageItem[] = []) => {
       const merged = [...prev, newItem];
-      saveImageItemsToLocalStorage?.(merged);
+      saveImageItemsToIndexedDB?.(merged);
       return merged;
     });
     // 5) Update per-page slice in `pages`
@@ -200,7 +242,7 @@ const createImageElement = useCallback(
     hydrateFromPages,
     addImageFromFile,           // ← new action
     handleAddImage,
-    saveImageItemsToLocalStorage,
+    saveImageItemsToIndexedDB,
     createImageElement,
     resolveImageRectCss
   };

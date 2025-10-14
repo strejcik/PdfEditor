@@ -24,7 +24,7 @@ export function useKeyboard() {
         setTextItems,
         setMlText,
         selectedTextIndexesRef,
-        saveTextItemsToLocalStorage,
+        saveTextItemsToIndexedDB,
         updatePageItems,
         wrapTextPreservingNewlinesResponsive,
         setTextBox,
@@ -81,7 +81,7 @@ export function useKeyboard() {
         if (toRemove.length > 0) {
           const updated = textItems.filter((_:any, i:any) => !toRemove.includes(i));
           setTextItems(updated);
-          saveTextItemsToLocalStorage(updated);
+          saveTextItemsToIndexedDB(updated);
           updatePageItems("textItems", updated.filter((it:any) => it.index === activePage));
           setSelectedTextIndexes([]);
           setIsTextSelected(false);

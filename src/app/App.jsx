@@ -113,7 +113,7 @@ useEffect(() => {
       editingIndex, setEditingIndex,
       editingFontSize, setEditingFontSize,
       newFontSize, setNewFontSize,
-      removeSelectedText, saveTextItemsToLocalStorage,
+      removeSelectedText, saveTextItemsToIndexedDB,
       wrapTextPreservingNewlinesResponsive, wrapTextResponsive,
       resolveTextLayout,
       resolveTextLayoutForHit
@@ -126,7 +126,7 @@ useEffect(() => {
       selectedImageIndex, setSelectedImageIndex,
       resizingImageIndex, setResizingImageIndex,
       resizeStart, setResizeStart, addImageFromFile,
-      handleAddImage, saveImageItemsToLocalStorage,
+      handleAddImage, saveImageItemsToIndexedDB,
       createImageElement,
       resolveImageRectCss
     },
@@ -478,7 +478,7 @@ useEffect(() => {
     setTextItems,
     setMlText,
     selectedTextIndexesRef,
-    saveTextItemsToLocalStorage,
+    saveTextItemsToIndexedDB,
     updatePageItems,
     wrapTextPreservingNewlinesResponsive,
     setTextBox,
@@ -517,7 +517,7 @@ useEffect(() => {
       selectedItem.y = Math.max(fontSize, Math.min(selectedItem.y, canvasRefs.current[activePage].height));
 
       setTextItems(updatedItems);
-      saveTextItemsToLocalStorage(updatedItems); // Save updated position in localStorage
+      saveTextItemsToIndexedDB(updatedItems); // Save updated position in localStorage
     }
 
   };
@@ -605,7 +605,7 @@ const nextTextItems = [ ...(textItems || []), ...itemsToAdd.map(it => ({ ...it }
 setTextItems(nextTextItems);
 
 // Use the SAME computed array right away:
-saveTextItemsToLocalStorage?.(nextTextItems);
+saveTextItemsToIndexedDB?.(nextTextItems);
 
 setPages(prev => {
   const next = Array.isArray(prev) ? [...prev] : [];
@@ -769,14 +769,14 @@ const addTextToCanvas3 = (items = []) => {
   if (newTextItems.length) {
     setTextItems((prev) => {
       const merged = Array.isArray(prev) ? [...prev, ...newTextItems] : [...newTextItems];
-      saveTextItemsToLocalStorage?.(merged);
+      saveTextItemsToIndexedDB?.(merged);
       return merged;
     });
   }
   if (newImageItems.length) {
     setImageItems?.((prev) => {
       const merged = Array.isArray(prev) ? [...prev, ...newImageItems] : [...newImageItems];
-      saveImageItemsToLocalStorage?.(merged);
+      saveImageItemsToIndexedDB?.(merged);
       return merged;
     });
   }
@@ -877,7 +877,7 @@ const nextTextItems = [ ...(textItems || []), ...textItemsToAdd.map(it => ({ ...
 setTextItems(nextTextItems);
 
 // Use the SAME computed array right away:
-saveTextItemsToLocalStorage?.(nextTextItems);
+saveTextItemsToIndexedDB?.(nextTextItems);
 
 setPages(prev => {
   const next = Array.isArray(prev) ? [...prev] : [];
@@ -915,7 +915,7 @@ const deleteSelectedImage = () => {
 
 
     setImageItems(filteredItems);
-    saveImageItemsToLocalStorage(filteredItems);
+    saveImageItemsToIndexedDB(filteredItems);
     updatePageItems('imageItems', filteredItems);
     setSelectedImageIndex(null);
     drawCanvas(activePage);
@@ -1396,7 +1396,7 @@ const nextTextItems = [ ...updatedItems];
 setTextItems(nextTextItems);
 
 // Use the SAME computed array right away:
-saveTextItemsToLocalStorage?.(nextTextItems);
+saveTextItemsToIndexedDB?.(nextTextItems);
 
 setPages(prev => {
   const next = Array.isArray(prev) ? [...prev] : [];
@@ -1781,8 +1781,8 @@ return (
                     setResizingImageIndex,
                     setTextItems,
                     setImageItems,
-                    saveTextItemsToLocalStorage,
-                    saveImageItemsToLocalStorage,
+                    saveTextItemsToIndexedDB,
+                    saveImageItemsToIndexedDB,
                     purgeUndoRedoForRemovedPage,
                     textItems,
                     imageItems,
@@ -2151,7 +2151,7 @@ return (
                         resizingImageIndex,
                         resizeStart,
                         setImageItems,
-                        saveImageItemsToLocalStorage,
+                        saveImageItemsToIndexedDB,
                         updatePageItems,
                         isImageDragging,
                         draggedImageIndex,
@@ -2159,7 +2159,7 @@ return (
                         isDragging,
                         initialPositions,
                         setTextItems,
-                        saveTextItemsToLocalStorage,
+                        saveTextItemsToIndexedDB,
                         fontSize,
                       })
                 }

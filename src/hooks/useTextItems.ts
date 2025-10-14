@@ -68,8 +68,54 @@ export function useTextItems() {
     [CANVAS_WIDTH, CANVAS_HEIGHT]
   );
 
-const saveTextItemsToLocalStorage = useCallback((items: any) => {
-  localStorage.setItem("textItems", JSON.stringify(items));
+
+
+
+const openTextItemsDB = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("PdfEditorDB", 3);
+    request.onupgradeneeded = (event:any) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains("textItems")) {
+        db.createObjectStore("textItems", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("imageItems")) {
+        db.createObjectStore("imageItems", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("pages")) {
+        db.createObjectStore("pages", { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+
+/** Replaces localStorage.setItem("textItems", JSON.stringify(items)) */
+const saveTextItemsToIndexedDB = useCallback(async (items:any) => {
+  if (!window.indexedDB) {
+    console.error("IndexedDB not supported in this browser.");
+    return;
+  }
+
+  try {
+    const db:any = await openTextItemsDB();
+    const tx = db.transaction("textItems", "readwrite");
+    const store = tx.objectStore("textItems");
+
+    // We always use a single entry (like localStorage), with key "main"
+    store.put({ id: "main", data: items });
+
+    await new Promise((resolve:any, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    db.close();
+  } catch (err) {
+    console.error("Failed to save textItems to IndexedDB", err);
+  }
 }, []);
 
 
@@ -83,7 +129,7 @@ const removeSelectedText  = useCallback((opts: any) => {
     updatedItems = updatedItems.filter((_, i) => !selectedTextIndexes.includes(i));
 
     setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems);
+    saveTextItemsToIndexedDB(updatedItems);
 
     // Update only visible page's text items
     const visibleItems = updatedItems.filter((item) => item.index === activePage);
@@ -100,7 +146,7 @@ const removeSelectedText  = useCallback((opts: any) => {
     updatedItems = updatedItems.filter((_, i) => i !== selectedTextIndex);
 
     setTextItems(updatedItems);
-    saveTextItemsToLocalStorage(updatedItems);
+    saveTextItemsToIndexedDB(updatedItems);
 
     const visibleItems = updatedItems.filter((item) => item.index === activePage);
     updatePageItems('textItems', visibleItems);
@@ -332,7 +378,7 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     editingIndex, setEditingIndex,
     editingFontSize, setEditingFontSize,
     newFontSize, setNewFontSize,
-    saveTextItemsToLocalStorage,
+    saveTextItemsToIndexedDB,
     removeSelectedText,
     wrapTextPreservingNewlinesResponsive,
     wrapTextResponsive,

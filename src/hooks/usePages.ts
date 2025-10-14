@@ -28,8 +28,8 @@ export function usePages() {
       setResizingImageIndex,
       setTextItems,
       setImageItems,
-      saveTextItemsToLocalStorage,
-      saveImageItemsToLocalStorage,
+      saveTextItemsToIndexedDB,
+      saveImageItemsToIndexedDB,
       purgeUndoRedoForRemovedPage,
       textItems,
       imageItems,
@@ -116,8 +116,8 @@ export function usePages() {
   setPages(nextPages);
   setTextItems(nextTextItems);
   setImageItems(nextImageItems);
-  saveTextItemsToLocalStorage?.(nextTextItems);
-  saveImageItemsToLocalStorage?.(nextImageItems);
+  saveTextItemsToIndexedDB?.(nextTextItems);
+  saveImageItemsToIndexedDB?.(nextImageItems);
 
   // Undo/redo stacks purge for removed page (if you maintain per-page history)
   try {
@@ -173,17 +173,30 @@ export function usePages() {
   }
 
   // Load once on mount
-  useEffect(() => {
-    const stored = loadPages();
-    if (stored) {
+useEffect(() => {
+  let cancelled = false;
+
+  (async () => {
+    try {
+      const stored = await loadPages();     // <-- now async (IndexedDB)
       const normalized = normalizePages(stored);
-      setPages(normalized);
-      setActivePage(0); // or keep last active page if you store it separately
-    } else {
-      setPages([{ textItems: [], imageItems: [] }]);
-      setActivePage(0);
+
+      if (!cancelled) {
+        setPages(normalized);
+        // pick a safe active page within bounds
+        setActivePage(normalized.length > 0 ? Math.min(0, normalized.length - 1) : 0);
+      }
+    } catch {
+      if (!cancelled) {
+        // fall back to one blank page if anything goes wrong
+        setPages([{ textItems: [], imageItems: [] }]);
+        setActivePage(0);
+      }
     }
-  }, []);
+  })();
+
+  return () => { cancelled = true; };
+}, []);
   
 
   // Persist whenever pages change
