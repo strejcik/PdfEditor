@@ -1063,11 +1063,85 @@ function unclip(pdfPage) {
   pdfPage.pushOperators(popGraphicsState());
 }
 
+// --- Helpers you can place above saveAllPagesAsPDF() ---
+
+// Draw an SVG data URI onto an offscreen canvas and return PNG bytes (Uint8Array)
+async function rasterizeSvgDataUriToPngBytes(svgDataUri, width, height, background = "white") {
+  return new Promise((resolve, reject) => {
+    try {
+      const img = new Image();
+      // data: URIs are same-origin; no crossOrigin needed
+      img.onload = async () => {
+        const w = Number(width)  || img.naturalWidth  || 1024;
+        const h = Number(height) || img.naturalHeight || Math.round((w * 3) / 4);
+
+        const cvs = document.createElement("canvas");
+        cvs.width = w;
+        cvs.height = h;
+
+        const ctx = cvs.getContext("2d");
+        if (background) {
+          ctx.fillStyle = background;
+          ctx.fillRect(0, 0, w, h);
+        }
+        // draw the SVG at target size
+        ctx.drawImage(img, 0, 0, w, h);
+
+        cvs.toBlob(async (blob) => {
+          if (!blob) return reject(new Error("Canvas toBlob() failed for SVG rasterization"));
+          const ab = await blob.arrayBuffer();
+          resolve(new Uint8Array(ab)); // Uint8Array for pdf-lib
+        }, "image/png", 1.0);
+      };
+      img.onerror = (e) => reject(new Error("Failed to decode SVG image"));
+      img.src = svgDataUri;
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function isSvgDataUri(src) {
+  return typeof src === "string" && /^data:image\/svg\+xml/i.test(src);
+}
+
+function isJpegLike(src) {
+  return typeof src === "string" && (/^data:image\/jpe?g/i.test(src) || /\.jpe?g(\?.*)?$/i.test(src));
+}
+
+// Existing helper assumed in your code; keep as-is.
+// If you don’t have it, implement a version that fetches http(s) and decodes non-SVG data URIs.
+async function loadArrayBuffer(urlOrDataUri) {
+  if (typeof urlOrDataUri !== "string") throw new Error("Invalid src");
+  if (urlOrDataUri.startsWith("data:")) {
+    // Generic data: URI decode (non-SVG). svg is handled elsewhere.
+    const m = urlOrDataUri.match(/^data:([^;]+);base64,(.*)$/);
+    if (!m) {
+      // try non-base64 data URIs
+      const comma = urlOrDataUri.indexOf(",");
+      const raw = decodeURIComponent(urlOrDataUri.slice(comma + 1));
+      const encoder = new TextEncoder();
+      return encoder.encode(raw).buffer;
+    }
+    const b64 = m[2];
+    const binStr = atob(b64);
+    const len = binStr.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binStr.charCodeAt(i);
+    return bytes.buffer;
+  }
+  const res = await fetch(urlOrDataUri, { cache: "force-cache" });
+  if (!res.ok) throw new Error(`Failed to fetch: ${urlOrDataUri}`);
+  return await res.arrayBuffer();
+}
+
+// --- Your modified function ---
 async function saveAllPagesAsPDF() {
-    const canvas = canvasRefs.current[activePage];
+  const canvas = canvasRefs.current[activePage];
   const rect  = canvas.getBoundingClientRect();
   const ctx = canvas.getContext('2d');
-// Helper: resolve text draw position (x, topY) and metrics in CSS units
+
+  // Helper: resolve text draw position (x, topY) and metrics in CSS units
   const resolveTextLayout = (item) => {
     const fontSize   = Number(item.fontSize) || 16;
     const fontFamily = item.fontFamily || "Lato";
@@ -1115,8 +1189,6 @@ async function saveAllPagesAsPDF() {
     };
   };
 
-
-
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit?.(fontkit);
 
@@ -1162,7 +1234,7 @@ async function saveAllPagesAsPDF() {
       // Baseline so glyph top == yTop
       const baseline = H - yTop - L.textHeight;
 
-     pdfPage.drawText(text, {
+      pdfPage.drawText(text, {
         x: xTop,
         y: baseline,
         size,
@@ -1180,20 +1252,33 @@ async function saveAllPagesAsPDF() {
       });
     }
 
-    // ---- IMAGES (top-left canvas → bottom-left PDF) ----
+    // ---- IMAGES (supports data:image/svg+xml;base64) ----
     for (const item of imageItems) {
-      let L = resolveTextLayout(item)
       const src = item.data || item.src;
       if (!src || typeof src !== "string") continue;
 
       const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
+      const drawW = Number(item.width)  || Math.round((item.widthNorm ?? 0) * W);
+      const drawH = Number(item.height) || Math.round((item.heightNorm ?? 0) * H);
 
-      const bytes = await loadArrayBuffer(src);
-      const isJpg = /^data:image\/jpeg/i.test(src) || /\.jpe?g$/i.test(src);
-      const pdfImage = isJpg ? await pdfDoc.embedJpg(bytes) : await pdfDoc.embedPng(bytes);
-
-      const drawW = item.width;
-      const drawH = item.height;
+      let pdfImage;
+      try {
+        if (isSvgDataUri(src)) {
+          // Rasterize SVG → PNG bytes at the intended output size
+          const pngBytesU8 = await rasterizeSvgDataUriToPngBytes(src, drawW || 1024, drawH || 768, "white");
+          pdfImage = await pdfDoc.embedPng(pngBytesU8);
+        } else {
+          // Regular JPEG/PNG data URI or URL
+          const bytes = await loadArrayBuffer(src);
+          pdfImage = isJpegLike(src)
+            ? await pdfDoc.embedJpg(bytes)
+            : await pdfDoc.embedPng(bytes);
+        }
+      } catch (e) {
+        // As a last resort, skip this image instead of breaking export
+        console.warn("Image embed failed:", e);
+        continue;
+      }
 
       pdfPage.drawImage(pdfImage, {
         x: xTop,
@@ -1201,15 +1286,16 @@ async function saveAllPagesAsPDF() {
         width: drawW,
         height: drawH,
       });
+
       pageManifest.images.push({
         index: item.index,
-        width: item.width,
-        height: item.height,
+        width: drawW,
+        height: drawH,
         xNorm: +xNorm.toFixed(6),
         yNormTop: +yNormTop.toFixed(6),
         widthNorm: +((drawW) / W).toFixed(6),
         heightNorm: +((drawH) / H).toFixed(6),
-        ref: item.data ?? null,
+        ref: src, // keep original reference (svg/png/jpg)
       });
     }
 
@@ -1239,6 +1325,7 @@ async function saveAllPagesAsPDF() {
   a.click();
   URL.revokeObjectURL(url);
 }
+
 
 
   useEffect(() => {
