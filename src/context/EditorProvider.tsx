@@ -19,7 +19,7 @@ import { usePdf } from "../hooks/usePdf";
 import { useMultiLineMode } from "../hooks/useMultiLineMode";
 import { useMouse } from '../hooks/useMouse';
 import { useKeyboard } from '../hooks/useKeyboard';
-import { useClipboard } from "../hooks/useClipboard";
+import { useShare } from '../hooks/useShare';
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -33,6 +33,7 @@ type EditorContextValue = {
   multiline: ReturnType<typeof useMultiLineMode>;
   mouse: ReturnType<typeof useMouse>;
   keyboard: ReturnType<typeof useKeyboard>;
+  share: ReturnType<typeof useShare>;
 };
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -54,14 +55,18 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const history = useHistory();
   const mouse = useMouse();
   const keyboard = useKeyboard();
+  const share = useShare();
 
   // Keep latest slices in refs so history bindings always read current data
   const textRef = useRef(text);
   const imagesRef = useRef(images);
+  const shareRef = useRef(share)
+  
   useEffect(() => {
     textRef.current = text;
     imagesRef.current = images;
-  }, [text, images]);
+    shareRef.current = share;
+  }, [text, images, share]);
 
   /**
    * 🔁 Re-hydrate text & image stores EVERY TIME pages change.
@@ -115,8 +120,9 @@ useLayoutEffect(() => {
       multiline,
       mouse,
       keyboard,
+      share,
     }),
-    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard]
+    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share]
   );
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;

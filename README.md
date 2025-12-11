@@ -4,6 +4,7 @@ PdfEditor is a web-based PDF editing application built primarily with TypeScript
 
 **Live Demo:**  
 [https://pdf-editor8-19e064251dbf.herokuapp.com/](https://pdf-editor8-19e064251dbf.herokuapp.com/)
+Some features ie. mirroring(via sockets) etc. in demo are not taken into account due to data privacy. To see all the features run app locally.
 
 ## Features
 
@@ -15,6 +16,7 @@ PdfEditor is a web-based PDF editing application built primarily with TypeScript
 - **Rulers and Canvas Tools**: Visual overlays for precise placement with customizable rulers.
 - **Persistence**: Work is saved in browser storage for continuity across sessions.
 - **Custom Fonts**: Uses the Lato font for a clean, readable interface.
+- **Mirroring**: It gives ability for user to share the state/view of his pdf canvas so other users can watch it in real time.
 
 ## Technology Stack
 
@@ -53,12 +55,13 @@ Download pdf2svg: https://github.com/jalios/pdf2svg-windows
 Extract dist-32bits / dist64bits inside PdfEditorServer folder
 ```
 
-### Running the App (Development)
+### Running the App
 
 ```bash
 Client:
 cd PdfEditor
-npm run dev
+npm run build
+npm start
 ```
 
 ```bash

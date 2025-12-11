@@ -1,8 +1,51 @@
 // fonts/loadFontOnce.ts
 
-
 // One cache for all fonts (keyed by family+weight+style+url)
 const _fontPromises = new Map<string, Promise<void>>();
+
+const DEFAULT_FONT_PATH = "/fonts/Lato-Regular.ttf";
+
+/**
+ * Normalize any font URL so it works both in dev and in the built app.
+ *
+ * Handles cases like:
+ *  - "../../../public/fonts/Lato-Regular.ttf"
+ *  - "public/fonts/Lato-Regular.ttf"
+ *  - "/public/fonts/Lato-Regular.ttf"
+ *  - "fonts/Lato-Regular.ttf"
+ *  - "/fonts/Lato-Regular.ttf"
+ *  - absolute ("https://.../Lato.ttf")
+ */
+function resolveFontUrl(url?: string): string {
+  // No URL provided -> use default
+  if (!url) return DEFAULT_FONT_PATH;
+
+  // Already absolute (http/https)
+  if (/^https?:\/\//i.test(url)) return url;
+
+  // Normalize slashes
+  let cleaned = url.replace(/\\/g, "/").trim();
+
+  // If it's already a root-relative /fonts/... just return it
+  if (cleaned.startsWith("/fonts/")) return cleaned;
+
+  // Strip leading ./ or ../ sequences like ./, ../, ../../, etc.
+  cleaned = cleaned.replace(/^(\.{1,2}\/)+/, "");
+
+  // If the path includes "public/", strip everything up to and including "public/"
+  // e.g., "public/fonts/Lato.ttf" -> "fonts/Lato.ttf"
+  //       "../public/fonts/Lato.ttf" (after previous step) -> "fonts/Lato.ttf"
+  cleaned = cleaned.replace(/^public\//, "");
+  cleaned = cleaned.replace(/^\/?public\//, "");
+
+  // At this point, something like "fonts/Lato.ttf" or maybe "assets/fonts/Lato.ttf"
+  // We assume Node serves your build root, so we just make it root-relative
+  if (!cleaned.startsWith("/")) {
+    cleaned = `/${cleaned}`;
+  }
+
+  return cleaned;
+}
 
 /**
  * Load a font exactly once (no React hooks involved).
@@ -11,7 +54,7 @@ const _fontPromises = new Map<string, Promise<void>>();
 export function loadFontOnce(
   {
     family = "Lato",
-    url = "../../../public/fonts/Lato-Regular.ttf",
+    url = DEFAULT_FONT_PATH,
     weight = "400",
     style = "normal",
     format = "truetype", // change to "woff2" if needed
@@ -33,20 +76,22 @@ export function loadFontOnce(
     return Promise.resolve();
   }
 
-  const key = `${family}::${weight}::${style}::${url}::${format}`;
+  const resolvedUrl = resolveFontUrl(url);
+
+  const key = `${family}::${weight}::${style}::${resolvedUrl}::${format}`;
   const cached = _fontPromises.get(key);
   if (cached) return cached;
 
   const promise = (async () => {
     try {
       // Fast path: already available?
-      // Using `check` avoids eagerly loading and is cheap.
-      // Use a generic size (1em) and include weight/style in the check.
       const cssDesc = `${style} normal ${weight} 1em "${family}"`;
-      // Some browsers accept `document.fonts.check(desc)`; others accept `check(size family)`.
-      // We try both patterns safely.
       // @ts-ignore
-      if (document.fonts.check?.(cssDesc) || document.fonts.check?.(`1em "${family}"`)) {
+      if (
+        document.fonts.check?.(cssDesc) ||
+        // @ts-ignore
+        document.fonts.check?.(`1em "${family}"`)
+      ) {
         return;
       }
 
@@ -54,7 +99,7 @@ export function loadFontOnce(
       if ("FontFace" in window) {
         const face = new FontFace(
           family,
-          `url("${url}") format("${format}")`,
+          `url("${resolvedUrl}") format("${format}")`,
           { weight: String(weight), style }
         );
         const loaded = await face.load();
@@ -70,7 +115,7 @@ export function loadFontOnce(
     } catch (err) {
       // Do not throw from a renderer utility; just warn and let canvas draw with fallback font.
       // eslint-disable-next-line no-console
-      console.warn(`[fonts] Failed to load "${family}" from ${url}:`, err);
+      console.warn(`[fonts] Failed to load "${family}" from ${resolvedUrl}:`, err);
     }
   })();
 
@@ -81,19 +126,22 @@ export function loadFontOnce(
 /** Backwards-compatible name if you still call ensureLatoLoadedOnce(...) */
 export function ensureLatoLoadedOnce(
   family: string = "Lato",
-  url: string = "../../../public/fonts/Lato-Regular.ttf",
+  url: string = DEFAULT_FONT_PATH,
   weight: string | number = "400",
   style: string = "normal"
 ): Promise<void> {
+  // NOTE: we still accept the old `url` arg, but normalize it so
+  // "../../../public/fonts/..." will resolve to "/fonts/..."
   return loadFontOnce({ family, url, weight, style, format: "truetype" });
 }
 
 /** Backwards-compatible name if you still call loadLatoOnce(...) */
 export function loadLatoOnce(
-  url: string = "../../../public/fonts/Lato-Regular.ttf",
+  url: string = DEFAULT_FONT_PATH,
   family: string = "Lato",
   weight: string | number = "400",
   style: string = "normal"
 ): Promise<void> {
+  // Same as above: `url` is normalized inside loadFontOnce
   return loadFontOnce({ family, url, weight, style, format: "truetype" });
 }

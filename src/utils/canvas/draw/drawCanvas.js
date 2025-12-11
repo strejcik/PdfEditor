@@ -17,7 +17,7 @@ export async function drawCanvas(pageIndex, opts = {}) {
 
   await ensureLatoLoadedOnce(
     config.APP_FONT_FAMILY || "Lato",
-    "../../../../public/fonts/Lato-Regular.ttf"
+    "/fonts/Lato-Regular.ttf"
   );
 
   const rect = canvas.getBoundingClientRect();

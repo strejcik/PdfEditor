@@ -2,7 +2,6 @@
 import { useCallback, useState } from "react";
 import type { Page, TextItem } from "../types/editor";
 import { DEFAULT_FONT_SIZE, CANVAS_WIDTH as CW_CONST, CANVAS_HEIGHT as CH_CONST } from "../config/constants";
-import {usePages} from '../hooks/usePages'
 import { Canvas2DContext, WrapResult} from '../types/text'
 /**
  * Ensure each TextItem carries normalized coordinates (xNorm/yNormTop).
@@ -32,7 +31,7 @@ function ensureNormalizedCoords<T extends Partial<TextItem>>(it: T, CW: number, 
 export function useTextItems() {
   const CANVAS_WIDTH  = typeof CW_CONST === "number" && CW_CONST > 0 ? CW_CONST : 595; // A4 @ 72 dpi
   const CANVAS_HEIGHT = typeof CH_CONST === "number" && CH_CONST > 0 ? CH_CONST : 842;
-  const pages = usePages();
+  
   // Core item state
   const [textItemsState, _setTextItems] = useState<TextItem[]>([]);
 
