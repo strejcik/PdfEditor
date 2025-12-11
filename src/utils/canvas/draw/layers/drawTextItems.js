@@ -50,7 +50,7 @@ export function drawTextItems(ctx, rect, pageIndex, state /* {textItems, selecte
   ctx.stroke();
   ctx.restore();
 
-    ctx.fillStyle = "black";
+    ctx.fillStyle = item.color;
     ctx.font = `${L.fontSize}px ${L.fontFamily}`;
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";

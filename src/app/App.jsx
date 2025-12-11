@@ -98,10 +98,11 @@ useEffect(() => {
       editingIndex, setEditingIndex,
       editingFontSize, setEditingFontSize,
       newFontSize, setNewFontSize,
+      textColor, setTextColor,
       removeSelectedText, saveTextItemsToIndexedDB,
       wrapTextPreservingNewlinesResponsive, wrapTextResponsive,
       resolveTextLayout,
-      resolveTextLayoutForHit
+      resolveTextLayoutForHit, addTextToCanvas
     },
 
     images: { 
@@ -595,93 +596,7 @@ useEffect(() => {
 
 
   
-// Function to handle adding new text to the canvas
-const addTextToCanvas = () => {
-  if (!newText || newText.trim() === "") return;
 
-  const canvas = canvasRefs.current[activePage];
-  if (!canvas) return;
-
-  const { ctx } = setupCanvasA4(canvasRefs.current[activePage], /* portrait? */ true);
-  if (!ctx) return;
-
-  const fontFamily = "Lato";                 // match what you export with pdf-lib
-  const fontSizeToUse = Number(newFontSize);
-  const padding = Math.round(fontSizeToUse * 0.2);
-
-  // Prepare font for measuring/wrapping
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
-  ctx.font = `${fontSizeToUse}px ${fontFamily}`;
-
-  // Choose an effective maxWidth:
-  // if user provided a sensible one, use it; otherwise pick a safe default
-  const measuredWidth = ctx.measureText(newText).width;
-  const safeDefaultMax = Math.max(measuredWidth + 20, fontSizeToUse * 2);
-  const effectiveMaxWidth =
-    (typeof maxWidth === "number" && maxWidth > fontSizeToUse) ? maxWidth : safeDefaultMax;
-
-  // Wrap into CANVAS coordinates (no PDF conversion here)
-  const lines = wrapText(newText, ctx, {
-    x: 50,                 // starting X (adjust as you like)
-    y: 50,                 // starting Y (adjust as you like)
-    maxWidth: effectiveMaxWidth,
-    fontSize: fontSizeToUse,
-    fontFamily,
-    lineGap: 0,
-  });
-
-  // Build items (top-anchored). We store 'anchor: "top"' for clarity/compat.
-  const itemsToAdd = lines.map((ln) => {
-      const { xNorm, yNormTop } = resolveTopLeft(ln.text, PDF_WIDTH, PDF_HEIGHT);
-    return {
-      text: ln.text,
-      fontSize: newFontSize,
-      boxPadding: padding,
-      x: ln.x,
-      y: ln.y,
-      index: activePage,
-      xNorm: +xNorm.toFixed(6),
-      yNormTop: +yNormTop.toFixed(6),
-      fontFamily
-    }
-  });
-
-
-  // Snapshot BEFORE state change for undo
-  pushSnapshotToUndo(activePage);
-
-// In your handler where you append itemsToAdd
-const nextTextItems = [ ...(textItems || []), ...itemsToAdd.map(it => ({ ...it })) ];
-setTextItems(nextTextItems);
-
-// Use the SAME computed array right away:
-saveTextItemsToIndexedDB?.(nextTextItems);
-
-setPages(prev => {
-  const next = Array.isArray(prev) ? [...prev] : [];
-  const page = next[activePage] || { textItems: [], imageItems: [] };
-
-  // Only items for this page
-  const forThisPage = nextTextItems.filter(it => it.index === activePage);
-
-  next[activePage] = {
-    ...page,
-    textItems: forThisPage.map(it => ({ ...it })), // keep immutable
-    imageItems: page.imageItems || [],
-  };
-  return next;
-});
-
-  // (If you don't have the effect-driven redraw yet, you can force it)
-  // drawCanvas(activePage);
-
-  // Reset modal state
-  setShowAddTextModal(false);
-  setNewText("");
-  setNewFontSize(fontSize);
-  setMaxWidth(200);
-};
 
 
 
@@ -1663,67 +1578,183 @@ async function computeChecksum(obj) {
   return sha256String(canonicalStringify(obj));
 }
 
-// ---------- export with raw checksum ----------
+
+
+
+
+
+
+
+// Helper: open the shared PdfEditorDB (version must match your other code)
+function openEditorDB() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      return reject(new Error("IndexedDB not supported"));
+    }
+    const req = indexedDB.open("PdfEditorDB", 3); // must match your DB_VERSION
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// Helper: read the single "main" record from a given store
+async function loadStoreRecord(storeName) {
+  let db;
+  try {
+    db = await openEditorDB();
+  } catch (e) {
+    // IndexedDB not available
+    return null;
+  }
+
+  try {
+    const tx = db.transaction(storeName, "readonly");
+    const store = tx.objectStore(storeName);
+
+    const record = await new Promise((resolve, reject) => {
+      const r = store.get("main");
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
+    });
+
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
+    });
+
+    return record;
+  } finally {
+    db.close && db.close();
+  }
+}
+
+// Optional: tiny helper to safely parse localStorage if we ever need a fallback
+function safeParse(raw) {
+  if (!raw) return null;
+  try {
+    const first = JSON.parse(raw);
+    if (typeof first === "string") {
+      try {
+        return JSON.parse(first);
+      } catch {
+        return first;
+      }
+    }
+    return first;
+  } catch {
+    return null;
+  }
+}
+
+// Main export: now prefers IndexedDB, not localStorage
 async function exportStateToJson(
   pagesKey = "pages",
   textItemsKey = "textItems",
   imageItemsKey = "imageItems",
   filename = "state.json"
 ) {
-  const safeParse = (raw) => {
-    if (!raw) return null;
-    try {
-      const first = JSON.parse(raw);
-      if (typeof first === "string") { try { return JSON.parse(first); } catch { return first; } }
-      return first;
-    } catch { return null; }
-  };
+  // 1) Try IndexedDB for pages / textItems / imageItems
+  let pages = null;
+  let textItems = [];
+  let imageItems = [];
 
-  const pagesLS = safeParse(localStorage.getItem(pagesKey));
-  const textItemsLS = safeParse(localStorage.getItem(textItemsKey)) || [];
-  const imageItemsLS = safeParse(localStorage.getItem(imageItemsKey)) || [];
+  try {
+    const [pagesRec, textItemsRec, imageItemsRec] = await Promise.all([
+      loadStoreRecord("pages"),
+      loadStoreRecord("textItems"),
+      loadStoreRecord("imageItems"),
+    ]);
 
-  const isPageShape = (p) => p && typeof p === "object" && Array.isArray(p.textItems) && Array.isArray(p.imageItems);
-  let pages = Array.isArray(pagesLS) && pagesLS.every(isPageShape) ? pagesLS : null;
-  if (!pages) {
+    if (pagesRec && Array.isArray(pagesRec.data)) {
+      pages = pagesRec.data;
+    }
+    if (textItemsRec && Array.isArray(textItemsRec.data)) {
+      textItems = textItemsRec.data;
+    }
+    if (imageItemsRec && Array.isArray(imageItemsRec.data)) {
+      imageItems = imageItemsRec.data;
+    }
+  } catch (e) {
+    console.warn("[exportStateToJson] IndexedDB read failed, will try localStorage fallback:", e);
+  }
+
+  // 2) Fallback: localStorage (only if IndexedDB gave us nothing)
+  if (!pages && !textItems.length && !imageItems.length) {
+    const pagesLS = safeParse(localStorage.getItem(pagesKey));
+    const textItemsLS = safeParse(localStorage.getItem(textItemsKey)) || [];
+    const imageItemsLS = safeParse(localStorage.getItem(imageItemsKey)) || [];
+
+    pages = pagesLS || null;
+    textItems = textItemsLS;
+    imageItems = imageItemsLS;
+  }
+
+  // 3) If pages is still not a proper Page[] shape, reconstruct from items
+  const isPageShape = (p) =>
+    p &&
+    typeof p === "object" &&
+    Array.isArray(p.textItems) &&
+    Array.isArray(p.imageItems);
+
+  if (!Array.isArray(pages) || !pages.every(isPageShape)) {
     const maxIndex = Math.max(
       -1,
-      ...textItemsLS.map(t => Number.isFinite(t?.index) ? +t.index : -1),
-      ...imageItemsLS.map(i => Number.isFinite(i?.index) ? +i.index : -1),
+      ...textItems.map((t) =>
+        Number.isFinite(t?.index) ? +t.index : -1
+      ),
+      ...imageItems.map((i) =>
+        Number.isFinite(i?.index) ? +i.index : -1
+      )
     );
+
     const pageCount = Math.max(0, maxIndex + 1);
-    const grouped = Array.from({ length: pageCount }, () => ({ textItems: [], imageItems: [] }));
-    textItemsLS.forEach(t => { const i = Number.isFinite(t?.index) ? +t.index : 0; (grouped[i] ??= {textItems:[],imageItems:[]}).textItems.push(t); });
-    imageItemsLS.forEach(i => { const p = Number.isFinite(i?.index) ? +i.index : 0; (grouped[p] ??= {textItems:[],imageItems:[]}).imageItems.push(i); });
+    const grouped = Array.from({ length: pageCount }, () => ({
+      textItems: [],
+      imageItems: [],
+    }));
+
+    textItems.forEach((t) => {
+      const i = Number.isFinite(t?.index) ? +t.index : 0;
+      (grouped[i] ?? (grouped[i] = { textItems: [], imageItems: [] }))
+        .textItems.push(t);
+    });
+
+    imageItems.forEach((img) => {
+      const p = Number.isFinite(img?.index) ? +img.index : 0;
+      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [] }))
+        .imageItems.push(img);
+    });
+
     pages = grouped;
   }
 
-  // Base payload (no checksums)
+  // 4) Base payload (no checksums)
   const base = {
     version: 2,
     savedAt: new Date().toISOString(),
     pages,
-    textItems: textItemsLS,
-    imageItems: imageItemsLS,
+    textItems,
+    imageItems,
   };
 
-  // Canonical checksum (object-based)
+  // 5) Canonical checksum (object-based)
   const checksum = await computeChecksum(base);
 
-  // Prepare object WITH checksums, but leave checksumRaw blank for now
+  // 6) Prepare object WITH checksums, but leave checksumRaw blank for now
   const withBlank = { ...base, checksum, checksumRaw: "" };
 
   // Serialize once with blank checksumRaw — we will hash this exact text
   const textWithBlank = JSON.stringify(withBlank, null, 2);
 
-  // Raw text checksum (detects any textual edit)
+  // 7) Raw text checksum (detects any textual edit)
   const checksumRaw = await sha256String(textWithBlank);
 
   // Final object
   const finalObj = { ...withBlank, checksumRaw };
   const finalText = JSON.stringify(finalObj, null, 2);
 
-  // Download
+  // 8) Download
   const blob = new Blob([finalText], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1736,6 +1767,7 @@ async function exportStateToJson(
 
   return finalObj;
 }
+
 
 
 
@@ -1846,6 +1878,49 @@ const onJSONChange = async (e) => {
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, c.width, c.height);
   }, []);
+
+
+
+
+  const PRESET_COLORS = [
+  { label: "Black", value: "#000000" },
+  { label: "White", value: "#ffffff" },
+  { label: "Gray", value: "#6b7280" },
+  { label: "Red", value: "#ef4444" },
+  { label: "Orange", value: "#f97316" },
+  { label: "Yellow", value: "#eab308" },
+  { label: "Green", value: "#22c55e" },
+  { label: "Teal", value: "#14b8a6" },
+  { label: "Blue", value: "#3b82f6" },
+  { label: "Indigo", value: "#4f46e5" },
+];
+
+
+function normalizeColor(c) {
+  if (!c) return "#000000";
+
+  // Already a valid 7-char hex? (#rrggbb)
+  if (/^#[0-9A-Fa-f]{6}$/.test(c)) return c;
+
+  // Convert named colors or rgb() to hex
+  const ctx = document.createElement("canvas").getContext("2d");
+  ctx.fillStyle = c;
+
+  const computed = ctx.fillStyle; // returns standardized color value
+
+  // If browser returns something like "rgb(r,g,b)", convert to hex
+  const m = computed.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+  if (m) {
+    const r = Number(m[1]).toString(16).padStart(2, "0");
+    const g = Number(m[2]).toString(16).padStart(2, "0");
+    const b = Number(m[3]).toString(16).padStart(2, "0");
+    return `#${r}${g}${b}`;
+  }
+
+  // Last fallback: return black
+  return "#000000";
+}
+
 
 return (
   <div className="app-shell">
@@ -2472,74 +2547,178 @@ return (
       </div>
     </main>
 
-    {/* Add Text Modal */}
-    {showAddTextModal && (
-      <div className="modal-backdrop">
-        <div className="modal">
-          <h2 className="modal-title">Add New Text</h2>
-          <label className="field-label">Text</label>
-          <input
-            type="text"
-            value={newText}
-            onChange={
-              isViewer ? viewOnly : (e) => setNewText(e.target.value)
-            }
-            placeholder="Enter text here"
-            className="input-text"
-            disabled={isViewer}
-          />
-          <label className="field-label">Font size</label>
-          <input
-            type="number"
-            value={newFontSize}
-            onChange={
-              isViewer
-                ? viewOnly
-                : (e) => setNewFontSize(parseInt(e.target.value, 10))
-            }
-            className="input-text"
-            disabled={isViewer}
-          />
-          <label className="field-label">Max width (px)</label>
-          <input
-            type="number"
-            value={maxWidth}
-            onChange={
-              isViewer
-                ? viewOnly
-                : (e) => setMaxWidth(parseInt(e.target.value, 10))
-            }
-            className="input-text"
-            disabled={isViewer}
-          />
-          <div className="modal-actions">
-            <button
-              className="btn btn-primary"
-              onClick={isViewer ? viewOnly : addTextToCanvas}
-              disabled={isViewer}
-            >
-              Add
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={
-                isViewer
-                  ? viewOnly
-                  : () => {
-                      setShowAddTextModal(false);
-                      setNewText("");
-                      setMaxWidth(200);
-                      setNewFontSize(fontSize);
-                    }
-              }
-              disabled={isViewer}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+   {/* Add Text Modal */}
+{showAddTextModal && (
+  <div className="modal-backdrop">
+    <div className="modal">
+      <h2 className="modal-title">Add New Text</h2>
+
+      {/* Text content */}
+      <label className="field-label">Text</label>
+      <input
+        type="text"
+        value={newText}
+        onChange={isViewer ? viewOnly : (e) => setNewText(e.target.value)}
+        placeholder="Enter text here"
+        className="input-text"
+        disabled={isViewer}
+      />
+
+      {/* Font size */}
+      <label className="field-label">Font size</label>
+      <input
+        type="number"
+        value={newFontSize}
+        onChange={
+          isViewer
+            ? viewOnly
+            : (e) => setNewFontSize(parseInt(e.target.value, 10))
+        }
+        className="input-text"
+        disabled={isViewer}
+      />
+
+      {/* Max width */}
+      <label className="field-label">Max width (px)</label>
+      <input
+        type="number"
+        value={maxWidth}
+        onChange={
+          isViewer
+            ? viewOnly
+            : (e) => setMaxWidth(parseInt(e.target.value, 10))
+        }
+        className="input-text"
+        disabled={isViewer}
+      />
+
+      {/* Full color picker */}
+<label className="field-label">Text color</label>
+
+<div
+  style={{
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 10,
+  }}
+>
+  <input
+    type="color"
+    className="input-color"
+    value={normalizeColor(textColor)}
+    onChange={
+      isViewer
+        ? viewOnly
+        : (e) => setTextColor(normalizeColor(e.target.value))
+    }
+    disabled={isViewer}
+    style={{ width: 40, height: 40, padding: 0, border: "none" }}
+  />
+
+  <div style={{ fontSize: 13, color: "#555" }}>
+    <div style={{ marginBottom: 4 }}>
+      Selected: {normalizeColor(textColor)}
+    </div>
+    <div
+      style={{
+        width: 32,
+        height: 16,
+        borderRadius: 4,
+        border: "1px solid #ccc",
+        background: normalizeColor(textColor),
+      }}
+    />
+  </div>
+</div>
+
+{/* Preset swatch palette */}
+<div style={{ marginBottom: 16 }}>
+  <div style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>
+    Preset colors
+  </div>
+
+  <div
+    style={{
+      display: "flex",
+      flexWrap: "wrap",
+      gap: 8,
+    }}
+  >
+    {PRESET_COLORS.map((c) => (
+      <button
+        key={c.value}
+        type="button"
+        disabled={isViewer}
+        onClick={
+          isViewer
+            ? viewOnly
+            : () => setTextColor(normalizeColor(c.value))
+        }
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "999px",
+          border:
+            normalizeColor(textColor) === normalizeColor(c.value)
+              ? "2px solid #111827"
+              : "1px solid rgba(0,0,0,0.2)",
+          background: normalizeColor(c.value),
+          cursor: isViewer ? "not-allowed" : "pointer",
+        }}
+        title={c.label}
+      />
+    ))}
+  </div>
+</div>
+
+      {/* Actions */}
+      <div className="modal-actions">
+        <button
+          className="btn btn-primary"
+          onClick={
+            isViewer
+              ? viewOnly
+              : () =>
+                  addTextToCanvas({
+                    canvasRefs,
+                    activePage,
+                    setupCanvasA4,
+                    wrapText,
+                    resolveTopLeft,
+                    PDF_WIDTH,
+                    PDF_HEIGHT,
+                    pushSnapshotToUndo,
+                    textItems,
+                    setPages,
+                    fontSize,
+                    // make sure addTextToCanvas ultimately uses `textColor`
+                  })
+          }
+          disabled={isViewer}
+        >
+          Add
+        </button>
+        <button
+          className="btn btn-secondary"
+          onClick={
+            isViewer
+              ? viewOnly
+              : () => {
+                  setShowAddTextModal(false);
+                  setNewText("");
+                  setMaxWidth(200);
+                  setNewFontSize(fontSize);
+                }
+          }
+          disabled={isViewer}
+        >
+          Cancel
+        </button>
       </div>
-    )}
+    </div>
+  </div>
+)}
 
     {/* Edit Text Modal */}
     {isEditing && (

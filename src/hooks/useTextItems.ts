@@ -49,6 +49,8 @@ export function useTextItems() {
   const [editingFontSize, setEditingFontSize] = useState(DEFAULT_FONT_SIZE);
   const [newFontSize, setNewFontSize] = useState(DEFAULT_FONT_SIZE);
 
+  const [textColor, setTextColor] = useState("black");
+
 
 
   /**
@@ -67,6 +69,100 @@ export function useTextItems() {
     [CANVAS_WIDTH, CANVAS_HEIGHT]
   );
 
+
+  // Function to handle adding new text to the canvas
+  const addTextToCanvas = ((opts: any) => {
+    const {
+      canvasRefs, activePage, setupCanvasA4, 
+      wrapText, resolveTopLeft, PDF_WIDTH, PDF_HEIGHT,
+      pushSnapshotToUndo, textItems, setPages, fontSize,
+    } = opts;
+    if (!newText || newText.trim() === "") return;
+  
+    const canvas = canvasRefs.current[activePage];
+    if (!canvas) return;
+  
+    const { ctx } = setupCanvasA4(canvasRefs.current[activePage], /* portrait? */ true);
+    if (!ctx) return;
+  
+    const fontFamily = "Lato";                 // match what you export with pdf-lib
+    const fontSizeToUse = Number(newFontSize);
+    const padding = Math.round(fontSizeToUse * 0.2);
+  
+    // Prepare font for measuring/wrapping
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.font = `${fontSizeToUse}px ${fontFamily}`;
+  
+    // Choose an effective maxWidth:
+    // if user provided a sensible one, use it; otherwise pick a safe default
+    const measuredWidth = ctx.measureText(newText).width;
+    const safeDefaultMax = Math.max(measuredWidth + 20, fontSizeToUse * 2);
+    const effectiveMaxWidth =
+      (typeof maxWidth === "number" && maxWidth > fontSizeToUse) ? maxWidth : safeDefaultMax;
+  
+    // Wrap into CANVAS coordinates (no PDF conversion here)
+    const lines = wrapText(newText, ctx, {
+      x: 50,                 // starting X (adjust as you like)
+      y: 50,                 // starting Y (adjust as you like)
+      maxWidth: effectiveMaxWidth,
+      fontSize: fontSizeToUse,
+      fontFamily,
+      lineGap: 0,
+    });
+  
+    // Build items (top-anchored). We store 'anchor: "top"' for clarity/compat.
+    const itemsToAdd = lines.map((ln:any) => {
+        const { xNorm, yNormTop } = resolveTopLeft(ln.text, PDF_WIDTH, PDF_HEIGHT);
+      return {
+        text: ln.text,
+        fontSize: newFontSize,
+        boxPadding: padding,
+        x: ln.x,
+        y: ln.y,
+        index: activePage,
+        xNorm: +xNorm.toFixed(6),
+        yNormTop: +yNormTop.toFixed(6),
+        fontFamily,
+        color: textColor,
+      }
+    });
+  
+  
+    // Snapshot BEFORE state change for undo
+    pushSnapshotToUndo(activePage);
+  
+  // In your handler where you append itemsToAdd
+  const nextTextItems = [ ...(textItems || []), ...itemsToAdd.map((it:any) => ({ ...it })) ];
+  setTextItems(nextTextItems);
+  
+  // Use the SAME computed array right away:
+  saveTextItemsToIndexedDB?.(nextTextItems);
+  
+  setPages((prev:any) => {
+    const next = Array.isArray(prev) ? [...prev] : [];
+    const page = next[activePage] || { textItems: [], imageItems: [] };
+  
+    // Only items for this page
+    const forThisPage = nextTextItems.filter(it => it.index === activePage);
+  
+    next[activePage] = {
+      ...page,
+      textItems: forThisPage.map(it => ({ ...it })), // keep immutable
+      imageItems: page.imageItems || [],
+    };
+    return next;
+  });
+  
+    // (If you don't have the effect-driven redraw yet, you can force it)
+    // drawCanvas(activePage);
+  
+    // Reset modal state
+    setShowAddTextModal(false);
+    setNewText("");
+    setNewFontSize(fontSize);
+    setMaxWidth(200);
+  });
 
 
 
@@ -377,6 +473,7 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     editingIndex, setEditingIndex,
     editingFontSize, setEditingFontSize,
     newFontSize, setNewFontSize,
+    textColor, setTextColor,
     saveTextItemsToIndexedDB,
     removeSelectedText,
     wrapTextPreservingNewlinesResponsive,
@@ -385,5 +482,6 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     resolveTextLayoutForHit,
     // hydration
     hydrateFromPages,
+    addTextToCanvas
   };
 }

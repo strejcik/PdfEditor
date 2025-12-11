@@ -11,6 +11,7 @@ export type TextItem = {
   anchor: string;
   xNorm: number;
   yNormTop: number;
+  color: string,
 };
 
 export type ImageItem = {
