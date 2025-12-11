@@ -18,20 +18,6 @@ import {
   PDFDocument, StandardFonts, rgb
 } from "pdf-lib";
 
-const btnStyle = {
-  display: 'block',
-  width: '100%',
-  padding: '10px 12px',
-  marginBottom: '8px',
-  backgroundColor: '#007BFF',
-  color: '#fff',
-  border: 'none',
-  borderRadius: '4px',
-  fontSize: '14px',
-  cursor: 'pointer',
-  transition: 'background-color 0.2s ease',
-};
-
 
 const App = () => {
   const fontSize = DEFAULT_FONT_SIZE;
@@ -1862,267 +1848,288 @@ const onJSONChange = async (e) => {
   }, []);
 
 return (
-  <div
-    style={{
-      display: "flex",
-      height: "100vh",         // lock viewport height
-      overflow: "hidden",      // prevent page-level scroll
-      fontFamily: "Arial, sans-serif",
-      background: "#fafbfc",
-    }}
-  >
+  <div className="app-shell">
     {/* Sidebar (left) */}
-    <aside
-      style={{
-        width: 260,
-        backgroundColor: "#f4f6f8",
-        padding: "20px 10px",
-        borderRight: "1px solid #ddd",
-        display: "flex",
-        flexDirection: "column",
-        overflowY: "auto",
-        boxShadow: "2px 0 6px rgba(0,0,0,0.05)",
-        scrollbarWidth: "thin",
-        flexShrink: 0, // don't shrink
-      }}
-    >
-      <h2 style={{ margin: 0, fontSize: 20, color: "#333" }}>📄 PdfEditor</h2>
+    <aside className="sidebar">
+      {/* Sidebar header */}
+      <div className="sidebar-header">
+        <div className="sidebar-title">
+          <span className="sidebar-logo">📄</span>
+          <div>
+            <div className="sidebar-title-main">PdfEditor</div>
+            <div className="sidebar-title-sub">Live collaborate & annotate</div>
+          </div>
+        </div>
 
-      {mode !== "viewer" && (
-        <button
-          onClick={isViewer ? viewOnly : onStartShare}
-          disabled={isViewer}
-        >
-          {mode === "host" ? "Sharing…" : "Share"}
-        </button>
-      )}
-      {mode === "host" && <span style={{ marginLeft: 8 }}>Room: {roomId}</span>}
-      {isViewer && <span style={{ marginLeft: 8, color: "tomato" }}>VIEW-ONLY</span>}
-
-      {[
-        {
-          title: "PDF",
-          icon: "📂",
-          content: (
-            <>
-              <input
-                type="file"
-                accept="application/pdf"
-                onChange={isViewer ? viewOnly : handleFileChange}
-                style={{ marginBottom: 10, width: "100%" }}
-                disabled={isViewer}
-              />
-              <button
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : uploadPdfToServer}
-                disabled={isViewer}
-              >
-                Upload PDF
-              </button>
-              <button
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : saveAllPagesAsPDF}
-                disabled={isViewer}
-              >
-                Save as PDF
-              </button>
-            </>
-          ),
-        },
-        {
-          title: "Pages",
-          icon: "📄",
-          content: (
-            <>
-              <button
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : addNewPage}
-                disabled={isViewer}
-              >
-                Add Page
-              </button>
-              <button
-                style={btnStyle}
-                onClick={
-                  isViewer
-                    ? viewOnly
-                    : () =>
-                        removePage({
-                          setSelectedTextIndexes,
-                          setSelectedTextIndex,
-                          setIsTextSelected,
-                          setSelectionStart,
-                          setSelectionEnd,
-                          setIsSelecting,
-                          setIsDragging,
-                          setIsImageDragging,
-                          setDraggedImageIndex,
-                          setResizingImageIndex,
-                          setTextItems,
-                          setImageItems,
-                          saveTextItemsToIndexedDB,
-                          saveImageItemsToIndexedDB,
-                          purgeUndoRedoForRemovedPage,
-                          textItems,
-                          imageItems,
-                          isTextBoxEditEnabled,
-                          textBox,
-                          activePage,
-                          isMultilineMode,
-                          canvasRefs,
-                          mlConfig,
-                          mlCaret,
-                          mlAnchor,
-                          mlPreferredX,
-                          mlText,
-                          mlCaretBlink,
-                          isMlDragging,
-                          fontSize,
-                          wrapTextPreservingNewlinesResponsive,
-                          resolveTextLayout,
-                          layoutMultiline,
-                          setMlPreferredX,
-                          showGrid,
-                          APP_FONT_FAMILY,
-                          drawCanvas,
-                        })
-                }
-                disabled={isViewer}
-              >
-                Remove Page
-              </button>
-            </>
-          ),
-        },
-        {
-          title: "Text",
-          icon: "🔤",
-          content: (
-            <>
-              <button
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : () => setShowAddTextModal(true)}
-                disabled={isViewer}
-              >
-                Add Text
-              </button>
-              <button
-                style={{
-                  ...btnStyle,
-                  opacity:
-                    selectedTextIndex === null &&
-                    selectedTextIndexes.length < 1
-                      ? 0.5
-                      : 1,
-                }}
-                onClick={
-                  isViewer
-                    ? viewOnly
-                    : () =>
-                        removeSelectedText({
-                          updatePageItems,
-                          activePage,
-                        })
-                }
-                disabled={
-                  isViewer ||
-                  (selectedTextIndex === null &&
-                    selectedTextIndexes.length < 1)
-                }
-              >
-                Remove Text
-              </button>
-              <button
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : toggleGrid}
-                disabled={isViewer}
-              >
-                {showGrid ? "Hide Grid" : "Show Grid"}
-              </button>
-            </>
-          ),
-        },
-        {
-          title: "Images",
-          icon: "🖼️",
-          content: (
-            <>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={
-                  isViewer
-                    ? viewOnly
-                    : (e) => {
-                        handleAddImage(e, activePage, setPages);
-                      }
-                }
-                style={{ marginBottom: 10, width: "100%" }}
-                disabled={isViewer}
-              />
-              <button
-                style={{
-                  ...btnStyle,
-                  opacity: selectedImageIndex === null ? 0.5 : 1,
-                }}
-                onClick={isViewer ? viewOnly : deleteSelectedImage}
-                disabled={isViewer || selectedImageIndex === null}
-              >
-                Delete Image
-              </button>
-            </>
-          ),
-        },
-        {
-          title: "TextBox",
-          icon: "📝",
-          content: (
+        <div className="sidebar-share-row">
+          {mode !== "viewer" && (
             <button
-              style={btnStyle}
-              onClick={
-                isViewer
-                  ? viewOnly
-                  : () => {
-                      setIsTextBoxEditEnabled((prev) => !prev);
-                      if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
-                      setTextBox(null);
-                    }
-              }
+              className="btn btn-primary btn-share"
+              onClick={isViewer ? viewOnly : onStartShare}
               disabled={isViewer}
             >
-              {isTextBoxEditEnabled ? "Save TextBox" : "Enable TextBox Edit"}
+              {mode === "host" ? "Sharing…" : "Share workspace"}
             </button>
-          ),
-        },
-        {
-          title: "History",
-          icon: "⏪",
-          content: (
-            <>
+          )}
+          {mode === "host" && (
+            <div className="badge badge-room">Room: {roomId}</div>
+          )}
+          {isViewer && (
+            <div className="badge badge-viewer">VIEW-ONLY</div>
+          )}
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div className="sidebar-divider" />
+
+      {/* Sidebar sections */}
+      <div className="sidebar-sections">
+        {[
+          {
+            title: "PDF",
+            icon: "📂",
+            description: "Import and export your PDF document.",
+            content: (
+              <>
+                <label className="field-label">Upload PDF</label>
+                <input
+                  className="input-file"
+                  type="file"
+                  accept="application/pdf"
+                  onChange={isViewer ? viewOnly : handleFileChange}
+                  disabled={isViewer}
+                />
+                <div className="btn-row">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={isViewer ? viewOnly : uploadPdfToServer}
+                    disabled={isViewer}
+                  >
+                    Upload to server
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={isViewer ? viewOnly : saveAllPagesAsPDF}
+                    disabled={isViewer}
+                  >
+                    Export as PDF
+                  </button>
+                </div>
+              </>
+            ),
+          },
+          {
+            title: "Pages",
+            icon: "📄",
+            description: "Manage pages in your document.",
+            content: (
+              <>
+                <div className="btn-row">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={isViewer ? viewOnly : addNewPage}
+                    disabled={isViewer}
+                  >
+                    Add Page
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={
+                      isViewer
+                        ? viewOnly
+                        : () =>
+                            removePage({
+                              setSelectedTextIndexes,
+                              setSelectedTextIndex,
+                              setIsTextSelected,
+                              setSelectionStart,
+                              setSelectionEnd,
+                              setIsSelecting,
+                              setIsDragging,
+                              setIsImageDragging,
+                              setDraggedImageIndex,
+                              setResizingImageIndex,
+                              setTextItems,
+                              setImageItems,
+                              saveTextItemsToIndexedDB,
+                              saveImageItemsToIndexedDB,
+                              purgeUndoRedoForRemovedPage,
+                              textItems,
+                              imageItems,
+                              isTextBoxEditEnabled,
+                              textBox,
+                              activePage,
+                              isMultilineMode,
+                              canvasRefs,
+                              mlConfig,
+                              mlCaret,
+                              mlAnchor,
+                              mlPreferredX,
+                              mlText,
+                              mlCaretBlink,
+                              isMlDragging,
+                              fontSize,
+                              wrapTextPreservingNewlinesResponsive,
+                              resolveTextLayout,
+                              layoutMultiline,
+                              setMlPreferredX,
+                              showGrid,
+                              APP_FONT_FAMILY,
+                              drawCanvas,
+                            })
+                    }
+                    disabled={isViewer}
+                  >
+                    Remove Page
+                  </button>
+                </div>
+              </>
+            ),
+          },
+          {
+            title: "Text",
+            icon: "🔤",
+            description: "Add and manage text items.",
+            content: (
+              <>
+                <div className="btn-row">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={
+                      isViewer ? viewOnly : () => setShowAddTextModal(true)
+                    }
+                    disabled={isViewer}
+                  >
+                    Add Text
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={
+                      isViewer
+                        ? viewOnly
+                        : () =>
+                            removeSelectedText({
+                              updatePageItems,
+                              activePage,
+                            })
+                    }
+                    disabled={
+                      isViewer ||
+                      (selectedTextIndex === null &&
+                        selectedTextIndexes.length < 1)
+                    }
+                    style={{
+                      opacity:
+                        selectedTextIndex === null &&
+                        selectedTextIndexes.length < 1
+                          ? 0.5
+                          : 1,
+                    }}
+                  >
+                    Remove Selected
+                  </button>
+                </div>
+                <div className="toggle-row">
+                  <label className="toggle-label">
+                    <input
+                      type="checkbox"
+                      checked={showGrid}
+                      onChange={isViewer ? viewOnly : toggleGrid}
+                      disabled={isViewer}
+                    />
+                    <span>Show grid</span>
+                  </label>
+                </div>
+              </>
+            ),
+          },
+          {
+            title: "Images",
+            icon: "🖼️",
+            description: "Insert and manage images.",
+            content: (
+              <>
+                <label className="field-label">Upload Image</label>
+                <input
+                  className="input-file"
+                  type="file"
+                  accept="image/*"
+                  onChange={
+                    isViewer
+                      ? viewOnly
+                      : (e) => {
+                          handleAddImage(e, activePage, setPages);
+                        }
+                  }
+                  disabled={isViewer}
+                />
+                <button
+                  className="btn btn-secondary"
+                  onClick={isViewer ? viewOnly : deleteSelectedImage}
+                  disabled={isViewer || selectedImageIndex === null}
+                  style={{
+                    opacity: selectedImageIndex === null ? 0.5 : 1,
+                    marginTop: 8,
+                  }}
+                >
+                  Delete Selected
+                </button>
+              </>
+            ),
+          },
+          {
+            title: "TextBox",
+            icon: "📝",
+            description: "Edit multi-line textbox content.",
+            content: (
               <button
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : handleUndo}
+                className="btn btn-secondary"
+                onClick={
+                  isViewer
+                    ? viewOnly
+                    : () => {
+                        setIsTextBoxEditEnabled((prev) => !prev);
+                        if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
+                        setTextBox(null);
+                      }
+                }
                 disabled={isViewer}
               >
-                Undo
+                {isTextBoxEditEnabled ? "Save TextBox" : "Enable TextBox Edit"}
               </button>
+            ),
+          },
+          {
+            title: "History",
+            icon: "⏪",
+            description: "Undo / redo recent changes.",
+            content: (
+              <div className="btn-row">
+                <button
+                  className="btn btn-secondary"
+                  onClick={isViewer ? viewOnly : handleUndo}
+                  disabled={isViewer}
+                >
+                  Undo
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={isViewer ? viewOnly : handleRedo}
+                  disabled={isViewer}
+                >
+                  Redo
+                </button>
+              </div>
+            ),
+          },
+          {
+            title: "MultiLine Mode",
+            icon: "║",
+            description: "Switch multiline input mode.",
+            content: (
               <button
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : handleRedo}
-                disabled={isViewer}
-              >
-                Redo
-              </button>
-            </>
-          ),
-        },
-        {
-          title: "MultiLine Mode",
-          icon: "║",
-          content: (
-            <>
-              <button
-                style={btnStyle}
+                className="btn btn-secondary"
                 onClick={
                   isViewer
                     ? viewOnly
@@ -2147,55 +2154,52 @@ return (
                 disabled={isViewer}
               >
                 {isMultilineMode
-                  ? "Exit Multi-line mode"
-                  : "Multi-line mode"}
+                  ? "Exit Multi-line Mode"
+                  : "Enter Multi-line Mode"}
               </button>
-            </>
-          ),
-        },
-        {
-          title: "State",
-          icon: "💾",
-          content: (
-            <>
+            ),
+          },
+          {
+            title: "State",
+            icon: "💾",
+            description: "Save and load editor state as JSON.",
+            content: (
+              <>
+                <div className="btn-row">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={isViewer ? viewOnly : () => exportStateToJson()}
+                    disabled={isViewer}
+                  >
+                    Save JSON
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={isViewer ? viewOnly : onJsonPick}
+                    disabled={isViewer}
+                  >
+                    Load JSON
+                  </button>
+                </div>
+                <input
+                  ref={jsonRef}
+                  type="file"
+                  accept="application/json"
+                  style={{ display: "none" }}
+                  onChange={isViewer ? viewOnly : onJSONChange}
+                  disabled={isViewer}
+                />
+              </>
+            ),
+          },
+          {
+            title: "Data",
+            icon: "🗑️",
+            description: "Reset all persistent data.",
+            content: (
               <button
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : () => exportStateToJson()}
-                disabled={isViewer}
-              >
-                Save as JSON
-              </button>
-
-              <input
-                ref={jsonRef}
-                type="file"
-                accept="application/json"
-                style={{ display: "none" }}
-                onChange={isViewer ? viewOnly : onJSONChange}
-                disabled={isViewer}
-              />
-              <button
-                type="button"
-                style={btnStyle}
-                onClick={isViewer ? viewOnly : onJsonPick}
-                disabled={isViewer}
-              >
-                Load JSON
-              </button>
-            </>
-          ),
-        },
-        {
-          title: "Data",
-          icon: "🗑️",
-          content: (
-            <>
-              <button
-                style={{
-                  ...btnStyle,
-                  backgroundColor: "#ff4d4f",
-                  color: "white",
-                }}
+                className="btn btn-danger"
                 onClick={
                   isViewer
                     ? viewOnly
@@ -2234,68 +2238,61 @@ return (
                 }
                 disabled={isViewer}
               >
-                Clear Data
+                Clear All Data
               </button>
-            </>
-          ),
-        },
-      ].map((section, idx) => (
-        <div key={idx} style={{ marginTop: 20 }}>
-          <h4
-            style={{
-              marginBottom: 10,
-              color: "#333",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              cursor: "pointer",
-            }}
-            onClick={
-              isViewer
-                ? viewOnly
-                : () =>
-                    setOpenSections((prev) => ({
-                      ...prev,
-                      [section.title]: !prev[section.title],
-                    }))
-            }
-          >
-            <span>{section.icon}</span>
-            <span>{section.title}</span>
-          </h4>
-          {openSections[section.title] && (
-            <div style={{ paddingLeft: 8 }}>{section.content}</div>
-          )}
-        </div>
-      ))}
+            ),
+          },
+        ].map((section, idx) => (
+          <div key={idx} className="sidebar-section">
+            <button
+              className="section-header"
+              onClick={
+                isViewer
+                  ? viewOnly
+                  : () =>
+                      setOpenSections((prev) => ({
+                        ...prev,
+                        [section.title]: !prev[section.title],
+                      }))
+              }
+              type="button"
+            >
+              <div className="section-header-main">
+                <span className="section-icon">{section.icon}</span>
+                <span className="section-title">{section.title}</span>
+              </div>
+              <span className="section-chevron">
+                {openSections[section.title] ? "▴" : "▾"}
+              </span>
+            </button>
+            {openSections[section.title] && (
+              <div className="section-body">
+                {section.description && (
+                  <div className="section-description">
+                    {section.description}
+                  </div>
+                )}
+                {section.content}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </aside>
 
     {/* Main (right) */}
-    <main
-      style={{
-        flex: 1,
-        minWidth: 0, // important to prevent overflow with flex children
-        overflow: "auto",
-        padding: 20,
-      }}
-    >
-      <div
-        style={{
-          position: "relative",
-          display: "grid",
-          gridTemplateColumns: "1fr",
-          justifyContent: "start",
-          alignContent: "start",
-          gap: 35,
-        }}
-      >
+    <main className="main-content">
+      <div className="pages-grid">
         {pageList.map((_, index) => {
           const isActive = activePage === index;
+          const canvasEl = canvasRefs.current[index];
 
           const pageWrapStyle = {
             position: "relative",
             display: "inline-block",
-            boxShadow: "0 0 0 1px #ddd",
+            boxShadow: "0 0 0 1px #e5e7eb",
+            borderRadius: 8,
+            background: "#f9fafb",
           };
 
           const canvasStyle = {
@@ -2303,24 +2300,18 @@ return (
             width: CANVAS_WIDTH,
             height: CANVAS_HEIGHT,
             backgroundColor: "white",
-            border: isActive ? "1px solid dodgerblue" : "1px solid #ccc",
+            border: isActive ? "1px solid #3b82f6" : "1px solid #d1d5db",
             userSelect: "none",
             MozUserSelect: "none",
             WebkitUserSelect: "none",
             pointerEvents: "auto",
           };
 
-          const overlayWrapStyle = {
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-            zIndex: 5,
-          };
-
           return (
             <div
               key={index}
               style={pageWrapStyle}
+              className={`page-wrapper ${isActive ? "page-wrapper-active" : ""}`}
               onClick={isViewer ? viewOnly : () => setActivePage(index)}
             >
               <canvas
@@ -2466,10 +2457,11 @@ return (
                 onDoubleClick={isViewer ? viewOnly : handleDoubleClick}
               />
 
-              {isActive && (
-                <div style={overlayWrapStyle}>
+              {/* Only render RulerOverlay when canvas is ready */}
+              {isActive && canvasEl && (
+                <div className="ruler-overlay-container">
                   <RulerOverlay
-                    canvasRef={{ current: canvasRefs.current[index] }}
+                    canvasRef={{ current: canvasEl }}
                     zoom={1}
                   />
                 </div>
@@ -2482,139 +2474,123 @@ return (
 
     {/* Add Text Modal */}
     {showAddTextModal && (
-      <div
-        style={{
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          backgroundColor: "white",
-          padding: 20,
-          border: "1px solid #ccc",
-          boxShadow: "0px 0px 10px rgba(0, 0, 0, 0.1)",
-          zIndex: 1000,
-        }}
-      >
-        <h2>Add New Text</h2>
-        <input
-          type="text"
-          value={newText}
-          onChange={
-            isViewer ? viewOnly : (e) => setNewText(e.target.value)
-          }
-          placeholder="Enter text here"
-          style={{ marginBottom: 10, display: "block", width: "100%" }}
-          disabled={isViewer}
-        />
-        <input
-          type="number"
-          value={newFontSize}
-          onChange={
-            isViewer
-              ? viewOnly
-              : (e) => setNewFontSize(parseInt(e.target.value, 10))
-          }
-          placeholder="Font Size"
-          style={{ marginBottom: 10, display: "block", width: "100%" }}
-          disabled={isViewer}
-        />
-        <input
-          type="number"
-          value={maxWidth}
-          onChange={
-            isViewer
-              ? viewOnly
-              : (e) => setMaxWidth(parseInt(e.target.value, 10))
-          }
-          placeholder="Enter max width (e.g., 200)"
-          style={{ marginBottom: 10, display: "block", width: "100%" }}
-          disabled={isViewer}
-        />
-        <div>
-          <button
-            onClick={isViewer ? viewOnly : addTextToCanvas}
+      <div className="modal-backdrop">
+        <div className="modal">
+          <h2 className="modal-title">Add New Text</h2>
+          <label className="field-label">Text</label>
+          <input
+            type="text"
+            value={newText}
+            onChange={
+              isViewer ? viewOnly : (e) => setNewText(e.target.value)
+            }
+            placeholder="Enter text here"
+            className="input-text"
             disabled={isViewer}
-          >
-            Ok
-          </button>
-          <button
-            onClick={
+          />
+          <label className="field-label">Font size</label>
+          <input
+            type="number"
+            value={newFontSize}
+            onChange={
               isViewer
                 ? viewOnly
-                : () => {
-                    setShowAddTextModal(false);
-                    setNewText("");
-                    setMaxWidth(200);
-                    setNewFontSize(fontSize);
-                  }
+                : (e) => setNewFontSize(parseInt(e.target.value, 10))
             }
-            style={{ marginLeft: 10 }}
+            className="input-text"
             disabled={isViewer}
-          >
-            Cancel
-          </button>
+          />
+          <label className="field-label">Max width (px)</label>
+          <input
+            type="number"
+            value={maxWidth}
+            onChange={
+              isViewer
+                ? viewOnly
+                : (e) => setMaxWidth(parseInt(e.target.value, 10))
+            }
+            className="input-text"
+            disabled={isViewer}
+          />
+          <div className="modal-actions">
+            <button
+              className="btn btn-primary"
+              onClick={isViewer ? viewOnly : addTextToCanvas}
+              disabled={isViewer}
+            >
+              Add
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={
+                isViewer
+                  ? viewOnly
+                  : () => {
+                      setShowAddTextModal(false);
+                      setNewText("");
+                      setMaxWidth(200);
+                      setNewFontSize(fontSize);
+                    }
+              }
+              disabled={isViewer}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       </div>
     )}
 
     {/* Edit Text Modal */}
     {isEditing && (
-      <div
-        style={{
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          backgroundColor: "white",
-          padding: 20,
-          border: "1px solid #ccc",
-          boxShadow: "0px 0px 10px rgba(0,0,0,0.1)",
-          zIndex: 1000,
-        }}
-      >
-        <h2>Edit Text</h2>
-        <input
-          type="text"
-          value={editingText}
-          onChange={
-            isViewer ? viewOnly : (e) => setEditingText(e.target.value)
-          }
-          placeholder="Edit text here"
-          style={{ marginBottom: 10, display: "block", width: "100%" }}
-          disabled={isViewer}
-        />
-        <input
-          type="number"
-          value={editingFontSize}
-          onChange={
-            isViewer
-              ? viewOnly
-              : (e) =>
-                  setEditingFontSize(parseInt(e.target.value, 10))
-          }
-          placeholder="Font Size"
-          style={{ marginBottom: 10, display: "block", width: "100%" }}
-          disabled={isViewer}
-        />
-        <div>
-          <button
-            onClick={isViewer ? viewOnly : saveEditedText}
+      <div className="modal-backdrop">
+        <div className="modal">
+          <h2 className="modal-title">Edit Text</h2>
+          <label className="field-label">Text</label>
+          <input
+            type="text"
+            value={editingText}
+            onChange={
+              isViewer ? viewOnly : (e) => setEditingText(e.target.value)
+            }
+            className="input-text"
             disabled={isViewer}
-          >
-            Save
-          </button>
-          <button
-            onClick={isViewer ? viewOnly : closeEditModal}
-            style={{ marginLeft: 10 }}
+          />
+          <label className="field-label">Font size</label>
+          <input
+            type="number"
+            value={editingFontSize}
+            onChange={
+              isViewer
+                ? viewOnly
+                : (e) => setEditingFontSize(parseInt(e.target.value, 10))
+            }
+            className="input-text"
             disabled={isViewer}
-          >
-            Cancel
-          </button>
+          />
+          <div className="modal-actions">
+            <button
+              className="btn btn-primary"
+              onClick={isViewer ? viewOnly : saveEditedText}
+              disabled={isViewer}
+            >
+              Save
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={isViewer ? viewOnly : closeEditModal}
+              disabled={isViewer}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       </div>
     )}
   </div>
 );
+
+
 
 
 

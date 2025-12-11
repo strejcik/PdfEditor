@@ -2,12 +2,12 @@ import { useState } from "react";
 
 export function useUiPanels() {
   const [openSections, setOpenSections] = useState({
-    PDF: true,
-    Pages: true,
-    Text: true,
-    Images: true,
-    TextBox: true,
-    History: true,
+    PDF: false,
+    Pages: false,
+    Text: false,
+    Images: false,
+    TextBox: false,
+    History: false,
     Data: false,
   });
 

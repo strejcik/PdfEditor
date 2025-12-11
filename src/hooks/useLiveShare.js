@@ -40,6 +40,15 @@ async function apiPost(path, body, bearer) {
   }
 }
 
+// Helper: exchange room + password for viewerToken
+async function fetchViewerToken(room, password) {
+  const payload = await apiPost("/live/viewer-token", { room, password });
+  if (!payload || !payload.viewerToken) {
+    throw new Error(payload?.error || "Invalid password or room");
+  }
+  return payload.viewerToken;
+}
+
 export function useLiveShare({ getAppState, applyFullState }) {
   const [mode, setMode] = useState("idle"); // "idle" | "host" | "viewer"
   const [roomId, setRoomId] = useState(null);
@@ -55,13 +64,25 @@ export function useLiveShare({ getAppState, applyFullState }) {
 
   // ---------------- Host: create room and broadcast ----------------
   async function startHosting(existingRoomId) {
-    // 1) Create room + tokens
+    // Ask the host for a password (MVP: simple prompt)
+    let password = window.prompt(
+      "Set a password for this room.\nViewers must enter this password to join:",
+      ""
+    );
+    if (password == null) {
+      // Host canceled dialog -> don't create room
+      throw new Error("Room creation cancelled by host");
+    }
+    password = password.trim();
+
+    // 1) Create room + tokens (backend should hash/store password)
     let createPayload;
     try {
       createPayload = await apiPost("/live/create", {
         room: existingRoomId || undefined,
         maxViewers: 25,
         ttlMinutes: 120,
+        password: password || null, // allow empty = no protection if you want
       });
     } catch (e) {
       console.error("[live] /live/create failed:", e);
@@ -70,15 +91,16 @@ export function useLiveShare({ getAppState, applyFullState }) {
 
     const room = createPayload.room;
     const hTok = createPayload.hostToken;
-    const vTok = createPayload.viewerToken;
+    // viewerToken is optional here; we don't expose it in the URL anymore
+    const vTok = createPayload.viewerToken || null;
 
-    if (!room || !hTok || !vTok) {
-      throw new Error("Server did not return room/hostToken/viewerToken");
+    if (!room || !hTok) {
+      throw new Error("Server did not return room/hostToken");
     }
 
     setRoomId(room);
     setHostToken(hTok);
-    setViewerToken(vTok);
+    if (vTok) setViewerToken(vTok);
     setMode("host");
 
     // 2) Join via socket with host token (send both room and roomId to satisfy either handler)
@@ -106,18 +128,18 @@ export function useLiveShare({ getAppState, applyFullState }) {
     return {
       room,
       hostToken: hTok,
-      viewerToken: vTok,
+      viewerToken: vTok, // might be null; we don't put it into the URL
       notifyChange: sendThrottled,
       stop: () => client.disconnect(),
     };
   }
 
   // ---------------- Viewer: subscribe & apply ----------------
-  async function startViewing(room, tokenFromUrl) {
+  async function startViewing(room, tokenFromUrlOrBackend) {
     setRoomId(room);
     setMode("viewer");
 
-    const vTok = tokenFromUrl || viewerToken;
+    const vTok = tokenFromUrlOrBackend || viewerToken;
     if (!vTok) throw new Error("viewer token missing");
 
     const ack = await client.join({ room, asHost: false, token: vTok });
@@ -164,7 +186,9 @@ export function useLiveShare({ getAppState, applyFullState }) {
     // Optional: safety net if the initial full doesn't arrive soon
     setTimeout(() => {
       if (!gotInitial) {
-        console.warn("[live] No initial state received from host yet. Re-requesting full.");
+        console.warn(
+          "[live] No initial state received from host yet. Re-requesting full."
+        );
         if (client.socket && client.socket.emit) {
           client.socket.emit("request_full", { room });
         }
@@ -178,7 +202,7 @@ export function useLiveShare({ getAppState, applyFullState }) {
   useEffect(() => {
     // Host listens for request_full and replies with current full state
     const off = client.on("request_full", (payload) => {
-      if (mode !== "host") return;        // only host should respond
+      if (mode !== "host") return; // only host should respond
       const currentRoom = roomId;
       if (!currentRoom || !payload) return;
 
@@ -195,11 +219,12 @@ export function useLiveShare({ getAppState, applyFullState }) {
     };
   }, [client, mode, roomId, getAppState]);
 
-  function makeViewerLink(room, token) {
+  // Share link NO LONGER contains the viewer token, only room + role
+  function makeViewerLink(room) {
     const url = new URL(window.location.href);
     url.searchParams.set("room", room);
-    url.searchParams.set("role", "viewer"); // not "view"
-    url.searchParams.set("t", token);       // <-- include token
+    url.searchParams.set("role", "viewer");
+    // no token in URL; viewer must enter password to get viewerToken
     return url.toString();
   }
 
@@ -208,12 +233,28 @@ export function useLiveShare({ getAppState, applyFullState }) {
     const sp = new URLSearchParams(window.location.search);
     const role = sp.get("role");
     const room = sp.get("room");
-    const t = sp.get("t");
-    if (role === "viewer" && room && t) {
-      // fire and forget
-      startViewing(room, t).catch((e) =>
-        console.error("[live] viewer join failed", e)
+
+    if (role === "viewer" && room) {
+      // Ask viewer for password
+      let password = window.prompt(
+        "This room is protected.\nPlease enter the room password:",
+        ""
       );
+      if (password == null) {
+        console.warn("[live] viewer cancelled password dialog");
+        return;
+      }
+      password = password.trim();
+
+      // 1) Exchange room + password for a viewerToken
+      fetchViewerToken(room, password)
+        .then((vTok) => startViewing(room, vTok))
+        .catch((e) => {
+          console.error("[live] viewer join failed", e);
+          window.alert(
+            e?.message || "Could not join room. Wrong password or expired room."
+          );
+        });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
