@@ -252,58 +252,256 @@ const removeSelectedText  = useCallback((opts: any) => {
 }, [selectedTextIndexes]);
 
 
-/**
- * Wrap text to a given width while preserving explicit newlines.
- * Returns lines plus the resulting box width/height (with padding).
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const clampPadding = (boxWidth:any, boxHeight:any, requestedPadding:any) => {
+  const w = Math.max(1, boxWidth);
+  const h = Math.max(1, boxHeight);
+  const maxPadX = Math.floor(w / 2) - 1;
+  const maxPadY = Math.floor(h / 2) - 1;
+  const maxPad = Math.max(0, Math.min(maxPadX, maxPadY));
+  return Math.max(0, Math.min(requestedPadding, maxPad));
+};
+
+
+
+
+type Canvas2DContext = CanvasRenderingContext2D;
+
+type WrapResult = {
+  lines: string[];
+  fontSize: number;  // final font size used
+  lineHeight: number;
+  fits: boolean;
+  padding: number;
+};
+
 const wrapTextPreservingNewlinesResponsive = (
   text: string,
   ctx: Canvas2DContext,
-  initialWidth: number,
-  fontSize: number,
-  padding: number = 10
+  boxWidth: number,
+  boxHeight: number,
+  maxFontSize: number,          // << we treat this as "target scaled size"
+  padding: number = 10,
+  minFontSize: number = 6,      // << minimum allowed scale
+  fontFamily?: string,
+  lineGap: number = 4
 ): WrapResult => {
-  const paragraphs = text.split(/\r?\n/);
-  const lines: string[] = [];
-  let maxLineWidth = 0;
+  const raw = String(text ?? "");
 
-  for (const paragraph of paragraphs) {
-    if (paragraph.trim() === '') {
-      lines.push('');
-      continue;
+  const safeW = Math.max(1, boxWidth);
+  const safeH = Math.max(1, boxHeight);
+
+  const safePadding = clampPadding(safeW, safeH, padding);
+
+  const innerW = Math.max(1, safeW - safePadding * 2);
+  const innerH = Math.max(1, safeH - safePadding * 2);
+
+  const family =
+    fontFamily ||
+    (() => {
+      const parts = (ctx.font || "").split(" ");
+      return parts.length >= 2 ? parts.slice(1).join(" ") : "Arial";
+    })();
+
+  const setFont = (size:any) => {
+    ctx.font = `${Math.max(1, size)}px ${family}`;
+  };
+
+  const breakWordToFit = (word:any) => {
+    const out = [];
+    let chunk = "";
+
+    for (let i = 0; i < word.length; i++) {
+      const test = chunk + word[i];
+      if (ctx.measureText(test).width <= innerW) {
+        chunk = test;
+      } else {
+        if (chunk) out.push(chunk);
+        chunk = word[i];
+      }
+    }
+    if (chunk) out.push(chunk);
+    if (out.length === 0 && word.length > 0) out.push(word[0]);
+    return out;
+  };
+
+  const wrapAtCurrentFont = () => {
+    const paragraphs = raw.split(/\r?\n/);
+    const lines = [];
+    let maxLineW = 0;
+
+    for (const paragraph of paragraphs) {
+      if (paragraph.length === 0) {
+        lines.push("");
+        continue;
+      }
+
+      // Preserve whitespace tokens exactly
+      const tokens = paragraph.split(/(\s+)/).filter((t) => t.length > 0);
+      let current = "";
+
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        const isSpace = /^\s+$/.test(tok);
+
+        // Notepad-like: don't start a wrapped line with whitespace
+        if (current === "" && isSpace) continue;
+
+        // Hard-break long token
+        if (!isSpace && ctx.measureText(tok).width > innerW) {
+          if (current) {
+            lines.push(current);
+            maxLineW = Math.max(maxLineW, ctx.measureText(current).width);
+            current = "";
+          }
+          const pieces = breakWordToFit(tok);
+          for (const p of pieces) {
+            lines.push(p);
+            maxLineW = Math.max(maxLineW, ctx.measureText(p).width);
+          }
+          continue;
+        }
+
+        const test = current + tok;
+
+        if (ctx.measureText(test).width <= innerW) {
+          current = test;
+        } else {
+          if (current) {
+            lines.push(current);
+            maxLineW = Math.max(maxLineW, ctx.measureText(current).width);
+          }
+          current = isSpace ? "" : tok;
+        }
+      }
+
+      if (current) {
+        lines.push(current);
+        maxLineW = Math.max(maxLineW, ctx.measureText(current).width);
+      }
     }
 
-    const words = paragraph.split(/\s+/);
-    let currentLine = '';
+    const m = /^(\d+(?:\.\d+)?)px\b/.exec(ctx.font);
+    const fontPx = m ? parseFloat(m[1]) : 1;
+    const lineHeight = fontPx + lineGap;
+    const totalH = lines.length * lineHeight;
 
-    words.forEach((word, index) => {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const testWidth = ctx.measureText(testLine).width;
+    return { lines, maxLineW, totalH, lineHeight };
+  };
 
-      if (testWidth + padding * 2 > initialWidth && currentLine) {
-        lines.push(currentLine);
-        maxLineWidth = Math.max(maxLineWidth, ctx.measureText(currentLine).width);
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
+  const lo0 = Math.max(1, Math.floor(minFontSize));
+  const hi0 = Math.max(lo0, Math.floor(maxFontSize));
 
-      if (index === words.length - 1 && currentLine) {
-        lines.push(currentLine);
-        maxLineWidth = Math.max(maxLineWidth, ctx.measureText(currentLine).width);
-      }
-    });
+  let lo = lo0;
+  let hi = hi0;
+
+  let bestFont = lo0;
+  let bestLines = [""];
+  let bestLineHeight = lo0 + lineGap;
+  let bestFits = false;
+
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    setFont(mid);
+
+    const { lines, maxLineW, totalH, lineHeight } = wrapAtCurrentFont();
+
+    const fitsW = maxLineW <= innerW + 0.001;
+    const fitsH = totalH <= innerH + 0.001;
+
+    if (fitsW && fitsH) {
+      bestFont = mid;
+      bestLines = lines;
+      bestLineHeight = lineHeight;
+      bestFits = true;
+      lo = mid + 1; // try bigger
+    } else {
+      hi = mid - 1;
+    }
   }
 
-  const lineHeight = fontSize + 4;
-  const totalHeight = lines.length * lineHeight;
+  setFont(bestFont);
 
   return {
-    lines,
-    width: maxLineWidth + padding * 2,
-    height: totalHeight + padding * 2,
+    lines: bestLines,
+    fontSize: bestFont,
+    lineHeight: bestLineHeight,
+    fits: bestFits,
+    padding: safePadding, // convenient to reuse
   };
-}
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 function resolveTextLayoutForHit(item:any, ctx:any, canvas:any) {
@@ -366,35 +564,260 @@ function resolveTextLayoutForHit(item:any, ctx:any, canvas:any) {
   };
 }
 
-const wrapTextResponsive = (text:string, maxWidth:number, ctx: CanvasRenderingContext2D) => {
-  const paragraphs = text.split('\n');
-  const lines:any = [];
 
-  paragraphs.forEach((paragraph) => {
-    const words = paragraph.trim().split(/\s+/);
-    let currentLine = '';
 
-    words.forEach((word, index) => {
-      const testLine = currentLine ? currentLine + ' ' + word : word;
-      const testWidth = ctx.measureText(testLine).width;
 
-      if (testWidth <= maxWidth) {
-        currentLine = testLine;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Wraps text so EVERY returned line fits within maxWidth (guaranteed).
+// - Preserves explicit '\n' (empty lines kept)
+// - Preserves whitespace between words (does NOT collapse spaces)
+// - Word-wraps
+// - Force-breaks a single too-long token by characters (URLs/long words) so containment is always possible
+/**
+ * wrapTextResponsive – “Notepad-like” behavior
+ *
+ * What “Notepad-like” means here:
+ * - Preserves ALL characters exactly (spaces, multiple spaces, tabs)
+ * - Explicit '\n' creates a new visual line (including blank lines)
+ * - Soft wrapping happens ONLY when a line exceeds maxWidth
+ * - Soft wrap does NOT insert extra spaces / does NOT trim
+ * - Soft wrap prefers breaking at whitespace if possible (like Notepad)
+ * - If there is no whitespace to break (long word/URL), it breaks by characters
+ * - Wrapped lines never exceed maxWidth (guaranteed)
+ */
+const wrapTextResponsive = (text: string, maxWidth: number, ctx: CanvasRenderingContext2D) => {
+  const safeMaxWidth = Math.max(1, maxWidth);
+  const raw = String(text ?? "");
+  const hardLines = raw.split("\n"); // explicit newlines
+
+  const out: string[] = [];
+
+  // Break a string by characters into chunks that each fit maxWidth
+  const breakByChars = (s: string) => {
+    const units = Array.from(s);
+    let chunk = "";
+    for (let i = 0; i < units.length; i++) {
+      const test = chunk + units[i];
+      if (ctx.measureText(test).width <= safeMaxWidth) {
+        chunk = test;
       } else {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
+        if (chunk) out.push(chunk);
+        chunk = units[i];
+      }
+    }
+    if (chunk) out.push(chunk);
+  };
+
+  // Wrap ONE hard line into one or more soft lines
+  const wrapHardLine = (line: string) => {
+    // Preserve completely empty line
+    if (line.length === 0) {
+      out.push("");
+      return;
+    }
+
+    // If it already fits, keep it exactly
+    if (ctx.measureText(line).width <= safeMaxWidth) {
+      out.push(line);
+      return;
+    }
+
+    // Notepad-like: accumulate chars, but when overflow happens,
+    // try to break at the last whitespace in the current chunk.
+    const units = Array.from(line);
+
+    let chunk = "";
+    let lastBreakPosInChunk = -1; // index in chunk-units where whitespace last seen
+    let chunkUnits: string[] = [];
+
+    const isWs = (ch: string) => ch === " " || ch === "\t";
+
+    const flushChunk = (s: string) => {
+      // Keep as-is (including leading/trailing spaces)
+      out.push(s);
+    };
+
+    for (let i = 0; i < units.length; i++) {
+      const ch = units[i];
+      const nextChunk = chunk + ch;
+
+      if (ctx.measureText(nextChunk).width <= safeMaxWidth) {
+        chunk = nextChunk;
+        chunkUnits.push(ch);
+        if (isWs(ch)) lastBreakPosInChunk = chunkUnits.length - 1;
+        continue;
       }
 
-      // Push remaining line after the last word
-      if (index === words.length - 1 && currentLine) {
-        lines.push(currentLine);
-        currentLine = '';
+      // Overflow: decide where to break
+      if (chunk.length === 0) {
+        // Even single char doesn't fit? push it anyway to avoid infinite loop
+        flushChunk(ch);
+        chunk = "";
+        chunkUnits = [];
+        lastBreakPosInChunk = -1;
+        continue;
       }
-    });
-  });
 
-  return lines;
+      if (lastBreakPosInChunk >= 0) {
+        // Break at last whitespace IN the chunk (Notepad-ish)
+        const left = chunkUnits.slice(0, lastBreakPosInChunk + 1).join("");
+        const right = chunkUnits.slice(lastBreakPosInChunk + 1).join("");
+
+        flushChunk(left);
+
+        // Start new chunk with the "right" remainder (kept exactly), then retry current char
+        chunk = right;
+        chunkUnits = Array.from(right);
+        lastBreakPosInChunk = -1;
+        for (let k = 0; k < chunkUnits.length; k++) {
+          if (isWs(chunkUnits[k])) lastBreakPosInChunk = k;
+        }
+
+        // retry current char (don’t lose it)
+        i -= 1;
+      } else {
+        // No whitespace in chunk -> hard break by characters
+        flushChunk(chunk);
+        chunk = "";
+        chunkUnits = [];
+        lastBreakPosInChunk = -1;
+
+        // retry current char
+        i -= 1;
+      }
+    }
+
+    if (chunk.length > 0) flushChunk(chunk);
+  };
+
+  for (const line of hardLines) {
+    wrapHardLine(line);
+  }
+
+  return out;
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -53,6 +53,7 @@ export function useLiveShare({ getAppState, applyFullState }) {
   const [roomId, setRoomId] = useState(null);
   const [hostToken, setHostToken] = useState(null);
   const [viewerToken, setViewerToken] = useState(null);
+  const [viewerCount, setViewerCount] = useState(0);
 
   // ----- MODAL STATE (host + viewer) -----
   const [hostPwModal, setHostPwModal] = useState({
@@ -210,6 +211,17 @@ export function useLiveShare({ getAppState, applyFullState }) {
     return () => off && off();
   }, [client, mode, roomId, getAppState]);
 
+  // ---------------- Listen for viewer count updates ----------------
+  useEffect(() => {
+    const off = client.on("viewer_count", (payload) => {
+      if (payload && typeof payload.count === "number") {
+        setViewerCount(payload.count);
+      }
+    });
+
+    return () => off && off();
+  }, [client]);
+
   function makeViewerLink(room) {
     const url = new URL(window.location.href);
     url.searchParams.set("room", room);
@@ -311,6 +323,7 @@ export function useLiveShare({ getAppState, applyFullState }) {
     makeViewerLink,
     hostToken,
     viewerToken,
+    viewerCount,
 
     // modal API
     hostPwModal,

@@ -29,6 +29,7 @@ export const useShare = () => {
     mode,
     roomId,
     makeViewerLink,
+    viewerCount,
 
     // modal controls from useLiveShare
     openHostPasswordModal,
@@ -120,6 +121,7 @@ export const useShare = () => {
     isViewer,
     roomId,
     mode,
+    viewerCount,
 
     // share actions
     onStartShare,

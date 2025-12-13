@@ -183,6 +183,16 @@ const io = new Server(server, {
   path: "/socket.io/", // keep default
 });
 
+// Helper function to broadcast viewer count to all clients in a room
+function broadcastViewerCount(room) {
+  const rinfo = rooms.get(room);
+  if (!rinfo) return;
+
+  const viewerCount = rinfo.viewers.size;
+  io.to(room).emit("viewer_count", { count: viewerCount });
+  console.log(`Broadcasting viewer count for room ${room}: ${viewerCount}`);
+}
+
 io.on("connection", (socket) => {
   socket.data.role = "guest";
   socket.data.room = null;
@@ -237,6 +247,9 @@ io.on("connection", (socket) => {
     socket.data.room = room;
     ack?.({ ok: true });
     console.log(`${socket.id} joined ${room} as ${socket.data.role}`);
+
+    // Broadcast updated viewer count to everyone in the room
+    broadcastViewerCount(room);
   });
 
   socket.on("host_state", (msg) => {
@@ -270,6 +283,11 @@ io.on("connection", (socket) => {
       socket.to(room).emit("peer_left", { hostLeft: true });
     } else if (socket.data.role === "viewer") {
       rinfo.viewers.delete(socket.id);
+    }
+
+    // Broadcast updated viewer count after someone leaves
+    if (rinfo.viewers.size > 0 || rinfo.hostSid) {
+      broadcastViewerCount(room);
     }
 
     if (!rinfo.hostSid && rinfo.viewers.size === 0) {

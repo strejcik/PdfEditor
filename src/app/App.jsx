@@ -39,6 +39,10 @@ useEffect(() => {
   }, []);
 
 
+
+
+
+
   function setupCanvasA4(canvas, portrait = true) {
   const w = portrait ? canvasWidth : canvasHeight;
   const h = portrait ? canvasHeight : canvasWidth;
@@ -179,6 +183,7 @@ useEffect(() => {
       shareLinkModal,
       closeShareLinkModal,
       copyShareLinkAgain,
+      viewerCount,
     },
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
   } = useEditor(); // ✅ correct
@@ -192,7 +197,20 @@ useEffect(() => {
 
 
 
+  const textBoxRef = useRef(null);
+const rafDrawRef = useRef(0);
 
+useEffect(() => {
+  textBoxRef.current = textBox;
+}, [textBox]);
+
+const requestCanvasDraw = (page) => {
+  if (rafDrawRef.current) return;
+  rafDrawRef.current = requestAnimationFrame(() => {
+    rafDrawRef.current = 0;
+    drawCanvas(page); // drawCanvas must use textBoxRef.current (see section C)
+  });
+};
 
 
 
@@ -269,38 +287,6 @@ useEffect(() => {
 
 const toUnits = (str) => Array.from(str ?? "");
 
-
-
-
-// useEffect(() => {
-//   const handleMouseMove = (e) => {
-//     const canvas = canvasRefs.current[activePage];
-//     if (!canvas) return;
-
-//     const rect = canvas.getBoundingClientRect();
-//     const isOutside =
-//       e.clientX < rect.left ||
-//       e.clientX > rect.right ||
-//       e.clientY < rect.top ||
-//       e.clientY > rect.bottom;
-
-//     if (isOutside) {
-//       setIsDragging(false); // Stop dragging
-//       setDraggedImageIndex(null)
-//       setResizingImageIndex(null);
-//     }
-//   };
-
-//   // Attach the event listener
-//   window.addEventListener('mousemove', handleMouseMove);
-
-//   // Cleanup event listener on unmount or when activePage changes
-//   return () => {
-//     window.removeEventListener('mousemove', handleMouseMove);
-//   };
-// }, [activePage, canvasRefs]);
-
-  
 
   // Load images and text items from local storage on mount
   useEffect(() => {
@@ -379,6 +365,7 @@ useEffect(() => {
         resolveTextLayout,
         layoutMultiline,
         setMlPreferredX,
+        computeScaledTargetFont,
 
         redraw: (idx) =>
           drawCanvas(idx, {
@@ -407,6 +394,7 @@ useEffect(() => {
               resolveTextLayout,
               layoutMultiline,
               setMlPreferredX,
+              computeScaledTargetFont,
             },
             config: sharedConfig,
           }),
@@ -468,18 +456,69 @@ useLayoutEffect(() => {
 
 
 useEffect(() => {
-  if (isTextBoxEditEnabled && textBox && canvasRefs.current[activePage]) {
-    const ctx = canvasRefs.current[activePage].getContext('2d');
-    const innerWidth = textBox.width - (textBox.boxPadding || 5) * 2;
+  if (!isTextBoxEditEnabled || !textBox || !canvasRefs.current[activePage]) return;
 
-    const wrappedLines = wrapTextResponsive(textBox.text.replace(/\s+/g, ' '), innerWidth, ctx);
-    const newText = wrappedLines.join('\n');
+  const canvas = canvasRefs.current[activePage];
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
 
-    if (newText !== textBox.text) {
-      setTextBox({ ...textBox, text: newText });
-    }
+  // ✅ source of truth (never wrap/normalize from rendered text)
+  const raw = (textBox.rawText ?? textBox.text ?? "").toString();
+
+  // ✅ do NOT normalize whitespace (removes the "spaces drift" bug)
+  // ✅ do NOT bake wrapping into rawText
+
+  const family = "Lato"; // or APP_FONT_FAMILY || "Lato"
+  const requestedPadding = textBox.boxPadding ?? 10;
+
+  // If your wrapper already clamps padding internally you can pass requestedPadding,
+  // otherwise clamp it here. (Safe to keep as-is if you already return layout.padding.)
+  const targetFont = textBox.hasScaled
+    ? computeScaledTargetFont(textBox)                // allow grow/shrink ONLY after resize has begun
+    : (textBox.baseFontSize ?? 20);                   // initial creation always 20
+
+  ctx.font = `${targetFont}px ${family}`;
+  
+  // ✅ canonical layout: matches live draw + final commit
+  const layout = wrapTextPreservingNewlinesResponsive(
+    raw,
+    ctx,
+    textBox.width,
+    textBox.height,
+    targetFont,
+    requestedPadding,
+    textBox.minFontSize ?? 6,
+    family,
+    4
+  );
+
+  const rendered = (layout.lines && layout.lines.length ? layout.lines : [""]).join("\n");
+
+  // Only update if something actually changed to avoid loops
+  const nextFont = layout.fontSize ?? targetFont;
+  const nextPadding = layout.padding ?? requestedPadding;
+
+  const changed =
+    rendered !== textBox.text ||
+    nextFont !== textBox.fontSize ||
+    nextPadding !== textBox.boxPadding;
+
+  if (changed) {
+    setTextBox({
+      ...textBox,
+      rawText: raw,
+      text: rendered,
+      fontSize: nextFont,
+      boxPadding: nextPadding,
+
+      // ✅ DO NOT reset hasScaled here.
+      // hasScaled should be flipped to true when user actually starts resizing (mousedown/move),
+      // otherwise scaling will never show while dragging.
+      hasScaled: textBox.hasScaled,
+    });
   }
-}, [textBox?.width]);  // Reacts to textBox width resize
+  // React to width/height/padding changes (not only width)
+}, [textBox?.width, textBox?.height, textBox?.boxPadding, activePage, isTextBoxEditEnabled]);
 
 
 
@@ -820,61 +859,99 @@ const addTextToCanvas3 = (items = []) => {
   }
 };
 
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+const computeScaledTargetFont = (textBox) => {
+  const minFont  = Number(textBox.minFontSize ?? 6);
+  const maxFont  = Number(textBox.maxFontSize ?? 80);
+
+  // ✅ use resize-start base if available, else creation base
+  const baseFont = Number(textBox.resizeBaseFontSize ?? textBox.baseFontSize ?? 20);
+
+  const w = Math.max(1, Number(textBox.width) || 1);
+  const h = Math.max(1, Number(textBox.height) || 1);
+
+  const baseW = Math.max(1, Number(textBox.resizeBaseWidth ?? textBox.baseWidth ?? 1));
+  const baseH = Math.max(1, Number(textBox.resizeBaseHeight ?? textBox.baseHeight ?? 1));
+
+  const wScale = Math.max(0.01, w / baseW);
+  const hScale = Math.max(0.01, h / baseH);
+
+  // growth when either axis grows
+  const scale = Math.max(wScale, hScale);
+
+  return clamp(baseFont * scale, minFont, maxFont);
+};
 
 const addTextToCanvas2 = (textBox) => {
-    if (textBox?.text?.trim()) {
+  console.log(textBox);
+  const sourceText = (textBox?.rawText ?? textBox?.text ?? "").toString();
+  if (!sourceText.trim()) return;
 
-    const canvas = canvasRefs.current[activePage];
-    if (!canvas) return;
+  const canvas = canvasRefs.current[activePage];
+  if (!canvas) return;
 
-    const { ctx } = setupCanvasA4(canvasRefs.current[activePage], /* portrait? */ true);
-    if (!ctx) return;
+  const { ctx } = setupCanvasA4(canvas, true);
+  if (!ctx) return;
 
+  const family = APP_FONT_FAMILY || "Arial";
 
-    const padding = newFontSize * 0.2;
-    const innerWidth = textBox.width - padding * 2;
-    const lines = wrapTextResponsive(textBox.text, innerWidth, ctx);
-    const lineHeight = newFontSize + 5;
+  const requestedPadding = textBox.boxPadding ?? 10;
+  const maxPadX = Math.floor((textBox.width || 0) / 2) - 1;
+  const maxPadY = Math.floor((textBox.height || 0) / 2) - 1;
+  const padding = Math.max(0, Math.min(requestedPadding, Math.max(0, Math.min(maxPadX, maxPadY))));
 
+  // Use scaling target font (so commit matches editor)
+  const targetFont = computeScaledTargetFont(textBox, 6);
+  ctx.font = `${targetFont}px ${family}`;
 
+  const layout = wrapTextPreservingNewlinesResponsive(
+    sourceText,
+    ctx,
+    textBox.width,
+    textBox.height,
+    targetFont,
+    padding,
+    6,
+    family,
+    4
+  );
 
-    const textItemsToAdd = lines.map((line, i) =>{
-      return {text: line,
-      fontSize: newFontSize,
-      boxPadding: padding,
-      x: textBox.x + padding,
-      y: textBox.y + 20 + i * lineHeight,
-      index: activePage}
+  const textItemsToAdd = layout.lines.map((line, i) => ({
+    text: line,
+    fontSize: layout.fontSize,
+    boxPadding: padding,
+    x: (textBox.x || 0) + padding,
+    y: (textBox.y || 0) + padding + i * layout.lineHeight,
+    index: activePage,
+  }));
+
+  setTextItems((prev) => {
+    const prevArr = Array.isArray(prev) ? prev : [];
+    const nextTextItems = [...prevArr, ...textItemsToAdd.map((it) => ({ ...it }))];
+
+    saveTextItemsToIndexedDB?.(nextTextItems);
+
+    setPages((prevPages) => {
+      const nextPages = Array.isArray(prevPages) ? [...prevPages] : [];
+      const page = nextPages[activePage] || { textItems: [], imageItems: [] };
+
+      nextPages[activePage] = {
+        ...page,
+        textItems: nextTextItems.filter((it) => it.index === activePage).map((it) => ({ ...it })),
+        imageItems: page.imageItems || [],
+      };
+
+      return nextPages;
     });
-    
-// In your handler where you append itemsToAdd
-const nextTextItems = [ ...(textItems || []), ...textItemsToAdd.map(it => ({ ...it })) ];
-setTextItems(nextTextItems);
 
-// Use the SAME computed array right away:
-saveTextItemsToIndexedDB?.(nextTextItems);
+    return nextTextItems;
+  });
 
-setPages(prev => {
-  const next = Array.isArray(prev) ? [...prev] : [];
-  const page = next[activePage] || { textItems: [], imageItems: [] };
-
-  // Only items for this page
-  const forThisPage = nextTextItems.filter(it => it.index === activePage);
-
-  next[activePage] = {
-    ...page,
-    textItems: forThisPage.map(it => ({ ...it })), // keep immutable
-    imageItems: page.imageItems || [],
-  };
-  return next;
-});
-
-    setTextBox(null);
-    setNewFontSize(fontSize);
-    drawCanvas(activePage);
-  }
+  setTextBox(null);
 };
+
+
 
 
 
@@ -1958,7 +2035,12 @@ return (
             </button>
           )}
           {mode === "host" && (
-            <div className="badge badge-room">Room: {roomId}</div>
+            <>
+              <div className="badge badge-room">Room: {roomId}</div>
+              <div className="badge badge-viewers">
+                👥 {viewerCount} {viewerCount === 1 ? "viewer" : "viewers"}
+              </div>
+            </>
           )}
           {isViewer && (
             <div className="badge badge-viewer">VIEW-ONLY</div>
@@ -2444,6 +2526,7 @@ return (
                               setInitialPositions,
                               textBox,
                               setIsResizing,
+                              setTextBox,
                               setSelectionStart,
                               setSelectionEnd,
                             })
@@ -2494,6 +2577,8 @@ return (
                               setTextItems,
                               saveTextItemsToIndexedDB,
                               fontSize,
+                              requestCanvasDraw,
+                              textBoxRef
                             })
                 }
                 onMouseUp={

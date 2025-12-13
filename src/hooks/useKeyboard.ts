@@ -90,22 +90,54 @@ export function useKeyboard() {
         }
       }
     
-      // TextBox inline typing
       if (isTextBoxEditEnabled && textBox && !typingInDOMField && !isMultilineMode) {
-        let updatedText = textBox.text;
-        if (e.key === "Enter")       updatedText += "\n";
-        else if (e.key === "Backspace") updatedText = updatedText.slice(0, -1);
-        else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey)
-          updatedText += e.key;
+        const prevRaw = (textBox.rawText ?? textBox.text ?? "");
+        let nextRaw = prevRaw;
+
+        if (e.key === "Enter") nextRaw += "\n";
+        else if (e.key === "Backspace") nextRaw = nextRaw.slice(0, -1);
+        else if (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey) nextRaw += " ";
+        else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) nextRaw += e.key;
         else return;
-    
-        const ctx = canvasRefs.current[activePage].getContext("2d");
-        ctx.font = `${textBox.fontSize || fontSize}px Arial`;
-        const result = wrapTextPreservingNewlinesResponsive(
-          updatedText, ctx, textBox.width, fontSize, textBox.boxPadding || 10
+
+        const canvas = canvasRefs.current[activePage];
+        const ctx = canvas.getContext("2d");
+
+        const family = "Lato";
+        const padding = textBox.boxPadding || 10;
+
+        const currentMaxFont = textBox.fontSize || fontSize;
+        ctx.font = `${currentMaxFont}px ${family}`;
+
+        const wrapped = wrapTextPreservingNewlinesResponsive(
+          nextRaw,
+          ctx,
+          textBox.width,
+          currentMaxFont,
+          padding,
+          textBox.height
         );
-        setTextBox({ ...textBox, text: updatedText, width: result.width, height: result.height });
-      }
+
+        // Height guard (block overflow at bottom)
+        const lineHeight = wrapped.fontSize + 4;
+        const innerH = textBox.height - padding * 2;
+        const contentH = wrapped.lines.length * lineHeight;
+
+        if (contentH > innerH + 0.001) {
+          // allow backspace even if guards disagree due to rounding
+          if (e.key === "Backspace") {
+            setTextBox({ ...textBox, rawText: nextRaw, text: wrapped.lines.join("\n"), fontSize: wrapped.fontSize });
+          }
+          return;
+        }
+
+        setTextBox({
+          ...textBox,
+          rawText: nextRaw,                 // <-- preserves spaces
+          text: wrapped.lines.join("\n"),   // <-- drawing uses wrapped version
+          fontSize: wrapped.fontSize,
+        });
+    }
     
       // MULTI-LINE MODE
       if (isMultilineMode && !typingInDOMField) {

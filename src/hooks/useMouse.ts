@@ -3,6 +3,243 @@ import { PDF_HEIGHT, PDF_WIDTH } from "../config/constants";
 
 export function useMouse() {
 
+
+
+
+
+
+
+
+
+const clampPadding = (boxWidth:any, boxHeight:any, requestedPadding:any) => {
+  const w = Math.max(1, boxWidth);
+  const h = Math.max(1, boxHeight);
+  const maxPadX = Math.floor(w / 2) - 1;
+  const maxPadY = Math.floor(h / 2) - 1;
+  const maxPad = Math.max(0, Math.min(maxPadX, maxPadY));
+  return Math.max(0, Math.min(requestedPadding, maxPad));
+};
+
+
+
+
+/**
+ * Canonical text layout:
+ * - preserves explicit newlines
+ * - preserves whitespace exactly (Notepad-like)
+ * - wraps to width
+ * - fits to width + height
+ * - chooses the largest font <= maxFontSize that fits; never below minFontSize
+ */
+const wrapTextPreservingNewlinesResponsive = (
+  text:any,
+  ctx:any,
+  boxWidth:any,
+  boxHeight:any,
+  maxFontSize:any,
+  padding = 10,
+  minFontSize = 6,
+  fontFamily:any,
+  lineGap = 4
+) => {
+  const raw = String(text ?? "");
+
+  const safeW = Math.max(1, boxWidth);
+  const safeH = Math.max(1, boxHeight);
+
+  const safePadding = clampPadding(safeW, safeH, padding);
+
+  const innerW = Math.max(1, safeW - safePadding * 2);
+  const innerH = Math.max(1, safeH - safePadding * 2);
+
+  const family =
+    fontFamily ||
+    (() => {
+      const parts = (ctx.font || "").split(" ");
+      return parts.length >= 2 ? parts.slice(1).join(" ") : "Arial";
+    })();
+
+  const setFont = (size:any) => {
+    ctx.font = `${Math.max(1, size)}px ${family}`;
+  };
+
+  const breakWordToFit = (word:any) => {
+    const out = [];
+    let chunk = "";
+
+    for (let i = 0; i < word.length; i++) {
+      const test = chunk + word[i];
+      if (ctx.measureText(test).width <= innerW) {
+        chunk = test;
+      } else {
+        if (chunk) out.push(chunk);
+        chunk = word[i];
+      }
+    }
+    if (chunk) out.push(chunk);
+    if (out.length === 0 && word.length > 0) out.push(word[0]);
+    return out;
+  };
+
+  const wrapAtCurrentFont = () => {
+    const paragraphs = raw.split(/\r?\n/);
+    const lines = [];
+    let maxLineW = 0;
+
+    for (const paragraph of paragraphs) {
+      if (paragraph.length === 0) {
+        lines.push("");
+        continue;
+      }
+
+      // Preserve whitespace tokens exactly
+      const tokens = paragraph.split(/(\s+)/).filter((t) => t.length > 0);
+      let current = "";
+
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        const isSpace = /^\s+$/.test(tok);
+
+        // Notepad-like: don't start a wrapped line with whitespace
+        if (current === "" && isSpace) continue;
+
+        // Hard-break long token
+        if (!isSpace && ctx.measureText(tok).width > innerW) {
+          if (current) {
+            lines.push(current);
+            maxLineW = Math.max(maxLineW, ctx.measureText(current).width);
+            current = "";
+          }
+          const pieces = breakWordToFit(tok);
+          for (const p of pieces) {
+            lines.push(p);
+            maxLineW = Math.max(maxLineW, ctx.measureText(p).width);
+          }
+          continue;
+        }
+
+        const test = current + tok;
+
+        if (ctx.measureText(test).width <= innerW) {
+          current = test;
+        } else {
+          if (current) {
+            lines.push(current);
+            maxLineW = Math.max(maxLineW, ctx.measureText(current).width);
+          }
+          current = isSpace ? "" : tok;
+        }
+      }
+
+      if (current) {
+        lines.push(current);
+        maxLineW = Math.max(maxLineW, ctx.measureText(current).width);
+      }
+    }
+
+    const m = /^(\d+(?:\.\d+)?)px\b/.exec(ctx.font);
+    const fontPx = m ? parseFloat(m[1]) : 1;
+    const lineHeight = fontPx + lineGap;
+    const totalH = lines.length * lineHeight;
+
+    return { lines, maxLineW, totalH, lineHeight };
+  };
+
+  const lo0 = Math.max(1, Math.floor(minFontSize));
+  const hi0 = Math.max(lo0, Math.floor(maxFontSize));
+
+  let lo = lo0;
+  let hi = hi0;
+
+  let bestFont = lo0;
+  let bestLines = [""];
+  let bestLineHeight = lo0 + lineGap;
+  let bestFits = false;
+
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    setFont(mid);
+
+    const { lines, maxLineW, totalH, lineHeight } = wrapAtCurrentFont();
+
+    const fitsW = maxLineW <= innerW + 0.001;
+    const fitsH = totalH <= innerH + 0.001;
+
+    if (fitsW && fitsH) {
+      bestFont = mid;
+      bestLines = lines;
+      bestLineHeight = lineHeight;
+      bestFits = true;
+      lo = mid + 1; // try bigger
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  setFont(bestFont);
+
+  return {
+    lines: bestLines,
+    fontSize: bestFont,
+    lineHeight: bestLineHeight,
+    fits: bestFits,
+    padding: safePadding, // convenient to reuse
+  };
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const pdfToCssMargins = (rect:any, marginsPDF:any) => {
   // scale PDF units → CSS px (respect current canvas rect)
   const sx = rect.width  / PDF_WIDTH;
@@ -102,6 +339,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         setInitialPositions,
         textBox,
         setIsResizing,
+        setTextBox,
         setSelectionStart,
         setSelectionEnd
     } = opts;
@@ -236,7 +474,30 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
 
 
 
+const clamp = (v:any, lo:any, hi:any) => Math.max(lo, Math.min(hi, v));
 
+
+const computeScaledTargetFont = (textBox:any) => {
+  const minFont  = Number(textBox.minFontSize ?? 6);
+  const maxFont  = Number(textBox.maxFontSize ?? 80);
+
+  // ✅ use resize-start base if available, else creation base
+  const baseFont = Number(textBox.resizeBaseFontSize ?? textBox.baseFontSize ?? 20);
+
+  const w = Math.max(1, Number(textBox.width) || 1);
+  const h = Math.max(1, Number(textBox.height) || 1);
+
+  const baseW = Math.max(1, Number(textBox.resizeBaseWidth ?? textBox.baseWidth ?? 1));
+  const baseH = Math.max(1, Number(textBox.resizeBaseHeight ?? textBox.baseHeight ?? 1));
+
+  const wScale = Math.max(0.01, w / baseW);
+  const hScale = Math.max(0.01, h / baseH);
+
+  // growth when either axis grows
+  const scale = Math.max(wScale, hScale);
+
+  return clamp(baseFont * scale, minFont, maxFont);
+};
 
 
 
@@ -271,7 +532,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         initialPositions,
         setTextItems,
         saveTextItemsToIndexedDB,
-        fontSize,
+        requestCanvasDraw
     } = opts;
 
       if (editingIndex !== null) {
@@ -289,21 +550,53 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
     
       const ctx = canvas.getContext('2d');
     
-      // === TEXTBOX RESIZING ===
-      if (isResizing && textBox) {
-        const newWidth  = Math.max(50, cssX - textBox.x);
-        const newHeight = Math.max(20, cssY - textBox.y);
-    
-        const padding = textBox.boxPadding || 5;
-        const innerWidth = newWidth - padding * 2;
-    
-        const wrappedLines = wrapTextResponsive(textBox.text, innerWidth, ctx);
-        const recombinedText = wrappedLines.join('\n');
-    
-        setTextBox({ ...textBox, width: newWidth, height: newHeight, text: recombinedText });
-        drawCanvas(activePage);
-        return;
-      }
+// === TEXTBOX RESIZING ===
+if (isResizing && textBox) {
+  const newWidth  = Math.max(50, cssX - textBox.x);
+  const newHeight = Math.max(20, cssY - textBox.y);
+
+  const sourceText = (textBox.rawText ?? textBox.text ?? "").toString();
+  const requestedPadding = textBox.boxPadding ?? 10;
+
+  // If baseWidth/baseHeight are missing, capture them once (from PRE-resize box)
+  const baseWidth  = textBox.baseWidth  ?? textBox.width;
+  const baseHeight = textBox.baseHeight ?? textBox.height;
+
+  const tempBox = {
+    ...textBox,
+    width: newWidth,
+    height: newHeight,
+    baseWidth,
+    baseHeight,
+    hasScaled: true, // ✅ enable scaling as soon as resize begins
+  };
+
+  const targetFont = computeScaledTargetFont(tempBox);
+
+  ctx.font = `${targetFont}px Lato`;
+
+  const layout = wrapTextPreservingNewlinesResponsive(
+    sourceText,
+    ctx,
+    newWidth,
+    newHeight,
+    targetFont,
+    requestedPadding,
+    tempBox.minFontSize ?? 6,
+    "Lato",
+    4
+  );
+
+  setTextBox({
+    ...tempBox,
+    rawText: sourceText,
+    text: layout.lines.join("\n"),
+    fontSize: layout.fontSize,
+    boxPadding: layout.padding ?? requestedPadding,
+  });
+  return;
+}
+
     
       // === SELECTION RECTANGLE (live preview) ===
       if (isSelecting) {
@@ -648,7 +941,15 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         return { x: evt.clientX - r.left, y: evt.clientY - r.top };
       };
     
-      if (isResizing) setIsResizing(false);
+      if (isResizing){
+        setIsResizing(false);
+        setTextBox((tb:any) => tb ? ({
+          ...tb,
+          resizeBaseWidth: undefined,
+          resizeBaseHeight: undefined,
+          resizeBaseFontSize: undefined,
+        }) : tb);
+      }
     
      if (isDragging) {
     setIsDragging(false);
@@ -703,12 +1004,24 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
           const startY = selectionStart.y;
           const endX   = selectionEnd.x;
           const endY   = selectionEnd.y;
-    
+
           const x = Math.min(startX, endX);
           const y = Math.min(startY, endY);
           const width  = Math.abs(endX - startX);
           const height = Math.abs(endY - startY);
-          setTextBox({ x, y, width, height, text: "" });
+          setTextBox({
+            x,
+            y,
+            width,
+            height,
+            text: "",
+            baseFontSize: 20,
+            baseWidth: width,
+            baseHeight: height,
+            minFontSize: 6,
+            maxFontSize: 80,
+            hasScaled: false
+          });
         }
     
         setIsSelecting(false);
