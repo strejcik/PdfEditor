@@ -377,3 +377,134 @@ button:hover {
   justify-content: flex-end;
   gap: 8px;
 }
+
+
+
+
+
+
+/*LiveShareModals component styles*/
+
+/* src/components/LiveShareModals.css */
+
+.ls-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;             /* prevents clipping on small screens */
+  z-index: 9999;
+  overflow: auto;
+}
+
+.ls-card {
+  width: min(560px, 100%);
+  background: #fff;
+  border-radius: 16px;
+  padding: 22px 22px 18px;
+  box-sizing: border-box;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.ls-title {
+  margin: 0 0 6px 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.ls-subtitle {
+  margin: 0 0 14px 0;
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.65);
+  line-height: 1.35;
+}
+
+.ls-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  outline: none;
+  background: #fff;
+}
+
+.ls-input:focus {
+  border-color: rgba(59, 130, 246, 0.85);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.18);
+}
+
+.ls-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.55);
+}
+
+.ls-hint--danger { color: #ef4444; }
+.ls-hint--warn { color: #f59e0b; }
+.ls-hint--success { color: #22c55e; }
+
+.ls-error {
+  margin-top: 10px;
+  color: #ef4444;
+  font-size: 13px;
+}
+
+.ls-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.ls-btn {
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 700;
+  font-size: 14px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.ls-btn:active { transform: translateY(1px); }
+
+.ls-btn--ghost {
+  background: #fff;
+  border-color: rgba(15, 23, 42, 0.18);
+  color: rgba(15, 23, 42, 0.85);
+}
+
+.ls-btn--ghost:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.ls-btn--primary {
+  background: #60a5fa;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(96, 165, 250, 0.35);
+}
+
+.ls-btn--primary:hover {
+  background: #3b82f6;
+  box-shadow: 0 14px 30px rgba(59, 130, 246, 0.35);
+}
+
+.ls-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+@media (max-width: 420px) {
+  .ls-actions .ls-btn {
+    width: 100%;
+  }
+}
+

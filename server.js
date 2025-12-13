@@ -40,6 +40,30 @@ const app = express();
 app.use(express.json());
 app.use(cors({ origin: APP_ORIGINS, credentials: true }));
 
+
+
+
+
+
+
+function validateRoomPassword(pwRaw) {
+  const pw = (pwRaw ?? "").toString().trim();
+
+  // Required
+  if (!pw) return { ok: false, error: "Password is required." };
+
+  // Policy (adjust to match your frontend exactly if needed)
+  if (pw.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
+  if (!/[A-Za-z]/.test(pw)) return { ok: false, error: "Password must include at least 1 letter." };
+  if (!/[0-9]/.test(pw)) return { ok: false, error: "Password must include at least 1 number." };
+  if (!/[^A-Za-z0-9]/.test(pw)) return { ok: false, error: "Password must include at least 1 special character." };
+
+  return { ok: true, password: pw };
+}
+
+
+
+
 /**
  * API: create a room & mint host/viewer tokens
  * POST /live/create
@@ -54,20 +78,18 @@ app.post("/live/create", (req, res) => {
       ? proposed
       : Math.random().toString(36).slice(2, 10);
 
-  const maxViewers = Math.max(
-    1,
-    Math.min(1000, Number(req.body?.maxViewers ?? 25))
-  );
-  const ttlMinutes = Math.max(
-    1,
-    Math.min(24 * 60, Number(req.body?.ttlMinutes ?? 120))
-  );
+  const maxViewers = Math.max(1, Math.min(1000, Number(req.body?.maxViewers ?? 25)));
+  const ttlMinutes = Math.max(1, Math.min(24 * 60, Number(req.body?.ttlMinutes ?? 120)));
   const expiresAt = nowSec() + ttlMinutes * 60;
 
-  // password is optional, but in your flow host always provides it
-  const rawPassword = (req.body?.password ?? "").toString().trim();
-  const passwordHash =
-    rawPassword.length > 0 ? bcrypt.hashSync(rawPassword, 10) : null;
+  // ✅ Enforce strong password on backend
+  const pwCheck = validateRoomPassword(req.body?.password);
+  if (!pwCheck.ok) {
+    return res.status(400).json({ error: pwCheck.error });
+  }
+
+  const rawPassword = pwCheck.password;
+  const passwordHash = bcrypt.hashSync(rawPassword, 10);
 
   rooms.set(room, {
     createdAt: nowSec(),
@@ -78,18 +100,12 @@ app.post("/live/create", (req, res) => {
     passwordHash,
   });
 
-  const hostToken = signToken(
-    { kind: "live", role: "host", room },
-    ttlMinutes * 60
-  );
-  // This viewerToken is optional in your current flow; you don't expose it in URL
-  const viewerToken = signToken(
-    { kind: "live", role: "viewer", room },
-    ttlMinutes * 60
-  );
+  const hostToken = signToken({ kind: "live", role: "host", room }, ttlMinutes * 60);
+  const viewerToken = signToken({ kind: "live", role: "viewer", room }, ttlMinutes * 60);
 
   res.json({ room, hostToken, viewerToken, maxViewers, expiresAt });
 });
+
 
 /**
  * API: exchange room + password for a viewer token
@@ -140,35 +156,6 @@ app.post("/live/viewer-token", (req, res) => {
   return res.json({ room, viewerToken });
 });
 
-// API: optional short-lived viewer invite (Authorization: Bearer <hostToken>)
-app.post("/live/invite", (req, res) => {
-  const auth = req.headers.authorization || "";
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  if (!m) return res.status(401).json({ error: "missing bearer token" });
-  let dec;
-  try {
-    dec = verifyToken(m[1]);
-  } catch {
-    return res.status(401).json({ error: "invalid token" });
-  }
-  if (dec.kind !== "live" || dec.role !== "host" || !dec.room) {
-    return res.status(403).json({ error: "forbidden" });
-  }
-  const rinfo = rooms.get(dec.room);
-  if (!rinfo) return res.status(404).json({ error: "room not found" });
-
-  if (nowSec() >= rinfo.expiresAt) {
-    rooms.delete(dec.room);
-    return res.status(410).json({ error: "room expired" });
-  }
-
-  // 10-minute viewer invite
-  const viewerToken = signToken(
-    { kind: "live", role: "viewer", room: dec.room },
-    10 * 60
-  );
-  res.json({ room: dec.room, viewerToken });
-});
 
 // API: simple room health (optional)
 app.get("/live/rooms/:room", (req, res) => {

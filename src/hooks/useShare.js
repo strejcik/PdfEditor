@@ -1,59 +1,144 @@
-import { useRef } from "react";
-import { useLiveShare } from '../hooks/useLiveShare';
-export const useShare = () =>{
+// src/hooks/useShare.js
+import { useCallback, useRef, useState } from "react";
+import { useLiveShare } from "./useLiveShare";
+
+export const useShare = () => {
   const getStateRef = useRef(null);
   const getMethodsRef = useRef(null);
-// Build snapshot (what viewers see)
-  let getAppState = () => (getStateRef.current);
-  let getMethods = () => (getMethodsRef.current);
 
- // Replace local state with a snapshot (viewer)
+  // snapshot (host -> viewers)
+  const getAppState = () => getStateRef.current;
+  const getMethods = () => getMethodsRef.current;
+
+  // viewer apply (viewer <- host)
   const applyFullState = (s) => {
-    if (typeof s.state.activePage === "number") getMethods().setActivePage(s.state.activePage);
-    if (Array.isArray(s.state.pageList)) getMethods().setPages(s.state.pageList);
-    getMethods().setTextItems(s.state.textItems);
+    if (!s || !s.state) return;
+
+    const m = getMethods();
+    if (!m) return;
+
+    if (typeof s.state.activePage === "number") m.setActivePage?.(s.state.activePage);
+    if (Array.isArray(s.state.pageList)) m.setPages?.(s.state.pageList);
+    if (Array.isArray(s.state.textItems)) m.setTextItems?.(s.state.textItems);
   };
 
-const { mode, roomId, startHosting, startViewing, makeViewerLink } = useLiveShare({
-    getAppState,
-    applyFullState,
-  });
+  // live share hook (contains socket + password modals)
+  const live = useLiveShare({ getAppState, applyFullState });
+
+  const {
+    mode,
+    roomId,
+    makeViewerLink,
+
+    // modal controls from useLiveShare
+    openHostPasswordModal,
+    submitHostPassword,
+
+    hostPwModal,
+    viewerPwModal,
+    cancelHostPasswordModal,
+    cancelViewerPasswordModal,
+    submitViewerPassword,
+  } = live;
 
   const isViewer = mode === "viewer";
-
-
-
-
-
-
-   // ====== Host controls ======
   const broadcasterRef = useRef(null);
-  async function onStartShare() {
-    if (mode === "host") return;
-    const b = await startHosting();
-    broadcasterRef.current = b;
-    const link = makeViewerLink(b.room, b.viewerToken);
+
+  // ----------------------------
+  // ShareLinkModal state (NEW)
+  // ----------------------------
+  const [shareLinkModal, setShareLinkModal] = useState({
+    open: false,
+    link: "",
+    copied: false,
+  });
+
+  const closeShareLinkModal = useCallback(() => {
+    setShareLinkModal((s) => ({ ...s, open: false }));
+  }, []);
+
+  const copyShareLinkAgain = useCallback(async () => {
+    const link = shareLinkModal.link;
+    if (!link) return;
+
     try {
       await navigator.clipboard.writeText(link);
-      alert("Share link copied:\n" + link);
+      setShareLinkModal((s) => ({ ...s, copied: true }));
     } catch {
-      prompt("Copy this link:", link);
+      setShareLinkModal((s) => ({ ...s, copied: false }));
     }
-  }
+  }, [shareLinkModal.link]);
 
+  // ----------------------------
+  // Share flow
+  // ----------------------------
 
+  // called by Share button -> opens host password modal
+  const onStartShare = useCallback(() => {
+    if (mode === "host") return;
+    openHostPasswordModal();
+  }, [mode, openHostPasswordModal]);
 
+  // called by HostPasswordModal "Start sharing"
+  const onConfirmHostPassword = useCallback(
+    async (password) => {
+      // 1) create room + join as host
+      const b = await submitHostPassword(password);
+      if (!b) return null;
+
+      broadcasterRef.current = b;
+
+      // 2) generate viewer link
+      const link = makeViewerLink(b.room);
+
+      // 3) copy to clipboard (best-effort)
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(link);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+
+      // 4) open ShareLinkModal (instead of alert/prompt)
+      setShareLinkModal({
+        open: true,
+        link,
+        copied,
+      });
+
+      return { room: b.room, link, copied };
+    },
+    [makeViewerLink, submitHostPassword]
+  );
 
   return {
-    onStartShare,
-    getAppState,
-    startViewing,
+    // existing wiring
+    getStateRef,
     getMethodsRef,
+    broadcasterRef,
     isViewer,
     roomId,
     mode,
-    broadcasterRef,
-    getStateRef
-  }
-  
-}
+
+    // share actions
+    onStartShare,
+    onConfirmHostPassword,
+
+    // modals from useLiveShare
+    hostPwModal,
+    viewerPwModal,
+    cancelHostPasswordModal,
+    cancelViewerPasswordModal,
+    submitViewerPassword,
+
+    // ShareLinkModal (NEW)
+    shareLinkModal,
+    closeShareLinkModal,
+    copyShareLinkAgain,
+
+    // optional access
+    makeViewerLink,
+    live,
+  };
+};

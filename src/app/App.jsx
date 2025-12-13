@@ -11,6 +11,7 @@ import { drawCanvas } from '../utils/canvas/draw/drawCanvas'
 import { useClipboard } from "../hooks/useClipboard";
 import {importStateFromJson} from '../utils/json/importStateFromJson'
 import RulerOverlay from '../utils/ruler/RulerOverlay'
+import { HostPasswordModal, ViewerPasswordModal, ShareLinkModal } from "../components/LiveShareModals";
 
 import {
   pushGraphicsState, popGraphicsState,
@@ -169,6 +170,15 @@ useEffect(() => {
       mode,
       broadcasterRef,
       getStateRef,
+      hostPwModal,
+      cancelHostPasswordModal,
+      viewerPwModal,
+      cancelViewerPasswordModal,
+      submitViewerPassword,
+      onConfirmHostPassword,
+      shareLinkModal,
+      closeShareLinkModal,
+      copyShareLinkAgain,
     },
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
   } = useEditor(); // ✅ correct
@@ -1922,6 +1932,7 @@ function normalizeColor(c) {
 }
 
 
+
 return (
   <div className="app-shell">
     {/* Sidebar (left) */}
@@ -2766,8 +2777,34 @@ return (
         </div>
       </div>
     )}
+
+    
+    {/* ======================= LIVE SHARE MODALS (Point 4) ======================= */}
+    <HostPasswordModal
+      open={hostPwModal.open}
+      pending={hostPwModal.pending}
+      error={hostPwModal.error}
+      onCancel={cancelHostPasswordModal}
+      onSubmit={onConfirmHostPassword}
+    />
+    <ShareLinkModal
+      open={shareLinkModal.open}
+      link={shareLinkModal.link}
+      copied={shareLinkModal.copied}
+      onClose={closeShareLinkModal}
+      onCopyAgain={copyShareLinkAgain}
+    />
+    <ViewerPasswordModal
+      open={viewerPwModal.open}
+      pending={viewerPwModal.pending}
+      error={viewerPwModal.error}
+      onCancel={cancelViewerPasswordModal}
+      onSubmit={submitViewerPassword}
+    />
+    {/* ========================================================================== */}
   </div>
 );
+
 
 
 

@@ -1,5 +1,5 @@
-// src/useLiveShare.js
-import { useEffect, useMemo, useRef, useState } from "react";
+// src/hooks/useLiveShare.js
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { makeLiveClient } from "../utils/liveclient/liveClient";
 
 const LIVE_WS = import.meta?.env?.VITE_LIVE_URL || "ws://localhost:3000";
@@ -27,11 +27,10 @@ async function apiPost(path, body, bearer) {
     },
     body: JSON.stringify(body || {}),
   });
+
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(
-      `HTTP ${res.status} ${res.statusText}: ${text || "(no body)"}`
-    );
+    throw new Error(`HTTP ${res.status} ${res.statusText}: ${text || "(no body)"}`);
   }
   try {
     return JSON.parse(text);
@@ -55,6 +54,21 @@ export function useLiveShare({ getAppState, applyFullState }) {
   const [hostToken, setHostToken] = useState(null);
   const [viewerToken, setViewerToken] = useState(null);
 
+  // ----- MODAL STATE (host + viewer) -----
+  const [hostPwModal, setHostPwModal] = useState({
+    open: false,
+    error: "",
+    pending: false,
+    existingRoomId: null,
+  });
+
+  const [viewerPwModal, setViewerPwModal] = useState({
+    open: false,
+    error: "",
+    pending: false,
+    room: null,
+  });
+
   const client = useMemo(() => makeLiveClient({ serverUrl: LIVE_WS }), []);
   const clientRef = useRef(client);
 
@@ -63,17 +77,9 @@ export function useLiveShare({ getAppState, applyFullState }) {
   }, []);
 
   // ---------------- Host: create room and broadcast ----------------
-  async function startHosting(existingRoomId) {
-    // Ask the host for a password (MVP: simple prompt)
-    let password = window.prompt(
-      "Set a password for this room.\nViewers must enter this password to join:",
-      ""
-    );
-    if (password == null) {
-      // Host canceled dialog -> don't create room
-      throw new Error("Room creation cancelled by host");
-    }
-    password = password.trim();
+  async function startHosting(existingRoomId, password) {
+    const pw = String(password || "").trim();
+    if (!pw) throw new Error("Password is required");
 
     // 1) Create room + tokens (backend should hash/store password)
     let createPayload;
@@ -82,7 +88,7 @@ export function useLiveShare({ getAppState, applyFullState }) {
         room: existingRoomId || undefined,
         maxViewers: 25,
         ttlMinutes: 120,
-        password: password || null, // allow empty = no protection if you want
+        password: pw, // required
       });
     } catch (e) {
       console.error("[live] /live/create failed:", e);
@@ -91,19 +97,16 @@ export function useLiveShare({ getAppState, applyFullState }) {
 
     const room = createPayload.room;
     const hTok = createPayload.hostToken;
-    // viewerToken is optional here; we don't expose it in the URL anymore
     const vTok = createPayload.viewerToken || null;
 
-    if (!room || !hTok) {
-      throw new Error("Server did not return room/hostToken");
-    }
+    if (!room || !hTok) throw new Error("Server did not return room/hostToken");
 
     setRoomId(room);
     setHostToken(hTok);
     if (vTok) setViewerToken(vTok);
     setMode("host");
 
-    // 2) Join via socket with host token (send both room and roomId to satisfy either handler)
+    // 2) Join via socket with host token
     let ack;
     try {
       ack = await client.join({ room, roomId: room, asHost: true, token: hTok });
@@ -120,7 +123,7 @@ export function useLiveShare({ getAppState, applyFullState }) {
     // 3) Send initial snapshot
     client.sendFull({ schemaVersion: 1, state: getAppState() });
 
-    // 4) Throttled updates (MVP full-sends; can switch to patches later)
+    // 4) Throttled updates
     const sendThrottled = rafThrottle(() =>
       client.sendFull({ schemaVersion: 1, state: getAppState() })
     );
@@ -128,18 +131,18 @@ export function useLiveShare({ getAppState, applyFullState }) {
     return {
       room,
       hostToken: hTok,
-      viewerToken: vTok, // might be null; we don't put it into the URL
+      viewerToken: vTok,
       notifyChange: sendThrottled,
       stop: () => client.disconnect(),
     };
   }
 
   // ---------------- Viewer: subscribe & apply ----------------
-  async function startViewing(room, tokenFromUrlOrBackend) {
+  async function startViewing(room, tokenFromBackendOrStored) {
     setRoomId(room);
     setMode("viewer");
 
-    const vTok = tokenFromUrlOrBackend || viewerToken;
+    const vTok = tokenFromBackendOrStored || viewerToken;
     if (!vTok) throw new Error("viewer token missing");
 
     const ack = await client.join({ room, asHost: false, token: vTok });
@@ -147,48 +150,40 @@ export function useLiveShare({ getAppState, applyFullState }) {
 
     let gotInitial = false;
 
-    // helper: one-time listener
     function once(event, handler) {
       const off = client.on(event, function wrapper(...args) {
-        off && off(); // remove this wrapper
+        off && off();
         handler(...args);
       });
     }
 
-    // normal handlers (used after initial full)
     const onHostState = ({ schemaVersion, state }) => {
       if (schemaVersion !== 1) return;
       applyFullState(state);
     };
 
     const onHostPatch = ({ patch }) => {
-      if (!gotInitial) return; // ignore patches until we have the base state
-      // TODO: apply incremental patch here if you implement patching
+      if (!gotInitial) return;
+      // TODO: apply incremental patch later
     };
 
-    // Immediately request full snapshot from host after joining
+    // request full after join
     if (client.socket && client.socket.emit) {
       client.socket.emit("request_full", { room });
     }
 
-    // 1) Grab initial full EXACTLY ONCE
+    // initial full once
     once("host_state", ({ schemaVersion, state }) => {
       if (schemaVersion !== 1) return;
       gotInitial = true;
-      console.log("[live] initial state received", state);
       applyFullState(state);
-
-      // 2) After initial, wire the usual ongoing listeners
       client.on("host_state", onHostState);
       client.on("host_patch", onHostPatch);
     });
 
-    // Optional: safety net if the initial full doesn't arrive soon
+    // safety re-request
     setTimeout(() => {
       if (!gotInitial) {
-        console.warn(
-          "[live] No initial state received from host yet. Re-requesting full."
-        );
         if (client.socket && client.socket.emit) {
           client.socket.emit("request_full", { room });
         }
@@ -200,13 +195,11 @@ export function useLiveShare({ getAppState, applyFullState }) {
 
   // ---------------- Host: respond to request_full ----------------
   useEffect(() => {
-    // Host listens for request_full and replies with current full state
     const off = client.on("request_full", (payload) => {
-      if (mode !== "host") return; // only host should respond
+      if (mode !== "host") return;
       const currentRoom = roomId;
       if (!currentRoom || !payload) return;
 
-      // Optionally check payload.room === currentRoom
       try {
         client.sendFull({ schemaVersion: 1, state: getAppState() });
       } catch (e) {
@@ -214,58 +207,120 @@ export function useLiveShare({ getAppState, applyFullState }) {
       }
     });
 
-    return () => {
-      off && off();
-    };
+    return () => off && off();
   }, [client, mode, roomId, getAppState]);
 
-  // Share link NO LONGER contains the viewer token, only room + role
   function makeViewerLink(room) {
     const url = new URL(window.location.href);
     url.searchParams.set("room", room);
     url.searchParams.set("role", "viewer");
-    // no token in URL; viewer must enter password to get viewerToken
     return url.toString();
   }
 
-  // Auto-detect viewer mode if URL carries role=viewer
+  // ---------------- Modal openers/handlers ----------------
+  const openHostPasswordModal = useCallback((existingRoomId) => {
+    setHostPwModal({ open: true, error: "", pending: false, existingRoomId: existingRoomId || null });
+  }, []);
+
+  const cancelHostPasswordModal = useCallback(() => {
+    setHostPwModal((s) => ({ ...s, open: false, error: "", pending: false }));
+  }, []);
+
+  const submitHostPassword = useCallback(
+    async (password) => {
+      const pw = String(password || "").trim();
+      if (!pw) {
+        setHostPwModal((s) => ({ ...s, error: "Password is required." }));
+        return null;
+      }
+
+      setHostPwModal((s) => ({ ...s, pending: true, error: "" }));
+      try {
+        const result = await startHosting(hostPwModal.existingRoomId, pw);
+        setHostPwModal((s) => ({ ...s, open: false, pending: false, error: "" }));
+        return result;
+      } catch (e) {
+        setHostPwModal((s) => ({
+          ...s,
+          pending: false,
+          error: e?.message || "Failed to start sharing",
+        }));
+        return null;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hostPwModal.existingRoomId, startHosting]
+  );
+
+  const openViewerPasswordModal = useCallback((room) => {
+    setViewerPwModal({ open: true, error: "", pending: false, room });
+  }, []);
+
+  const cancelViewerPasswordModal = useCallback(() => {
+    setViewerPwModal((s) => ({ ...s, open: false, error: "", pending: false }));
+  }, []);
+
+  const submitViewerPassword = useCallback(
+    async (password) => {
+      const pw = String(password || "").trim();
+      if (!pw) {
+        setViewerPwModal((s) => ({ ...s, error: "Password is required." }));
+        return null;
+      }
+
+      const room = viewerPwModal.room;
+      if (!room) {
+        setViewerPwModal((s) => ({ ...s, error: "Missing room id." }));
+        return null;
+      }
+
+      setViewerPwModal((s) => ({ ...s, pending: true, error: "" }));
+      try {
+        const vTok = await fetchViewerToken(room, pw);
+        await startViewing(room, vTok);
+        setViewerPwModal((s) => ({ ...s, open: false, pending: false, error: "" }));
+        return true;
+      } catch (e) {
+        setViewerPwModal((s) => ({
+          ...s,
+          pending: false,
+          error: e?.message || "Wrong password / room expired",
+        }));
+        return null;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [viewerPwModal.room, startViewing]
+  );
+
+  // Auto-detect viewer mode (NO prompts now; opens modal)
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search);
     const role = sp.get("role");
     const room = sp.get("room");
-
     if (role === "viewer" && room) {
-      // Ask viewer for password
-      let password = window.prompt(
-        "This room is protected.\nPlease enter the room password:",
-        ""
-      );
-      if (password == null) {
-        console.warn("[live] viewer cancelled password dialog");
-        return;
-      }
-      password = password.trim();
-
-      // 1) Exchange room + password for a viewerToken
-      fetchViewerToken(room, password)
-        .then((vTok) => startViewing(room, vTok))
-        .catch((e) => {
-          console.error("[live] viewer join failed", e);
-          window.alert(
-            e?.message || "Could not join room. Wrong password or expired room."
-          );
-        });
+      openViewerPasswordModal(room);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [openViewerPasswordModal]);
 
   return {
     mode,
     roomId,
-    startHosting,
+    startHosting, // still usable directly if you want (but now requires password param)
     startViewing,
     makeViewerLink,
     hostToken,
     viewerToken,
+
+    // modal API
+    hostPwModal,
+    openHostPasswordModal,
+    cancelHostPasswordModal,
+    submitHostPassword,
+
+    viewerPwModal,
+    openViewerPasswordModal,
+    cancelViewerPasswordModal,
+    submitViewerPassword,
   };
 }
