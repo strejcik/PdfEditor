@@ -1162,8 +1162,37 @@ function isJpegLike(src) {
   return typeof src === "string" && (/^data:image\/jpe?g/i.test(src) || /\.jpe?g(\?.*)?$/i.test(src));
 }
 
+// Convert hex color to RGB object for pdf-lib
+function hexToRgb(hex) {
+  if (!hex || typeof hex !== "string") {
+    return rgb(0, 0, 0); // default to black
+  }
+
+  // Remove # if present
+  hex = hex.replace(/^#/, '');
+
+  // Parse hex values
+  let r, g, b;
+  if (hex.length === 3) {
+    // Short form (e.g., #fff)
+    r = parseInt(hex[0] + hex[0], 16);
+    g = parseInt(hex[1] + hex[1], 16);
+    b = parseInt(hex[2] + hex[2], 16);
+  } else if (hex.length === 6) {
+    // Full form (e.g., #ffffff)
+    r = parseInt(hex.substring(0, 2), 16);
+    g = parseInt(hex.substring(2, 4), 16);
+    b = parseInt(hex.substring(4, 6), 16);
+  } else {
+    return rgb(0, 0, 0); // default to black
+  }
+
+  // Convert to 0-1 range for pdf-lib
+  return rgb(r / 255, g / 255, b / 255);
+}
+
 // Existing helper assumed in your code; keep as-is.
-// If you don’t have it, implement a version that fetches http(s) and decodes non-SVG data URIs.
+// If you don't have it, implement a version that fetches http(s) and decodes non-SVG data URIs.
 async function loadArrayBuffer(urlOrDataUri) {
   if (typeof urlOrDataUri !== "string") throw new Error("Invalid src");
   if (urlOrDataUri.startsWith("data:")) {
@@ -1292,7 +1321,7 @@ async function saveAllPagesAsPDF() {
         y: baseline,
         size,
         font: pdfFont,
-        color: rgb(0, 0, 0),
+        color: hexToRgb(item.color),
       });
 
       pageManifest.texts.push({
@@ -1302,6 +1331,7 @@ async function saveAllPagesAsPDF() {
         fontSize: size,
         anchor: "top",
         index: item.index,
+        color: item.color,
       });
     }
 
