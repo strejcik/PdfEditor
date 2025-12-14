@@ -1,4 +1,5 @@
-import { PDF_HEIGHT, PDF_WIDTH } from "../config/constants";
+import { PDF_HEIGHT, PDF_WIDTH, CANVAS_WIDTH, CANVAS_HEIGHT } from "../config/constants";
+import { getMousePosOnCanvas } from "../utils/canvas/getMousePosOnCanvas";
 
 
 export function useMouse() {
@@ -1423,6 +1424,125 @@ lines = lines
 }
 
 
+const handleDoubleClick = (e: MouseEvent, opts: any) => {
+  const {
+    canvasRefs,
+    activePage,
+    textItems,
+    setIsEditing,
+    setEditingText,
+    setEditingFontSize,
+    setEditingIndex
+  } = opts;
+
+  const canvas = canvasRefs.current[activePage];
+  if (!canvas) return;
+
+  function toCssFromBacking(canvas: HTMLCanvasElement, { offsetX, offsetY }: { offsetX: number; offsetY: number }) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width;
+    const sy = canvas.height / rect.height;
+    return { x: offsetX / sx, y: offsetY / sy };
+  }
+
+  // Your getMousePosOnCanvas returns backing-store coords; convert to CSS units.
+  const backing = getMousePosOnCanvas(e, canvas); // { offsetX, offsetY } in backing px
+  const { x: mx, y: my } = toCssFromBacking(canvas, backing); // CSS px
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  // Use distance-based selection to find the nearest text item
+  let bestIndex: number | null = null;
+  let bestScore = Infinity;
+
+  for (let index = 0; index < textItems.length; index++) {
+    const item = textItems[index];
+    if (item.index !== activePage) continue;
+
+    const fontSize = Number(item.fontSize) || 16;
+    const fontFamily = item.fontFamily || 'Lato';
+    const padding = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
+
+    // Use same settings as drawCanvas
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = `${fontSize}px ${fontFamily}`;
+
+    // Resolve item position (prefer normalized)
+    const cssW = CANVAS_WIDTH;   // your logical canvas width
+    const cssH = CANVAS_HEIGHT;  // your logical canvas height
+
+    const hasNorm = item.xNorm != null && item.yNormTop != null;
+
+    const x = hasNorm ? (Math.min(Math.max(item.xNorm, 0), 1) * cssW)
+                      : (Number(item.x) || 0);
+
+    let topY: number;
+    if (hasNorm) {
+      topY = Math.min(Math.max(item.yNormTop, 0), 1) * cssH; // top-anchored
+    } else {
+      // Legacy anchor conversion → top-anchored y
+      const m = ctx.measureText(item.text || '');
+      const ascent = (typeof m.actualBoundingBoxAscent === 'number') ? m.actualBoundingBoxAscent : fontSize * 0.83;
+      const descent = (typeof m.actualBoundingBoxDescent === 'number') ? m.actualBoundingBoxDescent : fontSize * 0.2;
+      const textHeight = ascent + descent;
+
+      const anchor = item.anchor || 'top'; // 'top' | 'baseline' | 'bottom'
+      const rawY = Number(item.y) || 0;
+      if (anchor === 'baseline') topY = rawY - ascent;
+      else if (anchor === 'bottom') topY = rawY - textHeight;
+      else topY = rawY;
+    }
+
+    // Measure with the SAME font to get width/height
+    const m2 = ctx.measureText(item.text || '');
+    const ascent2 = (typeof m2.actualBoundingBoxAscent === 'number') ? m2.actualBoundingBoxAscent : fontSize * 0.83;
+    const descent2 = (typeof m2.actualBoundingBoxDescent === 'number') ? m2.actualBoundingBoxDescent : fontSize * 0.2;
+    const textWidth = m2.width;
+    const textHeight = ascent2 + descent2;
+
+    // Top-anchored bounding box
+    const boxX = x - padding;
+    const boxY = topY - padding;
+    const boxW = textWidth + padding * 2;
+    const boxH = textHeight + padding * 2;
+
+    // Hit-test in CSS units
+    const isInside = (mx >= boxX && mx <= boxX + boxW && my >= boxY && my <= boxY + boxH);
+
+    // Calculate selection score (same logic as mouse handlers)
+    let score: number;
+    if (isInside) {
+      // Cursor is inside - score by distance to center
+      const centerX = boxX + boxW / 2;
+      const centerY = boxY + boxH / 2;
+      score = Math.hypot(mx - centerX, my - centerY);
+    } else {
+      // Cursor is outside - add large penalty
+      const dx = mx < boxX ? boxX - mx : mx > boxX + boxW ? mx - (boxX + boxW) : 0;
+      const dy = my < boxY ? boxY - my : my > boxY + boxH ? my - (boxY + boxH) : 0;
+      score = Math.hypot(dx, dy) + 10000;
+    }
+
+    // Track the best (lowest score = nearest)
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  // Only edit if we found an item that contains the cursor
+  if (bestIndex !== null && bestScore < 10000) {
+    const item = textItems[bestIndex];
+    const fontSize = Number(item.fontSize) || 16;
+    setIsEditing(true);
+    setEditingText(item.text);
+    setEditingFontSize(fontSize);
+    setEditingIndex(bestIndex);
+  }
+};
+
     return {
         handleMouseDown,
         handleMouseMove,
@@ -1433,6 +1553,7 @@ lines = lines
         pdfToCssMargins,
         indexToXY,
         addTextToCanvasMlMode,
+        handleDoubleClick,
     }
 
 }

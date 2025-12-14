@@ -34,3 +34,23 @@ export type Page = {
 };
 
 export type UndoRedoState = Record<string, unknown>;
+
+export type TextBox = {
+  rawText?: string;
+  text?: string;
+  width: number;
+  height: number;
+  boxPadding?: number;
+  hasScaled?: boolean;
+  baseFontSize?: number;
+  minFontSize?: number;
+  maxFontSize?: number;
+  resizeBaseFontSize?: number;
+  resizeBaseWidth?: number;
+  resizeBaseHeight?: number;
+  baseWidth?: number;
+  baseHeight?: number;
+  x?: number;
+  y?: number;
+  fontSize?: number;
+};

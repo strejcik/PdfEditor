@@ -43,24 +43,6 @@ useEffect(() => {
 
 
 
-  function setupCanvasA4(canvas, portrait = true) {
-  const w = portrait ? canvasWidth : canvasHeight;
-  const h = portrait ? canvasHeight : canvasWidth;
-
-  const dpr = window.devicePixelRatio || 1;
-  // Backing store in device pixels
-  canvas.width  = Math.round(w * dpr);
-  canvas.height = Math.round(h * dpr);
-  // CSS size in logical pixels (no scaling in your math)
-  canvas.style.width  = `${w}px`;
-  canvas.style.height = `${h}px`;
-
-  const ctx = canvas.getContext('2d');
-  // Draw using logical units; DPR handled by transform
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  return { ctx, width: w, height: h };
-}
-
 
 
   const {
@@ -90,7 +72,7 @@ useEffect(() => {
       removePage
     },
 
-    text: {     
+    text: {
       textItems, setTextItems,
       isTextSelected, setIsTextSelected,
       selectedTextIndex, setSelectedTextIndex,
@@ -107,7 +89,8 @@ useEffect(() => {
       removeSelectedText, saveTextItemsToIndexedDB,
       wrapTextPreservingNewlinesResponsive, wrapTextResponsive,
       resolveTextLayout,
-      resolveTextLayoutForHit, addTextToCanvas
+      resolveTextLayoutForHit, addTextToCanvas, addTextToCanvas3,
+      setupCanvasA4, computeScaledTargetFont, addTextToCanvas2
     },
 
     images: { 
@@ -161,7 +144,8 @@ useEffect(() => {
       handleCanvasMouseUpMl,
       pdfToCssMargins,
       indexToXY,
-      addTextToCanvasMlMode
+      addTextToCanvasMlMode,
+      handleDoubleClick
     },
     keyboard: {
       handleKeyDown
@@ -347,7 +331,7 @@ useEffect(() => {
         isSelecting,
         isTextBoxEditEnabled,
         textBox,
-        activePage: p,
+        activePage,
         isMultilineMode: isMultilineMode && isActive,
 
         // multiline editor only on active page
@@ -379,7 +363,7 @@ useEffect(() => {
               isSelecting,
               isTextBoxEditEnabled,
               textBox,
-              activePage: idx,
+              activePage,
               isMultilineMode: isMultilineMode && idx === activePage,
               canvasRefs,
               mlConfig,
@@ -433,23 +417,17 @@ useEffect(() => {
 
 
 
+
+
+
 useLayoutEffect(() => {
   const canvas = canvasRefs.current[activePage];
   if (canvas) {
-    canvas.width = canvas.clientWidth;
+        canvas.width = canvas.clientWidth;
     canvas.height = canvas.clientHeight;
     drawCanvas(activePage);
   }
-}, [activePage]);
-
-
-
-useLayoutEffect(() => {
-  const canvas = canvasRefs.current[activePage];
-  if (canvas) {
-    drawCanvas(activePage);
-  }
-}, [activePage, textItems, imageItems, isSelecting, selectionStart, selectionEnd]);
+}, [textItems, imageItems, isSelecting, selectionStart, selectionEnd]);
 
 
 
@@ -522,7 +500,6 @@ useEffect(() => {
 
 
 
-useEffect(() => { drawCanvas(activePage); }, [activePage, textItems, imageItems]);
 
 
 
@@ -650,309 +627,6 @@ useEffect(() => {
 
 
 
-const addTextToCanvas3 = (items = []) => {
-  const usingImport = Array.isArray(items) && items.length > 0;
-  if (!usingImport && (!newText || newText.trim() === "")) return;
-
-  // Snapshot BEFORE mutation (for undo)
-  if (typeof pushSnapshotToUndo === "function") {
-    pushSnapshotToUndo(activePage);
-  } else if (history?.pushSnapshotToUndo) {
-    history.pushSnapshotToUndo(activePage);
-  }
-
-  // Dimensions (used to convert norms <-> px)
-  const canvas = canvasRefs?.current?.[activePage];
-  const rect = canvas?.getBoundingClientRect?.() || { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
-  const cssW = (typeof rect.width === "number" && rect.width > 0) ? rect.width : CANVAS_WIDTH;
-  const cssH = (typeof rect.height === "number" && rect.height > 0) ? rect.height : CANVAS_HEIGHT;
-
-  const fontFamilyDefault = "Lato";
-  const fallbackSize = Number(newFontSize) || Number(fontSize) || 16;
-
-  const newTextItems = [];
-  const newImageItems = [];
-
-  // Helpers
-  const toNum = (v, def = 0) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : def;
-  };
-
-  // Be very permissive when deciding if an item is an image
-  const isImageLike = (o) => {
-    if (!o || typeof o !== "object") return false;
-    if (o.type === "image") return true;
-    // Consider as image if it has any of these signals:
-    if ("widthNorm" in o || "heightNorm" in o) return true;
-    if ("pixelWidth" in o || "pixelHeight" in o) return true;
-    if (typeof o.ref === "string" || typeof o.data === "string" || typeof o.src === "string") return true;
-    // If it has only text fields, treat as text:
-    if ("text" in o && !("widthNorm" in o) && !("heightNorm" in o)) return false;
-    return false;
-  };
-
-  // Normalize incoming -> newTextItems / newImageItems
-  if (usingImport) {
-    for (const src of items) {
-      const pageIndex = (typeof src?.index === "number") ? src.index : activePage;
-
-      if (isImageLike(src)) {
-        const xNorm     = (src.xNorm     != null) ? toNum(src.xNorm)     : (src.x != null ? toNum(src.x) / cssW : 0);
-        const yNormTop  = (src.yNormTop  != null) ? toNum(src.yNormTop)  : (src.y != null ? toNum(src.y) / cssH : 0);
-        const widthNorm = (src.widthNorm != null) ? toNum(src.widthNorm) : (src.width  != null ? toNum(src.width)  / cssW : 0);
-        const heightNorm= (src.heightNorm!= null) ? toNum(src.heightNorm): (src.height != null ? toNum(src.height) / cssH : 0);
-
-        const x = xNorm * cssW;
-        const y = yNormTop * cssH;
-        const width = widthNorm * cssW;
-        const height = heightNorm * cssH;
-
-        // Prefer base64 data URI if present; keep whatever you have in .data
-        const dataCandidate =
-          (typeof src.ref === "string" && src.ref) ||
-          (typeof src.data === "string" && src.data) ||
-          (typeof src.src === "string" && src.src) ||
-          null;
-
-        newImageItems.push({
-          type: "image",
-          index: pageIndex,
-
-          // normalized (persisted)
-          xNorm, yNormTop, widthNorm, heightNorm,
-
-          // concrete px (draw)
-          x, y, width, height,
-
-          // meta passthrough
-          name: src.name ?? null,
-          pixelWidth: Number.isFinite(src?.pixelWidth) ? Number(src.pixelWidth) : null,
-          pixelHeight: Number.isFinite(src?.pixelHeight) ? Number(src.pixelHeight) : null,
-
-          // bytes/url for draw
-          data: dataCandidate,
-        });
-      } else {
-        // TEXT
-        const size = toNum(src?.fontSize, fallbackSize);
-
-        const xNorm    = (src?.xNorm    != null) ? toNum(src.xNorm)    : (src?.x != null ? toNum(src.x) / cssW : 0);
-        const yNormTop = (src?.yNormTop != null) ? toNum(src.yNormTop) : (src?.y != null ? toNum(src.y) / cssH : 0);
-
-        const x = xNorm * cssW;
-        const y = yNormTop * cssH;
-
-        const padding = (src?.boxPadding != null)
-          ? toNum(src.boxPadding)
-          : Math.round(size * 0.2);
-
-        newTextItems.push({
-          type: "text",
-          text: String(src?.text ?? ""),
-          x, y,
-          xNorm, yNormTop,
-          fontSize: size,
-          boxPadding: padding,
-          index: pageIndex,
-          anchor: "top",
-          fontFamily: String(src?.fontFamily || fontFamilyDefault),
-        });
-      }
-    }
-  } else {
-    // Manual add (single text)
-    const size = fallbackSize;
-    const padding = Math.round(size * 0.2);
-    const x = 50, y = 50;
-
-    newTextItems.push({
-      type: "text",
-      text: newText,
-      x, y,
-      xNorm: x / cssW,
-      yNormTop: y / cssH,
-      fontSize: size,
-      boxPadding: padding,
-      index: activePage,
-      anchor: "top",
-      fontFamily: fontFamilyDefault,
-    });
-  }
-
-  // Commit to global stores first (so draw code can use them immediately)
-  if (newTextItems.length) {
-    setTextItems((prev) => {
-      const merged = Array.isArray(prev) ? [...prev, ...newTextItems] : [...newTextItems];
-      saveTextItemsToIndexedDB?.(merged);
-      return merged;
-    });
-  }
-  if (newImageItems.length) {
-    setImageItems?.((prev) => {
-      const merged = Array.isArray(prev) ? [...prev, ...newImageItems] : [...newImageItems];
-      saveImageItemsToIndexedDB?.(merged);
-      return merged;
-    });
-  }
-
-  // Group by page to persist in `pages`
-  const byPage = new Map();
-  for (const ti of newTextItems) {
-    const entry = byPage.get(ti.index) ?? { textItems: [], imageItems: [] };
-    entry.textItems.push({ ...ti });
-    byPage.set(ti.index, entry);
-  }
-  for (const ii of newImageItems) {
-    const entry = byPage.get(ii.index) ?? { textItems: [], imageItems: [] };
-    entry.imageItems.push({ ...ii });
-    byPage.set(ii.index, entry);
-  }
-
-  // Robust setPages: supports array or object, preserves existing items, appends both text & images.
-  setPages((prev) => {
-    let next = prev;
-
-    // If pages isn't an array/object yet, initialize as array
-    if (!next || (typeof next !== "object")) {
-      next = [];
-    }
-
-    // Clone shallowly to avoid mutating prev
-    next = Array.isArray(next) ? [...next] : { ...next };
-
-    for (const [pIdx, group] of byPage.entries()) {
-      // Read existing page slice
-      const curr = Array.isArray(next)
-        ? (next[pIdx] || { textItems: [], imageItems: [] })
-        : (next[pIdx] || { textItems: [], imageItems: [] });
-
-      const currText = Array.isArray(curr.textItems) ? curr.textItems : [];
-      const currImgs = Array.isArray(curr.imageItems) ? curr.imageItems : [];
-
-      const mergedPage = {
-        ...curr,
-        textItems: [...currText, ...group.textItems],
-        imageItems: [...currImgs, ...group.imageItems],
-      };
-
-      // Write back (supports both array and object pages store)
-      if (Array.isArray(next)) {
-        next[pIdx] = mergedPage;             // creates sparse entries if needed
-      } else {
-        next[pIdx] = mergedPage;             // object keyed by index
-      }
-    }
-
-    return next;
-  });
-
-  // Redraw if needed
-  drawCanvas?.(activePage);
-
-  // Reset inputs for manual add
-  if (!usingImport) {
-    setShowAddTextModal?.(false);
-    setNewText?.("");
-    setNewFontSize?.(fontSize);
-    setMaxWidth?.(200);
-  }
-};
-
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-const computeScaledTargetFont = (textBox) => {
-  const minFont  = Number(textBox.minFontSize ?? 6);
-  const maxFont  = Number(textBox.maxFontSize ?? 80);
-
-  // ✅ use resize-start base if available, else creation base
-  const baseFont = Number(textBox.resizeBaseFontSize ?? textBox.baseFontSize ?? 20);
-
-  const w = Math.max(1, Number(textBox.width) || 1);
-  const h = Math.max(1, Number(textBox.height) || 1);
-
-  const baseW = Math.max(1, Number(textBox.resizeBaseWidth ?? textBox.baseWidth ?? 1));
-  const baseH = Math.max(1, Number(textBox.resizeBaseHeight ?? textBox.baseHeight ?? 1));
-
-  const wScale = Math.max(0.01, w / baseW);
-  const hScale = Math.max(0.01, h / baseH);
-
-  // growth when either axis grows
-  const scale = Math.max(wScale, hScale);
-
-  return clamp(baseFont * scale, minFont, maxFont);
-};
-
-const addTextToCanvas2 = (textBox) => {
-  console.log(textBox);
-  const sourceText = (textBox?.rawText ?? textBox?.text ?? "").toString();
-  if (!sourceText.trim()) return;
-
-  const canvas = canvasRefs.current[activePage];
-  if (!canvas) return;
-
-  const { ctx } = setupCanvasA4(canvas, true);
-  if (!ctx) return;
-
-  const family = APP_FONT_FAMILY || "Arial";
-
-  const requestedPadding = textBox.boxPadding ?? 10;
-  const maxPadX = Math.floor((textBox.width || 0) / 2) - 1;
-  const maxPadY = Math.floor((textBox.height || 0) / 2) - 1;
-  const padding = Math.max(0, Math.min(requestedPadding, Math.max(0, Math.min(maxPadX, maxPadY))));
-
-  // Use scaling target font (so commit matches editor)
-  const targetFont = computeScaledTargetFont(textBox, 6);
-  ctx.font = `${targetFont}px ${family}`;
-
-  const layout = wrapTextPreservingNewlinesResponsive(
-    sourceText,
-    ctx,
-    textBox.width,
-    textBox.height,
-    targetFont,
-    padding,
-    6,
-    family,
-    4
-  );
-
-  const textItemsToAdd = layout.lines.map((line, i) => ({
-    text: line,
-    fontSize: layout.fontSize,
-    boxPadding: padding,
-    x: (textBox.x || 0) + padding,
-    y: (textBox.y || 0) + padding + i * layout.lineHeight,
-    index: activePage,
-  }));
-
-  setTextItems((prev) => {
-    const prevArr = Array.isArray(prev) ? prev : [];
-    const nextTextItems = [...prevArr, ...textItemsToAdd.map((it) => ({ ...it }))];
-
-    saveTextItemsToIndexedDB?.(nextTextItems);
-
-    setPages((prevPages) => {
-      const nextPages = Array.isArray(prevPages) ? [...prevPages] : [];
-      const page = nextPages[activePage] || { textItems: [], imageItems: [] };
-
-      nextPages[activePage] = {
-        ...page,
-        textItems: nextTextItems.filter((it) => it.index === activePage).map((it) => ({ ...it })),
-        imageItems: page.imageItems || [],
-      };
-
-      return nextPages;
-    });
-
-    return nextTextItems;
-  });
-
-  setTextBox(null);
-};
-
-
-
 
 
 
@@ -1068,12 +742,6 @@ async function loadArrayBuffer(url) {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
   return await res.arrayBuffer();
-}
-
-function pdfAscentAt(font, size) {
-  if (typeof font.ascentAtSize === "function") return font.ascentAtSize(size);
-  if (typeof font.heightAtSize === "function") return font.heightAtSize(size) * 0.83;
-  return size * 0.8;
 }
 
 // Converges on the *same* top-left canvas coordinates you draw with
@@ -1466,116 +1134,6 @@ useEffect(() => {
 
 
 
-const handleDoubleClick = (e) => {
-  const canvas = canvasRefs.current[activePage];
-  if (!canvas) return;
-
-
-function toCssFromBacking(canvas, { offsetX, offsetY }) {
-  const rect = canvas.getBoundingClientRect();
-  const sx = canvas.width / rect.width;
-  const sy = canvas.height / rect.height;
-  return { x: offsetX / sx, y: offsetY / sy };
-}
-
-  // Your getMousePosOnCanvas returns backing-store coords; convert to CSS units.
-  const backing = getMousePosOnCanvas(e, canvas); // { offsetX, offsetY } in backing px
-  const { x: mx, y: my } = toCssFromBacking(canvas, backing); // CSS px
-
-  const ctx = canvas.getContext('2d');
-
-  // Use distance-based selection to find the nearest text item
-  let bestIndex = null;
-  let bestScore = Infinity;
-
-  for (let index = 0; index < textItems.length; index++) {
-    const item = textItems[index];
-    if (item.index !== activePage) continue;
-
-    const fontSize   = Number(item.fontSize) || 16;
-    const fontFamily = item.fontFamily || 'Lato';
-    const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
-
-    // Use same settings as drawCanvas
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.font = `${fontSize}px ${fontFamily}`;
-
-    // Resolve item position (prefer normalized)
-    const cssW = CANVAS_WIDTH;   // your logical canvas width
-    const cssH = CANVAS_HEIGHT;  // your logical canvas height
-
-    const hasNorm = item.xNorm != null && item.yNormTop != null;
-
-    const x = hasNorm ? (Math.min(Math.max(item.xNorm, 0), 1) * cssW)
-                      : (Number(item.x) || 0);
-
-    let topY;
-    if (hasNorm) {
-      topY = Math.min(Math.max(item.yNormTop, 0), 1) * cssH; // top-anchored
-    } else {
-      // Legacy anchor conversion → top-anchored y
-      const m = ctx.measureText(item.text || '');
-      const ascent  = (typeof m.actualBoundingBoxAscent  === 'number') ? m.actualBoundingBoxAscent  : fontSize * 0.83;
-      const descent = (typeof m.actualBoundingBoxDescent === 'number') ? m.actualBoundingBoxDescent : fontSize * 0.2;
-      const textHeight = ascent + descent;
-
-      const anchor = item.anchor || 'top'; // 'top' | 'baseline' | 'bottom'
-      const rawY   = Number(item.y) || 0;
-      if (anchor === 'baseline')       topY = rawY - ascent;
-      else if (anchor === 'bottom')    topY = rawY - textHeight;
-      else                              topY = rawY;
-    }
-
-    // Measure with the SAME font to get width/height
-    const m2 = ctx.measureText(item.text || '');
-    const ascent2  = (typeof m2.actualBoundingBoxAscent  === 'number') ? m2.actualBoundingBoxAscent  : fontSize * 0.83;
-    const descent2 = (typeof m2.actualBoundingBoxDescent === 'number') ? m2.actualBoundingBoxDescent : fontSize * 0.2;
-    const textWidth  = m2.width;
-    const textHeight = ascent2 + descent2;
-
-    // Top-anchored bounding box
-    const boxX = x - padding;
-    const boxY = topY - padding;
-    const boxW = textWidth + padding * 2;
-    const boxH = textHeight + padding * 2;
-
-    // Hit-test in CSS units
-    const isInside = (mx >= boxX && mx <= boxX + boxW && my >= boxY && my <= boxY + boxH);
-
-    // Calculate selection score (same logic as mouse handlers)
-    let score;
-    if (isInside) {
-      // Cursor is inside - score by distance to center
-      const centerX = boxX + boxW / 2;
-      const centerY = boxY + boxH / 2;
-      score = Math.hypot(mx - centerX, my - centerY);
-    } else {
-      // Cursor is outside - add large penalty
-      const dx = mx < boxX ? boxX - mx : mx > boxX + boxW ? mx - (boxX + boxW) : 0;
-      const dy = my < boxY ? boxY - my : my > boxY + boxH ? my - (boxY + boxH) : 0;
-      score = Math.hypot(dx, dy) + 10000;
-    }
-
-    // Track the best (lowest score = nearest)
-    if (score < bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
-  }
-
-  // Only edit if we found an item that contains the cursor
-  if (bestIndex !== null && bestScore < 10000) {
-    const item = textItems[bestIndex];
-    const fontSize = Number(item.fontSize) || 16;
-    setIsEditing(true);
-    setEditingText(item.text);
-    setEditingFontSize(fontSize);
-    setEditingIndex(bestIndex);
-  }
-};
-
-
 // Function to save the edited text and font size
 const saveEditedText = () => {
   if (editingIndex !== null && editingText.trim() !== '') {
@@ -1669,7 +1227,16 @@ formData.append("images", "1");
 
     setIsPdfDownloaded(true);
     // Your improved addTextToCanvas3 already handles both text and images
-    addTextToCanvas3(normalized);
+    addTextToCanvas3(normalized, {
+      pushSnapshotToUndo,
+      activePage,
+      canvasRefs,
+      fontSize,
+      setImageItems,
+      setPages,
+      saveImageItemsToIndexedDB,
+      drawCanvas,
+    });
   } catch (error) {
     console.error("Error uploading PDF:", error);
     alert("Failed to upload PDF. Please try again.");
@@ -2315,8 +1882,17 @@ return (
                     ? viewOnly
                     : () => {
                         setIsTextBoxEditEnabled((prev) => !prev);
-                        if (textBox !== null) addTextToCanvas2(textBox, maxWidth);
-                        setTextBox(null);
+                        if (textBox !== null) {
+                          addTextToCanvas2(textBox, {
+                            activePage,
+                            canvasRefs,
+                            setPages,
+                            APP_FONT_FAMILY,
+                            setTextBox
+                          });
+                        } else {
+                          setTextBox(null);
+                        }
                       }
                 }
                 disabled={isViewer}
@@ -2682,7 +2258,15 @@ return (
                               history,
                             })
                 }
-                onDoubleClick={isViewer ? viewOnly : handleDoubleClick}
+                onDoubleClick={isViewer ? viewOnly : (e) => handleDoubleClick(e, {
+                  canvasRefs,
+                  activePage,
+                  textItems,
+                  setIsEditing,
+                  setEditingText,
+                  setEditingFontSize,
+                  setEditingIndex
+                })}
               />
 
               {/* Only render RulerOverlay when canvas is ready */}
