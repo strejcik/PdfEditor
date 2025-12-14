@@ -197,7 +197,7 @@ useEffect(() => {
 
 
 
-  const textBoxRef = useRef(null);
+const textBoxRef = useRef(null);
 const rafDrawRef = useRef(0);
 
 useEffect(() => {
@@ -1484,6 +1484,10 @@ function toCssFromBacking(canvas, { offsetX, offsetY }) {
 
   const ctx = canvas.getContext('2d');
 
+  // Use distance-based selection to find the nearest text item
+  let bestIndex = null;
+  let bestScore = Infinity;
+
   for (let index = 0; index < textItems.length; index++) {
     const item = textItems[index];
     if (item.index !== activePage) continue;
@@ -1538,13 +1542,36 @@ function toCssFromBacking(canvas, { offsetX, offsetY }) {
 
     // Hit-test in CSS units
     const isInside = (mx >= boxX && mx <= boxX + boxW && my >= boxY && my <= boxY + boxH);
+
+    // Calculate selection score (same logic as mouse handlers)
+    let score;
     if (isInside) {
-      setIsEditing(true);
-      setEditingText(item.text);
-      setEditingFontSize(fontSize);
-      setEditingIndex(index);
-      return;
+      // Cursor is inside - score by distance to center
+      const centerX = boxX + boxW / 2;
+      const centerY = boxY + boxH / 2;
+      score = Math.hypot(mx - centerX, my - centerY);
+    } else {
+      // Cursor is outside - add large penalty
+      const dx = mx < boxX ? boxX - mx : mx > boxX + boxW ? mx - (boxX + boxW) : 0;
+      const dy = my < boxY ? boxY - my : my > boxY + boxH ? my - (boxY + boxH) : 0;
+      score = Math.hypot(dx, dy) + 10000;
     }
+
+    // Track the best (lowest score = nearest)
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  // Only edit if we found an item that contains the cursor
+  if (bestIndex !== null && bestScore < 10000) {
+    const item = textItems[bestIndex];
+    const fontSize = Number(item.fontSize) || 16;
+    setIsEditing(true);
+    setEditingText(item.text);
+    setEditingFontSize(fontSize);
+    setEditingIndex(bestIndex);
   }
 };
 

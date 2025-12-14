@@ -411,20 +411,46 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
     }
 
     // ======== 3) TEXT: hit-test (top-anchored; supports off-canvas x<0) ========
-    for (let index = textItems.length - 1; index >= 0; index--) {
+    // Find the text item nearest to the cursor (not just the topmost one)
+    let bestTextIndex = null;
+    let bestTextScore = Infinity;
+
+    for (let index = 0; index < textItems.length; index++) {
         const item = textItems[index];
         if (item.index !== activePage) continue;
 
         const L = resolveTextLayoutForHit(item, ctx, canvas);
         const b = L.box;
 
-        if (cssX >= b.x && cssX <= b.x + b.w && cssY >= b.y && cssY <= b.y + b.h) {
-        setIsTextSelected(true);
-        setSelectedTextIndex(index);
+        const isInside = cssX >= b.x && cssX <= b.x + b.w && cssY >= b.y && cssY <= b.y + b.h;
 
-        const newSelectedIndexes = selectedTextIndexes.includes(index)
+        let score;
+        if (isInside) {
+            // Cursor is inside this box - score by distance to center
+            const centerX = b.x + b.w / 2;
+            const centerY = b.y + b.h / 2;
+            score = Math.hypot(cssX - centerX, cssY - centerY);
+        } else {
+            // Cursor is outside - add large penalty
+            const dx = cssX < b.x ? b.x - cssX : cssX > b.x + b.w ? cssX - (b.x + b.w) : 0;
+            const dy = cssY < b.y ? b.y - cssY : cssY > b.y + b.h ? cssY - (b.y + b.h) : 0;
+            score = Math.hypot(dx, dy) + 10000;
+        }
+
+        if (score < bestTextScore) {
+            bestTextScore = score;
+            bestTextIndex = index;
+        }
+    }
+
+    // If we found a text item that contains the cursor, select it
+    if (bestTextIndex !== null && bestTextScore < 10000) {
+        setIsTextSelected(true);
+        setSelectedTextIndex(bestTextIndex);
+
+        const newSelectedIndexes = selectedTextIndexes.includes(bestTextIndex)
             ? [...selectedTextIndexes]
-            : [index];
+            : [bestTextIndex];
 
         setSelectedTextIndexes(newSelectedIndexes);
         setIsDragging(true);
@@ -438,7 +464,6 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         setInitialPositions(init);
         setIsSelecting(false);
         return;
-        }
     }
 
     // ======== 4) TEXTBOX: resize handle ========
@@ -951,7 +976,10 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         }) : tb);
       }
     
-     if (isDragging) {
+     // Track if we were dragging before clearing state
+  const wasDragging = isDragging;
+
+  if (isDragging) {
     setIsDragging(false);
     setInitialPositions([]);
     setDragStart({ x: 0, y: 0 });
@@ -965,7 +993,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     setDragStart({ x: 0, y: 0 });
     pushSnapshotToUndo(activePage);
   }
-    
+
       if (isSelecting) {
         const selectedIndexes = [];
         const updatedInitials = [];
@@ -1026,52 +1054,58 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     
         setIsSelecting(false);
         setShouldClearSelectionBox(true);
-      } else {
+      } else if (!wasDragging) {
         // --- SINGLE-ITEM PICK on click/tap ---
+        // Only run this if we weren't dragging (i.e., didn't already select in handleMouseDown)
         const pt = getCanvasPoint(e, canvas); // <- use event coordinates, not selectionStart/End
-    
+
         const pointInRect = (px:any, py:any, r:any) =>
           px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
-    
+
         let pickedIdx = null;
-    
-        // Pass 1: choose the TOPMOST item that contains the point (iterate from end)
-        for (let i = textItems.length - 1; i >= 0; i--) {
+        let bestScore = Infinity;
+
+        // Calculate a "selection score" for each text item
+        // Lower score = better match (should be selected)
+        for (let i = 0; i < textItems.length; i++) {
           const item = textItems[i];
           if (item.index !== activePage) continue;
-    
+
           const L = resolveTextLayoutForHit(item, ctx, canvas);
           const b = L.box; // {x,y,w,h} – tight glyph bbox
-    
-          if (pointInRect(pt.x, pt.y, b)) {
+
+          const isInside = pointInRect(pt.x, pt.y, b);
+
+          let score;
+          if (isInside) {
+            // Cursor is inside this box
+            // Score = distance to center (smaller = cursor is more centered in the item)
+            const centerX = b.x + b.w / 2;
+            const centerY = b.y + b.h / 2;
+            score = Math.hypot(pt.x - centerX, pt.y - centerY);
+          } else {
+            // Cursor is outside this box
+            // Score = distance to nearest edge + large penalty
+            const dx = pt.x < b.x ? b.x - pt.x : pt.x > b.x + b.w ? pt.x - (b.x + b.w) : 0;
+            const dy = pt.y < b.y ? b.y - pt.y : pt.y > b.y + b.h ? pt.y - (b.y + b.h) : 0;
+            const edgeDist = Math.hypot(dx, dy);
+
+            // Add a large penalty so items containing the cursor are always preferred
+            score = edgeDist + 10000;
+          }
+
+          // Pick the item with the lowest score
+          if (score < bestScore) {
+            bestScore = score;
             pickedIdx = i;
-            break; // topmost found
           }
         }
-    
-        // Pass 2: if none contain, snap to nearest within a small threshold
-        if (pickedIdx === null) {
-          const NEAR_THRESHOLD = 6; // px
-          let bestDist = Infinity;
-    
-          for (let i = textItems.length - 1; i >= 0; i--) {
-            const item = textItems[i];
-            if (item.index !== activePage) continue;
-    
-            const L = resolveTextLayoutForHit(item, ctx, canvas);
-            const b = L.box;
-    
-            const dx =
-              pt.x < b.x ? b.x - pt.x : pt.x > b.x + b.w ? pt.x - (b.x + b.w) : 0;
-            const dy =
-              pt.y < b.y ? b.y - pt.y : pt.y > b.y + b.h ? pt.y - (b.y + b.h) : 0;
-            const dist = Math.hypot(dx, dy);
-    
-            if (dist <= NEAR_THRESHOLD && dist < bestDist) {
-              bestDist = dist;
-              pickedIdx = i;
-            }
-          }
+
+        // Only select if we found something reasonably close
+        const NEAR_THRESHOLD = 6; // px
+        if (pickedIdx !== null && bestScore > 10000 + NEAR_THRESHOLD) {
+          // Too far away, don't select anything
+          pickedIdx = null;
         }
     
         if (pickedIdx !== null) {
