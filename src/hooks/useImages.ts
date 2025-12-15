@@ -47,7 +47,7 @@ export function useImages() {
 /** Opens (or creates) an IndexedDB named "PdfEditorDB" with objectStore "imageItems" */
 function openImageItemsDB() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("PdfEditorDB", 3);
+    const request = indexedDB.open("PdfEditorDB", 4);
     request.onupgradeneeded = (event:any) => {
       const db = event.target.result;
       // Create stores if missing (we can future-proof by ensuring both exist)

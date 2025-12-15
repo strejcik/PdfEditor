@@ -12,6 +12,11 @@ import { useClipboard } from "../hooks/useClipboard";
 import {importStateFromJson} from '../utils/json/importStateFromJson'
 import RulerOverlay from '../utils/ruler/RulerOverlay'
 import { HostPasswordModal, ViewerPasswordModal, ShareLinkModal } from "../components/LiveShareModals";
+import { wrapText } from "../utils/text/wrapText";
+import { ConfirmationModal } from "../components/ConfirmationModal";
+import { handleJSONImport } from "../utils/json/jsonImportHandler";
+import { clearAllEditorState } from "../utils/persistance/indexedDBCleaner";
+import { savePages } from "../utils/persistance/pagesStorage";
 
 import {
   pushGraphicsState, popGraphicsState,
@@ -32,7 +37,24 @@ const App = () => {
   const fontsReadyRef = useRef(null);
 
   const jsonRef = useRef(null);
-  const onJsonPick = () => jsonRef.current?.click();
+  const [showLoadJsonModal, setShowLoadJsonModal] = useState(false);
+  const pendingFileRef = useRef(null);
+
+  const onJsonPick = () => {
+    setShowLoadJsonModal(true);
+  };
+
+  const handleLoadJsonConfirm = async () => {
+    setShowLoadJsonModal(false);
+    // Clear IndexedDB and localStorage
+    await clearAllEditorState();
+    // Trigger file picker
+    jsonRef.current?.click();
+  };
+
+  const handleLoadJsonCancel = () => {
+    setShowLoadJsonModal(false);
+  };
 
 useEffect(() => {
     fontsReadyRef.current = loadLatoOnce("../../public/fonts/Lato-Regular.ttf", "Lato");
@@ -650,87 +672,7 @@ const deleteSelectedImage = () => {
 };
 
 
-const wrapText = (text, ctx, {
-  x = 50,
-  y = 50,
-  maxWidth = Infinity,
-  fontSize = 16,
-  fontFamily = "Lato",
-  lineGap = 0,              // extra gap between lines in pixels
-} = {}) => {
-  if (!text) return [];
-
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
-  ctx.font = `${fontSize}px ${fontFamily}`;
-
-  // Measure a representative glyph to get ascent+descent for line height
-  const m = ctx.measureText("Mg");
-  const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
-  const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.2;
-  const lineHeight = Math.ceil(ascent + descent + lineGap);
-
-  const lines = [];
-  const paragraphs = String(text).split("\n");
-
-  for (const paragraph of paragraphs) {
-    const words = paragraph.split(" ");
-    let current = "";
-
-    for (let w = 0; w < words.length; w++) {
-      const word = words[w];
-      const next = current ? current + " " + word : word;
-      const nextWidth = ctx.measureText(next).width;
-      const wordWidth = ctx.measureText(word).width;
-
-      // If a single word is wider than maxWidth, break it by characters
-      if (wordWidth > maxWidth) {
-        // push the current line first
-        if (current) {
-          lines.push(current);
-          current = "";
-        }
-        let chunk = "";
-        for (let i = 0; i < word.length; i++) {
-          const tryChunk = chunk + word[i];
-          const chunkWidth = ctx.measureText(tryChunk).width;
-          if (chunkWidth > maxWidth && chunk) {
-            lines.push(chunk);
-            chunk = word[i];
-          } else {
-            chunk = tryChunk;
-          }
-        }
-        if (chunk) {
-          current = chunk; // continue current with the leftover piece
-        }
-      } else if (nextWidth > maxWidth && current) {
-        // wrap before adding word
-        lines.push(current);
-        current = word;
-      } else {
-        current = next;
-      }
-
-      if (w === words.length - 1 && current) {
-        lines.push(current);
-        current = "";
-      }
-    }
-    // keep blank line if paragraph ends with an empty current
-    if (paragraph === "" ) lines.push("");
-  }
-
-  // Map to positioned lines (top-anchored)
-  return lines.map((line, i) => ({
-    text: line,
-    x: Math.round(x),
-    y: Math.round(y + i * lineHeight),
-  }));
-};
-
-
-  const toggleGrid = () => {
+const toggleGrid = () => {
     setShowGrid((prevShowGrid) => !prevShowGrid);
     drawCanvas(activePage);
   };
@@ -1483,101 +1425,24 @@ async function exportStateToJson(
 
 
 
-async function readFileAsText(file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(String(fr.result || ""));
-    fr.onerror = reject;
-    fr.readAsText(file);
-  });
-}
-
-// Replace the checksumRaw value with "" while preserving surrounding formatting.
-function blankChecksumRawInText(jsonText) {
-  // Matches: "checksumRaw" : "anything including escapes"
-  // and replaces the string with empty string ""
-  return jsonText.replace(
-    /("checksumRaw"\s*:\s*)"(?:[^"\\]|\\.)*"/,
-    '$1""'
-  );
-}
-
-async function verifyDualChecksums(originalText) {
-  // Parse first to get fields
-  let parsed;
-  try {
-    parsed = JSON.parse(originalText);
-  } catch {
-    return { ok: false, reason: "Invalid JSON", fail: "parse" };
-  }
-
-  // 1) Raw checksum check
-  if (typeof parsed.checksumRaw !== "string") {
-    return { ok: false, reason: "Missing checksumRaw", fail: "raw-missing" };
-  }
-  const blanked = blankChecksumRawInText(originalText);
-  const actualRaw = await sha256String(blanked);
-  const okRaw = parsed.checksumRaw === actualRaw;
-
-  // 2) Canonical object checksum (optional but recommended)
-  if (typeof parsed.checksum !== "string") {
-    return { ok: false, reason: "Missing checksum", fail: "canon-missing", okRaw };
-  }
-  // Exclude both checksums for canonical hashing
-  const { checksum, checksumRaw, ...rest } = parsed;
-  const actualCanon = await computeChecksum(rest);
-  const okCanon = parsed.checksum === actualCanon;
-
-  return {
-    ok: okRaw && okCanon,
-    okRaw,
-    okCanon,
-    expectedRaw: parsed.checksumRaw,
-    actualRaw,
-    expectedCanon: parsed.checksum,
-    actualCanon,
-    parsed, // return parsed for the caller
-  };
-}
-
-// Example onChange handler that enforces both checks
+// Handler for JSON file import
 const onJSONChange = async (e) => {
-  const file = e.target.files?.[0];
-  e.currentTarget.value = "";
-  if (!file) return;
-
-  try {
-    const text = await readFileAsText(file);
-    const result = await verifyDualChecksums(text);
-
-    if (!result.ok) {
-      let msg = "Checksum verification failed.\n";
-      if (result.fail === "parse") msg += "Reason: invalid JSON.";
-      else {
-        if (result.okRaw === false) {
-          msg += `Raw text mismatch.\nExpectedRaw: ${result.expectedRaw}\nActualRaw:   ${result.actualRaw}\n`;
-        }
-        if (result.okCanon === false) {
-          msg += `Canonical mismatch.\nExpected: ${result.expectedCanon}\nActual:   ${result.actualCanon}\n`;
-        }
-      }
-      const proceed = window.confirm(`${msg}\nImport anyway?`);
-      if (!proceed) return;
+  await handleJSONImport(e, {
+    setPages,
+    setTextItems,
+    setImageItems,
+    saveTextItemsToIndexedDB,
+    saveImageItemsToIndexedDB,
+    savePagesToIndexedDB: savePages,
+    onSuccess: () => {
+      console.log("JSON state imported successfully");
+      drawCanvas(activePage);
+    },
+    onError: (err) => {
+      console.error("Failed to import state.json", err);
+      alert("Invalid or corrupted state.json");
     }
-
-    // Apply state (your existing helper)
-    await importStateFromJson(file, {
-      setPages,
-      setTextItems,
-      setImageItems,
-      pagesKey: "pages",
-      textItemsKey: "textItems",
-      imageItemsKey: "imageItems",
-    });
-  } catch (err) {
-    console.error("Failed to import state.json", err);
-    alert("Invalid or corrupted state.json");
-  }
+  });
 };
 
   
@@ -2010,12 +1875,6 @@ return (
                             "Are you sure you want to clear all saved data?"
                           )
                         ) {
-                          localStorage.removeItem("undoStack");
-                          localStorage.removeItem("redoStack");
-                          localStorage.removeItem("pages");
-                          localStorage.removeItem("textItems");
-                          localStorage.removeItem("imageItems");
-
                           setUndoStack({});
                           setRedoStack({});
                           setTextItems([]);
@@ -2528,6 +2387,18 @@ return (
       onSubmit={submitViewerPassword}
     />
     {/* ========================================================================== */}
+
+    {/* Load JSON Confirmation Modal */}
+    <ConfirmationModal
+      open={showLoadJsonModal}
+      title="Load JSON State"
+      message="Loading data from a JSON file will clear your current state (all pages, text items, and images). This action cannot be undone. Do you want to proceed?"
+      confirmText="Proceed"
+      cancelText="Cancel"
+      danger={true}
+      onConfirm={handleLoadJsonConfirm}
+      onCancel={handleLoadJsonCancel}
+    />
   </div>
 );
 

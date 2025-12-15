@@ -80,8 +80,13 @@ export function EditorProvider({ children }: PropsWithChildren) {
     if (!Array.isArray(pageList) || pageList.length === 0) return;
 
     // Prefer explicit, side-effect-free derivation:
-    const allText = pageList.flatMap((p) => p?.textItems ?? []);
-    const allImages = pageList.flatMap((p) => p?.imageItems ?? []);
+    // IMPORTANT: Add index property to each item so draw code knows which page they belong to
+    const allText = pageList.flatMap((p, pageIndex) =>
+      (p?.textItems ?? []).map((item) => ({ ...item, index: pageIndex }))
+    );
+    const allImages = pageList.flatMap((p, pageIndex) =>
+      (p?.imageItems ?? []).map((item) => ({ ...item, index: pageIndex }))
+    );
 
     // Set into item stores (replace with your setters if named differently)
     text.setTextItems?.(allText);

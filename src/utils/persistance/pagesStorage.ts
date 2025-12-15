@@ -2,7 +2,7 @@
 import type { Page } from "../../types/editor";
 
 const DB_NAME = "PdfEditorDB";
-const DB_VERSION = 3;               // bump if you add more stores later
+const DB_VERSION = 4;               // bump if you add more stores later
 const STORE_PAGES = "pages";
 const LS_KEY = "pages";             // for fallback + one-time migration
 

@@ -168,7 +168,7 @@ export function useTextItems() {
 
 const openTextItemsDB = () => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("PdfEditorDB", 3);
+    const request = indexedDB.open("PdfEditorDB", 4);
     request.onupgradeneeded = (event:any) => {
       const db = event.target.result;
       if (!db.objectStoreNames.contains("textItems")) {

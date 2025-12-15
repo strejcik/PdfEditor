@@ -9,6 +9,11 @@ type ImportOpts = {
   pagesKey?: string;
   textItemsKey?: string;
   imageItemsKey?: string;
+
+  // IndexedDB save functions
+  saveTextItemsToIndexedDB?: (items: any[]) => Promise<void>;
+  saveImageItemsToIndexedDB?: (items: any[]) => Promise<void>;
+  savePagesToIndexedDB?: (pages: any[]) => Promise<void>;
 };
 
 const safeParse = <T = any>(raw: string): T => {
@@ -32,6 +37,9 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
     pagesKey = "pages",
     textItemsKey = "textItems",
     imageItemsKey = "imageItems",
+    saveTextItemsToIndexedDB,
+    saveImageItemsToIndexedDB,
+    savePagesToIndexedDB,
   } = opts;
 
   const text = await file.text();
@@ -68,12 +76,23 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
     pages = grouped;
   }
 
-  // 3) Persist to localStorage
+  // 3) Persist to localStorage (legacy support)
   localStorage.setItem(pagesKey, JSON.stringify(pages));
   localStorage.setItem(textItemsKey, JSON.stringify(textItems));
   localStorage.setItem(imageItemsKey, JSON.stringify(imageItems));
 
-  // 4) Optionally hydrate React state right away
+  // 4) Persist to IndexedDB (primary storage)
+  if (saveTextItemsToIndexedDB) {
+    await saveTextItemsToIndexedDB(textItems);
+  }
+  if (saveImageItemsToIndexedDB) {
+    await saveImageItemsToIndexedDB(imageItems);
+  }
+  if (savePagesToIndexedDB) {
+    await savePagesToIndexedDB(pages);
+  }
+
+  // 5) Optionally hydrate React state right away
   setPages?.(pages);
   setTextItems?.(textItems);
   setImageItems?.(imageItems);
