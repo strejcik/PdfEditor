@@ -25,4 +25,7 @@ export default defineConfig({
     // Increase chunk size warning limit to 1500kb to account for pdf-lib
     chunkSizeWarningLimit: 1500,
   },
+  server: {
+    port: 3000,
+  }
 });
