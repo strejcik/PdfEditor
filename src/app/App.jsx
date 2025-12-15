@@ -1,10 +1,8 @@
 import React, { useRef, useEffect, useLayoutEffect, useState} from 'react';
-import axios from 'axios';
 import './App.css'
 import { DEFAULT_FONT_SIZE, CELL_SIZE, BOX_PADDING, CANVAS_WIDTH, CANVAS_HEIGHT, PDF_WIDTH, PDF_HEIGHT } from "../config/constants";
 import { getMousePosOnCanvas } from "../utils/canvas/getMousePosOnCanvas";
 import { useEditor } from "../context/EditorProvider";
-import fontkit from "@pdf-lib/fontkit";
 import { loadLatoOnce } from "../utils/font/fontLoader";
 import {useHandleAddImage} from "../hooks/useHandleAddImage";
 import { drawCanvas } from '../utils/canvas/draw/drawCanvas'
@@ -18,13 +16,12 @@ import { handleJSONImport } from "../utils/json/jsonImportHandler";
 import { clearAllEditorState } from "../utils/persistance/indexedDBCleaner";
 import { savePages } from "../utils/persistance/pagesStorage";
 import { deleteSelectedImage } from "../utils/images/deleteSelectedImage";
-import { loadArrayBuffer } from "../utils/files/loadArrayBuffer";
 import { resolveTopLeft } from "../utils/canvas/resolveTopLeft";
-import { clipToPage, unclip } from "../utils/pdf/clipping";
-
-import {
-  PDFDocument, StandardFonts, rgb
-} from "pdf-lib";
+import { saveAllPagesAsPDF } from "../utils/pdf/exportPdf";
+import { saveEditedText } from "../utils/text/saveEditedText";
+import { closeEditModal } from "../utils/text/closeEditModal";
+import { uploadPdfToServer } from "../utils/pdf/uploadPdfToServer";
+import { handleFileChange } from "../utils/files/handleFileChange";
 
 
 const App = () => {
@@ -661,272 +658,6 @@ const toggleGrid = () => {
 
 
 
-// --- Helpers you can place above saveAllPagesAsPDF() ---
-
-// Draw an SVG data URI onto an offscreen canvas and return PNG bytes (Uint8Array)
-async function rasterizeSvgDataUriToPngBytes(svgDataUri, width, height, background = "white") {
-  return new Promise((resolve, reject) => {
-    try {
-      const img = new Image();
-      // data: URIs are same-origin; no crossOrigin needed
-      img.onload = async () => {
-        const w = Number(width)  || img.naturalWidth  || 1024;
-        const h = Number(height) || img.naturalHeight || Math.round((w * 3) / 4);
-
-        const cvs = document.createElement("canvas");
-        cvs.width = w;
-        cvs.height = h;
-
-        const ctx = cvs.getContext("2d");
-        if (background) {
-          ctx.fillStyle = background;
-          ctx.fillRect(0, 0, w, h);
-        }
-        // draw the SVG at target size
-        ctx.drawImage(img, 0, 0, w, h);
-
-        cvs.toBlob(async (blob) => {
-          if (!blob) return reject(new Error("Canvas toBlob() failed for SVG rasterization"));
-          const ab = await blob.arrayBuffer();
-          resolve(new Uint8Array(ab)); // Uint8Array for pdf-lib
-        }, "image/png", 1.0);
-      };
-      img.onerror = (e) => reject(new Error("Failed to decode SVG image"));
-      img.src = svgDataUri;
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
-
-function isSvgDataUri(src) {
-  return typeof src === "string" && /^data:image\/svg\+xml/i.test(src);
-}
-
-function isJpegLike(src) {
-  return typeof src === "string" && (/^data:image\/jpe?g/i.test(src) || /\.jpe?g(\?.*)?$/i.test(src));
-}
-
-// Convert hex color to RGB object for pdf-lib
-function hexToRgb(hex) {
-  if (!hex || typeof hex !== "string") {
-    return rgb(0, 0, 0); // default to black
-  }
-
-  // Remove # if present
-  hex = hex.replace(/^#/, '');
-
-  // Parse hex values
-  let r, g, b;
-  if (hex.length === 3) {
-    // Short form (e.g., #fff)
-    r = parseInt(hex[0] + hex[0], 16);
-    g = parseInt(hex[1] + hex[1], 16);
-    b = parseInt(hex[2] + hex[2], 16);
-  } else if (hex.length === 6) {
-    // Full form (e.g., #ffffff)
-    r = parseInt(hex.substring(0, 2), 16);
-    g = parseInt(hex.substring(2, 4), 16);
-    b = parseInt(hex.substring(4, 6), 16);
-  } else {
-    return rgb(0, 0, 0); // default to black
-  }
-
-  // Convert to 0-1 range for pdf-lib
-  return rgb(r / 255, g / 255, b / 255);
-}
-
-// --- Your modified function ---
-async function saveAllPagesAsPDF() {
-  const canvas = canvasRefs.current[activePage];
-  const rect  = canvas.getBoundingClientRect();
-  const ctx = canvas.getContext('2d');
-
-  // Helper: resolve text draw position (x, topY) and metrics in CSS units
-  const resolveTextLayout = (item) => {
-    const fontSize   = Number(item.fontSize) || 16;
-    const fontFamily = item.fontFamily || "Lato";
-    const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
-
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    ctx.font = `${fontSize}px ${fontFamily}`;
-
-    const m = ctx.measureText(item.text || "");
-    const ascent  = m.actualBoundingBoxAscent;
-    const descent = m.actualBoundingBoxDescent;
-    const textWidth  = m.width;
-    const textHeight = ascent + descent;
-
-    // Prefer normalized; DO NOT CLAMP so we can go off-canvas (negative or >1)
-    const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
-
-    const x = hasNorm
-      ? Number(item.xNorm) * rect.width
-      : (Number(item.x) || 0);
-
-    let topY;
-    if (hasNorm) {
-      topY = Number(item.yNormTop) * rect.height; // can be <0 or >rect.height
-    } else {
-      // Legacy: item.y may be baseline; convert to top if needed
-      const anchor = item.anchor || "baseline"; // "top" | "baseline" | "bottom"
-      const rawY = Number(item.y) || 0;
-      if (anchor === "baseline")      topY = rawY - ascent;
-      else if (anchor === "bottom")   topY = rawY - textHeight;
-      else                            topY = rawY; // already top
-    }
-
-    return {
-      x,
-      topY,
-      fontSize,
-      fontFamily,
-      padding,
-      textWidth,
-      textHeight,
-      ascent,
-      descent,
-    };
-  };
-
-  const pdfDoc = await PDFDocument.create();
-  pdfDoc.registerFontkit?.(fontkit);
-
-  // Embed EXACT font (public assets are served from “/”, not “/public”)
-  let pdfFont;
-  try {
-    const fontBytes = await loadArrayBuffer("/fonts/Lato-Regular.ttf");
-    pdfFont = await pdfDoc.embedFont(fontBytes, { subset: true });
-  } catch {
-    pdfFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  }
-
-  const manifest = {
-    pageSize: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
-    pages: [],
-  };
-
-  const pageCount = Array.isArray(pageList) ? pageList.length : 0;
-
-  for (let i = 0; i < pageCount; i++) {
-    const W = CANVAS_WIDTH;
-    const H = CANVAS_HEIGHT;
-    const pdfPage = pdfDoc.addPage([W, H]);
-
-    const page = pageList[i] ?? {};
-    const textItems = Array.isArray(page.textItems) ? page.textItems : [];
-    const imageItems = Array.isArray(page.imageItems) ? page.imageItems : [];
-
-    const pageManifest = { texts: [], images: [] };
-
-    // **Clip to the page rectangle** so overflow matches canvas behavior
-    clipToPage(pdfPage, W, H);
-
-    // ---- TEXT (top-left canvas → PDF baseline) ----
-    for (const item of textItems) {
-      const L = resolveTextLayout(item);
-      const text = String(item.text ?? "");
-      if (!text) continue;
-
-      const size = Number(item.fontSize) || 16;
-      const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
-
-      // Baseline so glyph top == yTop
-      const baseline = H - yTop - L.textHeight;
-
-      pdfPage.drawText(text, {
-        x: xTop,
-        y: baseline,
-        size,
-        font: pdfFont,
-        color: hexToRgb(item.color),
-      });
-
-      pageManifest.texts.push({
-        text,
-        xNorm: +xNorm.toFixed(6),
-        yNormTop: +yNormTop.toFixed(6),
-        fontSize: size,
-        anchor: "top",
-        index: item.index,
-        color: item.color,
-      });
-    }
-
-    // ---- IMAGES (supports data:image/svg+xml;base64) ----
-    for (const item of imageItems) {
-      const src = item.data || item.src;
-      if (!src || typeof src !== "string") continue;
-
-      const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
-      const drawW = Number(item.width)  || Math.round((item.widthNorm ?? 0) * W);
-      const drawH = Number(item.height) || Math.round((item.heightNorm ?? 0) * H);
-
-      let pdfImage;
-      try {
-        if (isSvgDataUri(src)) {
-          // Rasterize SVG → PNG bytes at the intended output size
-          const pngBytesU8 = await rasterizeSvgDataUriToPngBytes(src, drawW || 1024, drawH || 768, "white");
-          pdfImage = await pdfDoc.embedPng(pngBytesU8);
-        } else {
-          // Regular JPEG/PNG data URI or URL
-          const bytes = await loadArrayBuffer(src);
-          pdfImage = isJpegLike(src)
-            ? await pdfDoc.embedJpg(bytes)
-            : await pdfDoc.embedPng(bytes);
-        }
-      } catch (e) {
-        // As a last resort, skip this image instead of breaking export
-        console.warn("Image embed failed:", e);
-        continue;
-      }
-
-      pdfPage.drawImage(pdfImage, {
-        x: xTop,
-        y: H - yTop - drawH, // flip Y
-        width: drawW,
-        height: drawH,
-      });
-
-      pageManifest.images.push({
-        index: item.index,
-        width: drawW,
-        height: drawH,
-        xNorm: +xNorm.toFixed(6),
-        yNormTop: +yNormTop.toFixed(6),
-        widthNorm: +((drawW) / W).toFixed(6),
-        heightNorm: +((drawH) / H).toFixed(6),
-        ref: src, // keep original reference (svg/png/jpg)
-      });
-    }
-
-    // End clipping for this page
-    unclip(pdfPage);
-
-    manifest.pages.push(pageManifest);
-  }
-
-  // Attach manifest for perfect re-import (optional)
-  try {
-    const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
-    await pdfDoc.attach?.(manifestBytes, "manifest.json", {
-      mimeType: "application/json",
-      description: "Normalized coordinates for texts/images.",
-      creationDate: new Date(),
-      modificationDate: new Date(),
-    });
-  } catch { /* older pdf-lib, ignore */ }
-
-  const pdfBytes = await pdfDoc.save();
-  const blob = new Blob([pdfBytes], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "multi_page_document.pdf";
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 
 
@@ -985,128 +716,6 @@ useEffect(() => {
 
 
 
-// Function to save the edited text and font size
-const saveEditedText = () => {
-  if (editingIndex !== null && editingText.trim() !== '') {
-    const updatedItems = [...textItems];
-    updatedItems[editingIndex] = {
-      ...updatedItems[editingIndex],
-      text: editingText, // Update the text
-      fontSize: editingFontSize, // Update the font size
-      index: activePage,
-      boxPadding: editingFontSize * 0.2,
-    };
-
-// In your handler where you append itemsToAdd
-const nextTextItems = [ ...updatedItems];
-setTextItems(nextTextItems);
-
-// Use the SAME computed array right away:
-saveTextItemsToIndexedDB?.(nextTextItems);
-
-setPages(prev => {
-  const next = Array.isArray(prev) ? [...prev] : [];
-  const page = next[activePage] || { textItems: [], imageItems: [] };
-
-  // Only items for this page
-  const forThisPage = nextTextItems.filter(it => it.index === activePage);
-
-  next[activePage] = {
-    ...page,
-    textItems: forThisPage.map(it => ({ ...it })), // keep immutable
-    imageItems: page.imageItems || [],
-  };
-  return next;
-});
-    closeEditModal(); // Close the modal
-    drawCanvas(activePage);
-  }
-};
-
-// Function to close the edit modal
-const closeEditModal = () => {
-  setIsEditing(false);
-  setEditingText('');
-  setEditingIndex(null);
-};
-
-
-  // Handle file upload
-const uploadPdfToServer = async () => {
-  if (!selectedFile) {
-    alert("No file selected. Please select a PDF file to upload.");
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append("pdf", selectedFile);
-  // optional flags your backend can ignore or use
-formData.append("texts", "1");
-formData.append("images", "1");
-
-  try {
-    const response = await axios.post(
-      "http://localhost:5000/upload-pdf",
-      formData,
-      {
-        headers: { "Content-Type": "multipart/form-data" },
-        // withCredentials: true, // enable if your Flask server uses cookies
-      }
-    );
-
-    // Expecting an array with mixed items:
-    //  - { type: "text", text, xNorm, yNormTop, fontSize, index, ... }
-    //  - { type: "image", xNorm, yNormTop, widthNorm, heightNorm, index, ref(base64), ... }
-    const payload = response?.data;
-
-    if (!Array.isArray(payload)) {
-      console.error("Unexpected response:", payload);
-      alert("Server returned an unexpected response.");
-      return;
-    }
-
-    // Basic sanity: ensure images carry the base64 `ref` if present
-    // (Your updated backend embeds data URIs into `ref`.)
-    // No changes needed here—this is just a guard.
-    const normalized = payload.map(item => {
-      if (item?.type === "image" && typeof item.ref !== "string") {
-        // keep as-is; your draw code can still place a placeholder rect if needed
-        // (or you can decide to filter images without ref)
-      }
-      return item;
-    });
-
-    setIsPdfDownloaded(true);
-    // Your improved addTextToCanvas3 already handles both text and images
-    addTextToCanvas3(normalized, {
-      pushSnapshotToUndo,
-      activePage,
-      canvasRefs,
-      fontSize,
-      setImageItems,
-      setPages,
-      saveImageItemsToIndexedDB,
-      drawCanvas,
-    });
-  } catch (error) {
-    console.error("Error uploading PDF:", error);
-    alert("Failed to upload PDF. Please try again.");
-  }
-};
-
-const handleFileChange = (event) => {
-  const file = event.target.files?.[0];
-  if (!file) {
-    alert("Please select a file.");
-    return;
-  }
-  // accept only PDFs
-  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-    alert("Please select a valid PDF file.");
-    return;
-  }
-  setSelectedFile(file);
-};
 
 // ---------- canonical helpers ----------
 function canonicalize(value) {
@@ -1439,20 +1048,52 @@ return (
                   className="input-file"
                   type="file"
                   accept="application/pdf"
-                  onChange={isViewer ? viewOnly : handleFileChange}
+                  onChange={
+                    isViewer
+                      ? viewOnly
+                      : (e) => handleFileChange({ event: e, setSelectedFile })
+                  }
                   disabled={isViewer}
                 />
                 <div className="btn-row">
                   <button
                     className="btn btn-secondary"
-                    onClick={isViewer ? viewOnly : uploadPdfToServer}
+                    onClick={
+                      isViewer
+                        ? viewOnly
+                        : () =>
+                            uploadPdfToServer({
+                              selectedFile,
+                              setIsPdfDownloaded,
+                              addTextToCanvas3,
+                              pushSnapshotToUndo,
+                              activePage,
+                              canvasRefs,
+                              fontSize,
+                              setImageItems,
+                              setPages,
+                              saveImageItemsToIndexedDB,
+                              drawCanvas,
+                            })
+                    }
                     disabled={isViewer}
                   >
                     Upload to server
                   </button>
                   <button
                     className="btn btn-secondary"
-                    onClick={isViewer ? viewOnly : saveAllPagesAsPDF}
+                    onClick={
+                      isViewer
+                        ? viewOnly
+                        : () =>
+                            saveAllPagesAsPDF({
+                              canvasRefs,
+                              activePage,
+                              pageList,
+                              CANVAS_WIDTH: canvasWidth,
+                              CANVAS_HEIGHT: canvasHeight,
+                            })
+                    }
                     disabled={isViewer}
                   >
                     Export as PDF
@@ -2245,14 +1886,44 @@ return (
           <div className="modal-actions">
             <button
               className="btn btn-primary"
-              onClick={isViewer ? viewOnly : saveEditedText}
+              onClick={
+                isViewer
+                  ? viewOnly
+                  : () =>
+                      saveEditedText({
+                        editingIndex,
+                        editingText,
+                        editingFontSize,
+                        textItems,
+                        activePage,
+                        setTextItems,
+                        saveTextItemsToIndexedDB,
+                        setPages,
+                        closeEditModal: () =>
+                          closeEditModal({
+                            setIsEditing,
+                            setEditingText,
+                            setEditingIndex,
+                          }),
+                        drawCanvas,
+                      })
+              }
               disabled={isViewer}
             >
               Save
             </button>
             <button
               className="btn btn-secondary"
-              onClick={isViewer ? viewOnly : closeEditModal}
+              onClick={
+                isViewer
+                  ? viewOnly
+                  : () =>
+                      closeEditModal({
+                        setIsEditing,
+                        setEditingText,
+                        setEditingIndex,
+                      })
+              }
               disabled={isViewer}
             >
               Cancel
