@@ -17,10 +17,12 @@ import { ConfirmationModal } from "../components/ConfirmationModal";
 import { handleJSONImport } from "../utils/json/jsonImportHandler";
 import { clearAllEditorState } from "../utils/persistance/indexedDBCleaner";
 import { savePages } from "../utils/persistance/pagesStorage";
+import { deleteSelectedImage } from "../utils/images/deleteSelectedImage";
+import { loadArrayBuffer } from "../utils/files/loadArrayBuffer";
+import { resolveTopLeft } from "../utils/canvas/resolveTopLeft";
+import { clipToPage, unclip } from "../utils/pdf/clipping";
 
 import {
-  pushGraphicsState, popGraphicsState,
-  moveTo, lineTo, closePath, clip, endPath,
   PDFDocument, StandardFonts, rgb
 } from "pdf-lib";
 
@@ -652,79 +654,12 @@ useEffect(() => {
 
 
 
-// Handle deleting the selected image
-const deleteSelectedImage = () => {
-  if (selectedImageIndex !== null) {
-    const filteredItems = imageItems.filter((item, index) => {
-      if (item.index !== activePage) return true; // keep images from other pageList
-      const pageImages = imageItems.filter(i => i.index === activePage);
-      const targetItem = pageImages[selectedImageIndex];
-      return item !== targetItem; // remove only the matched item from current page
-    });
-
-
-    setImageItems(filteredItems);
-    saveImageItemsToIndexedDB(filteredItems);
-    updatePageItems('imageItems', filteredItems);
-    setSelectedImageIndex(null);
-    drawCanvas(activePage);
-  }
-};
-
-
 const toggleGrid = () => {
     setShowGrid((prevShowGrid) => !prevShowGrid);
     drawCanvas(activePage);
   };
 
 
-
-// --- helpers ---
-async function loadArrayBuffer(url) {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Failed to fetch ${url} (${res.status})`);
-  return await res.arrayBuffer();
-}
-
-// Converges on the *same* top-left canvas coordinates you draw with
-function resolveTopLeft(item, W, H) {
-  const hasNorm = item.xNorm != null && item.yNormTop != null;
-
-  const xTop = hasNorm ? Number(item.xNorm) * W : Number(item.x ?? 0);
-  const yTop = hasNorm ? Number(item.yNormTop) * H : Number(item.y ?? 0);
-
-  const xNorm = hasNorm ? Number(item.xNorm) : xTop / W;
-  const yNormTop = hasNorm ? Number(item.yNormTop) : yTop / H;
-
-  let w = item.width - item.padding;
-  let h = item.height - item.padding;
-  if (w == null && item.widthNorm  != null) w = Number(item.widthNorm)  * W;
-  if (h == null && item.heightNorm != null) h = Number(item.heightNorm) * H;
-
-  const wNorm = w != null ? (Number(w) / W) : (item.widthNorm ?? null);
-  const hNorm = h != null ? (Number(h) / H) : (item.heightNorm ?? null);
-
-  return { xTop, yTop, xNorm, yNormTop, w, h, wNorm, hNorm };
-}
-
-
-
-function clipToPage(pdfPage, W, H) {
-  pdfPage.pushOperators(
-    pushGraphicsState(),
-    moveTo(0, 0),
-    lineTo(W, 0),
-    lineTo(W, H),
-    lineTo(0, H),
-    closePath(),
-    clip(),   // W operator
-    endPath() // n
-  );
-}
-
-function unclip(pdfPage) {
-  pdfPage.pushOperators(popGraphicsState());
-}
 
 // --- Helpers you can place above saveAllPagesAsPDF() ---
 
@@ -799,32 +734,6 @@ function hexToRgb(hex) {
 
   // Convert to 0-1 range for pdf-lib
   return rgb(r / 255, g / 255, b / 255);
-}
-
-// Existing helper assumed in your code; keep as-is.
-// If you don't have it, implement a version that fetches http(s) and decodes non-SVG data URIs.
-async function loadArrayBuffer(urlOrDataUri) {
-  if (typeof urlOrDataUri !== "string") throw new Error("Invalid src");
-  if (urlOrDataUri.startsWith("data:")) {
-    // Generic data: URI decode (non-SVG). svg is handled elsewhere.
-    const m = urlOrDataUri.match(/^data:([^;]+);base64,(.*)$/);
-    if (!m) {
-      // try non-base64 data URIs
-      const comma = urlOrDataUri.indexOf(",");
-      const raw = decodeURIComponent(urlOrDataUri.slice(comma + 1));
-      const encoder = new TextEncoder();
-      return encoder.encode(raw).buffer;
-    }
-    const b64 = m[2];
-    const binStr = atob(b64);
-    const len = binStr.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = binStr.charCodeAt(i);
-    return bytes.buffer;
-  }
-  const res = await fetch(urlOrDataUri, { cache: "force-cache" });
-  if (!res.ok) throw new Error(`Failed to fetch: ${urlOrDataUri}`);
-  return await res.arrayBuffer();
 }
 
 // --- Your modified function ---
@@ -1244,7 +1153,7 @@ function openEditorDB() {
     if (!("indexedDB" in window)) {
       return reject(new Error("IndexedDB not supported"));
     }
-    const req = indexedDB.open("PdfEditorDB", 3); // must match your DB_VERSION
+    const req = indexedDB.open("PdfEditorDB", 4); // must match your DB_VERSION
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -1282,32 +1191,11 @@ async function loadStoreRecord(storeName) {
   }
 }
 
-// Optional: tiny helper to safely parse localStorage if we ever need a fallback
-function safeParse(raw) {
-  if (!raw) return null;
-  try {
-    const first = JSON.parse(raw);
-    if (typeof first === "string") {
-      try {
-        return JSON.parse(first);
-      } catch {
-        return first;
-      }
-    }
-    return first;
-  } catch {
-    return null;
-  }
-}
-
-// Main export: now prefers IndexedDB, not localStorage
+// Main export: reads state from IndexedDB only
 async function exportStateToJson(
-  pagesKey = "pages",
-  textItemsKey = "textItems",
-  imageItemsKey = "imageItems",
   filename = "state.json"
 ) {
-  // 1) Try IndexedDB for pages / textItems / imageItems
+  // 1) Read from IndexedDB
   let pages = null;
   let textItems = [];
   let imageItems = [];
@@ -1329,21 +1217,12 @@ async function exportStateToJson(
       imageItems = imageItemsRec.data;
     }
   } catch (e) {
-    console.warn("[exportStateToJson] IndexedDB read failed, will try localStorage fallback:", e);
+    console.error("[exportStateToJson] IndexedDB read failed:", e);
+    alert("Failed to read data from IndexedDB. Cannot export state.");
+    throw e;
   }
 
-  // 2) Fallback: localStorage (only if IndexedDB gave us nothing)
-  if (!pages && !textItems.length && !imageItems.length) {
-    const pagesLS = safeParse(localStorage.getItem(pagesKey));
-    const textItemsLS = safeParse(localStorage.getItem(textItemsKey)) || [];
-    const imageItemsLS = safeParse(localStorage.getItem(imageItemsKey)) || [];
-
-    pages = pagesLS || null;
-    textItems = textItemsLS;
-    imageItems = imageItemsLS;
-  }
-
-  // 3) If pages is still not a proper Page[] shape, reconstruct from items
+  // 2) If pages is still not a proper Page[] shape, reconstruct from items
   const isPageShape = (p) =>
     p &&
     typeof p === "object" &&
@@ -1351,6 +1230,7 @@ async function exportStateToJson(
     Array.isArray(p.imageItems);
 
   if (!Array.isArray(pages) || !pages.every(isPageShape)) {
+    // Reconstruct pages from textItems and imageItems
     const maxIndex = Math.max(
       -1,
       ...textItems.map((t) =>
@@ -1382,6 +1262,11 @@ async function exportStateToJson(
     pages = grouped;
   }
 
+  // 3) Ensure we have at least one page
+  if (!Array.isArray(pages) || pages.length === 0) {
+    pages = [{ textItems: [], imageItems: [] }];
+  }
+  console.log(pages, textItems, imageItems);
   // 4) Base payload (no checksums)
   const base = {
     version: 2,
@@ -1723,7 +1608,21 @@ return (
                 />
                 <button
                   className="btn btn-secondary"
-                  onClick={isViewer ? viewOnly : deleteSelectedImage}
+                  onClick={
+                    isViewer
+                      ? viewOnly
+                      : () =>
+                          deleteSelectedImage({
+                            selectedImageIndex,
+                            imageItems,
+                            activePage,
+                            setImageItems,
+                            saveImageItemsToIndexedDB,
+                            updatePageItems,
+                            setSelectedImageIndex,
+                            drawCanvas,
+                          })
+                  }
                   disabled={isViewer || selectedImageIndex === null}
                   style={{
                     opacity: selectedImageIndex === null ? 0.5 : 1,
