@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UndoRedoState, TextItem, ImageItem } from "../types/editor";
+import type { ShapeItem } from "../types/shapes";
 import { remapStacksAfterPageRemoval } from "../utils/history/remapStacksAfterPageRemoval";
 
-type Snapshot = { textItems?: TextItem[]; imageItems?: ImageItem[] };
+type Snapshot = { textItems?: TextItem[]; imageItems?: ImageItem[]; shapeItems?: ShapeItem[] };
 
 const MAX_SNAPSHOTS = 100;
 
@@ -62,7 +63,8 @@ const belongsToPage = (it: any, page: number) => {
 type SetItems<T> = (next: T[] | ((prev: T[]) => T[])) => void;
 type TextSliceLike  = { textItems: TextItem[]; setTextItems: SetItems<TextItem> };
 type ImageSliceLike = { imageItems: ImageItem[]; setImageItems: SetItems<ImageItem> };
-type PagesSliceLike = { pages: Array<{ textItems?: TextItem[]; imageItems?: ImageItem[] }>; setPages: (updater: any) => void };
+type ShapeSliceLike = { shapeItems: ShapeItem[]; setShapeItems: SetItems<ShapeItem> };
+type PagesSliceLike = { pages: Array<{ textItems?: TextItem[]; imageItems?: ImageItem[]; shapes?: ShapeItem[] }>; setPages: (updater: any) => void };
 
 export function useHistory() {
   const [undoStack, setUndoStack] = useState<UndoRedoState>({});
@@ -71,10 +73,12 @@ export function useHistory() {
   // Bound sources (getters + setters) stored in refs
   const getTextItemsRef = useRef<() => TextItem[]>(() => []);
   const getImageItemsRef = useRef<() => ImageItem[]>(() => []);
+  const getShapeItemsRef = useRef<() => ShapeItem[]>(() => []);
   const getPagesRef     = useRef<() => PagesSliceLike["pages"]>(() => []);
 
   const setTextItemsRef = useRef<SetItems<TextItem> | null>(null);
   const setImageItemsRef = useRef<SetItems<ImageItem> | null>(null);
+  const setShapeItemsRef = useRef<SetItems<ShapeItem> | null>(null);
   const setPagesRef      = useRef<PagesSliceLike["setPages"] | null>(null);
 
   const isBoundRef = useRef(false);
@@ -106,11 +110,16 @@ export function useHistory() {
 
   // High-level binder (pass slices)
   const bindFromSlices = useCallback(
-    (text: TextSliceLike, images: ImageSliceLike, pages?: PagesSliceLike) => {
+    (text: TextSliceLike, images: ImageSliceLike, pages?: PagesSliceLike, shapes?: ShapeSliceLike) => {
       getTextItemsRef.current  = () => text.textItems;
       getImageItemsRef.current = () => images.imageItems;
       setTextItemsRef.current  = text.setTextItems;
       setImageItemsRef.current = images.setImageItems;
+
+      if (shapes) {
+        getShapeItemsRef.current = () => shapes.shapeItems;
+        setShapeItemsRef.current = shapes.setShapeItems;
+      }
 
       if (pages) {
         getPagesRef.current = () => pages.pages;
@@ -124,15 +133,17 @@ export function useHistory() {
   const takeCurrentPageSnapshot = useCallback((page: number): Snapshot => {
     if (!isBoundRef.current) {
       if (process.env.NODE_ENV !== "production") {
-        console.warn("[history] Not bound yet. Call history.bindFromSlices(text, images, pages) in your Provider.");
+        console.warn("[history] Not bound yet. Call history.bindFromSlices(text, images, pages, shapes) in your Provider.");
       }
-      return { textItems: [], imageItems: [] };
+      return { textItems: [], imageItems: [], shapeItems: [] };
     }
     const textItems = getTextItemsRef.current();
     const imageItems = getImageItemsRef.current();
+    const shapeItems = getShapeItemsRef.current();
 
     const textOnPage = (textItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
     const imgsOnPage = (imageItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
+    const shapesOnPage = (shapeItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
 
     if (process.env.NODE_ENV !== "production") {
       if ((textItems?.length ?? 0) > 0 && textOnPage.length === 0) {
@@ -141,20 +152,24 @@ export function useHistory() {
       if ((imageItems?.length ?? 0) > 0 && imgsOnPage.length === 0) {
         console.warn(`[history] No imageItems matched page ${page}. Ensure items carry {index|page|pageIndex}.`);
       }
+      if ((shapeItems?.length ?? 0) > 0 && shapesOnPage.length === 0) {
+        console.warn(`[history] No shapeItems matched page ${page}. Ensure items carry {index|page|pageIndex}.`);
+      }
     }
 
-    return { textItems: textOnPage, imageItems: imgsOnPage };
+    return { textItems: textOnPage, imageItems: imgsOnPage, shapeItems: shapesOnPage };
   }, []);
 
   /**
    * 🔧 Apply snapshot to *both* flat slices and the pages slice for `page`.
-   * This was the missing piece that made applyPageSnapshot look like it “didn’t work”.
+   * This was the missing piece that made applyPageSnapshot look like it "didn't work".
    */
   const applyPageSnapshot = useCallback((page: number, snap?: Snapshot) => {
     if (!snap) return;
 
     const setText  = setTextItemsRef.current;
     const setImage = setImageItemsRef.current;
+    const setShape = setShapeItemsRef.current;
     const setPages = setPagesRef.current;
 
     if (!setText || !setImage) {
@@ -166,6 +181,7 @@ export function useHistory() {
 
     const currentText = getTextItemsRef.current();
     const currentImgs = getImageItemsRef.current();
+    const currentShapes = getShapeItemsRef.current();
 
     const nextText = [
       ...currentText.filter(it => !belongsToPage(it, page)),
@@ -175,23 +191,30 @@ export function useHistory() {
       ...currentImgs.filter(it => !belongsToPage(it, page)),
       ...((snap.imageItems || []).map(x => deepClone(x))),
     ];
+    const nextShapes = [
+      ...currentShapes.filter(it => !belongsToPage(it, page)),
+      ...((snap.shapeItems || []).map(x => deepClone(x))),
+    ];
 
     // 1) Update flat slices
     setText(nextText);
     setImage(nextImgs);
+    if (setShape) setShape(nextShapes);
 
     // 2) Update pages slice (if bound)
     if (setPages) {
       const nextPageText = (snap.textItems || []).map(x => deepClone(x));
       const nextPageImgs = (snap.imageItems || []).map(x => deepClone(x));
+      const nextPageShapes = (snap.shapeItems || []).map(x => deepClone(x));
 
       setPages((prev: PagesSliceLike["pages"]) => {
         const next = Array.isArray(prev) ? [...prev] : [];
-        const pageObj = next[page] || { textItems: [], imageItems: [] };
+        const pageObj = next[page] || { textItems: [], imageItems: [], shapes: [] };
         next[page] = {
           ...pageObj,
           textItems: nextPageText,
           imageItems: nextPageImgs,
+          shapes: nextPageShapes,
         };
         return next;
       });

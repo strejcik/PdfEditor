@@ -2,7 +2,7 @@
 import type { Page } from "../../types/editor";
 
 const DB_NAME = "PdfEditorDB";
-const DB_VERSION = 4;               // bump if you add more stores later
+const DB_VERSION = 5;               // bump if you add more stores later
 const STORE_PAGES = "pages";
 const LS_KEY = "pages";             // for fallback + one-time migration
 
@@ -23,6 +23,9 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains(STORE_PAGES)) {
         db.createObjectStore(STORE_PAGES, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("shapes")) {
+        db.createObjectStore("shapes", { keyPath: "id" });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -102,7 +105,7 @@ export async function savePages(pages:any) {
 }
 
 
-const emptyPage = (): Page => ({ textItems: [], imageItems: [] } as Page);
+const emptyPage = (): Page => ({ textItems: [], imageItems: [], shapes: [] } as Page);
 
 /** Ensure the stored data fits your Page[] shape (no id). */
 export function normalizePages(input: unknown): Page[] {
@@ -113,5 +116,6 @@ export function normalizePages(input: unknown): Page[] {
   return (input as any[]).map((p) => ({
     textItems: Array.isArray(p?.textItems) ? p.textItems : [],
     imageItems: Array.isArray(p?.imageItems) ? p.imageItems : [],
+    shapes: Array.isArray(p?.shapes) ? p.shapes : [],
   })) as Page[];
 }

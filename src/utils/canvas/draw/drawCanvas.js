@@ -2,6 +2,7 @@ import { ensureLatoLoadedOnce } from "../../font/fontLoader"
 import { drawGridIfNeeded } from "./layers/drawGrid";
 import { drawTextItems } from "./layers/drawTextItems";
 import { drawImageItems } from "./layers/drawImageItems";
+import { drawShapeItems, drawShapeCreationPreview } from "./drawShapeItems";
 import { drawSelectionRect } from "./layers/drawSelectionRect";
 import { drawTextBoxEditor } from "./layers/drawTextBoxEditor";
 import { drawMultilinePage } from "./layers/drawMultilinePage";
@@ -38,6 +39,8 @@ export async function drawCanvas(pageIndex, opts = {}) {
 
   drawTextItems(ctx, rect, pageIndex, state, config);
   drawImageItems(ctx, rect, pageIndex, state, config);
+  drawShapeItems(ctx, rect, pageIndex, state);
+  drawShapeCreationPreview(ctx, rect, state);
   drawSelectionRect(ctx, rect, pageIndex, state, config);
   drawTextBoxEditor(ctx, rect, pageIndex, state, config);
 }

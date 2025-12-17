@@ -31,6 +31,7 @@ export type ImageItem = {
 export type Page = {
   textItems: TextItem[];
   imageItems: ImageItem[];
+  shapes?: any[];
 };
 
 export type UndoRedoState = Record<string, unknown>;

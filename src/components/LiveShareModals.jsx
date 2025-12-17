@@ -91,14 +91,37 @@ export function HostPasswordModal({ open, pending, error, onCancel, onSubmit }) 
   const verdict = evaluatePassword(pw);
   const disabled = pending || !verdict.passed;
 
-  return (
-    <div className="ls-backdrop" onMouseDown={onCancel}>
-      <div className="ls-card" onMouseDown={(e) => e.stopPropagation()}>
-        <h3 className="ls-title">Protect your room</h3>
-        <div className="ls-subtitle">
-          Create a strong password. Viewers must enter it to join your live view.
-        </div>
+return (
+  <div className="ls-backdrop" onMouseDown={onCancel}>
+    <div className="ls-card" onMouseDown={(e) => e.stopPropagation()}>
+      <h3 className="ls-title">Protect your room</h3>
+      <div className="ls-subtitle">
+        Create a strong password. Viewers must enter it to join your live view.
+      </div>
 
+      {/* ✅ FORM wrapper fixes the DOM warning */}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!disabled) onSubmit(pw);
+        }}
+      >
+         {/* ✅ Hidden username field for accessibility & password managers */}
+          <input
+            type="text"
+            name="username"
+            autoComplete="username"
+            value="host"
+            readOnly
+            tabIndex={-1}
+            style={{
+              position: "absolute",
+              opacity: 0,
+              height: 0,
+              width: 0,
+              pointerEvents: "none",
+            }}
+          />
         <input
           className="ls-input"
           type="password"
@@ -106,18 +129,18 @@ export function HostPasswordModal({ open, pending, error, onCancel, onSubmit }) 
           autoFocus
           placeholder={`Min ${PW_MIN_LEN} chars • Upper/lower • Number • Symbol`}
           onChange={(e) => setPw(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !disabled) onSubmit(pw);
-          }}
           autoComplete="new-password"
           inputMode="text"
         />
 
         <StrengthHint value={pw} />
 
-        {/* Optional compact checklist (helps users succeed quickly) */}
+        {/* Optional compact checklist */}
         {pw.trim() ? (
-          <div className="ls-checklist" style={{ marginTop: 10, fontSize: 12, color: "rgba(15,23,42,0.65)" }}>
+          <div
+            className="ls-checklist"
+            style={{ marginTop: 10, fontSize: 12, color: "rgba(15,23,42,0.65)" }}
+          >
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <span>{pw.length >= PW_MIN_LEN && pw.length <= PW_MAX_LEN ? "✅" : "❌"} Length {PW_MIN_LEN}-{PW_MAX_LEN}</span>
               <span>{/[a-z]/.test(pw) ? "✅" : "❌"} Lowercase</span>
@@ -132,12 +155,20 @@ export function HostPasswordModal({ open, pending, error, onCancel, onSubmit }) 
         {error ? <div className="ls-error">{error}</div> : null}
 
         <div className="ls-actions">
-          <button className="ls-btn ls-btn--ghost" onClick={onCancel} disabled={pending}>
+          {/* type="button" so it does NOT submit the form */}
+          <button
+            type="button"
+            className="ls-btn ls-btn--ghost"
+            onClick={onCancel}
+            disabled={pending}
+          >
             Cancel
           </button>
+
+          {/* type="submit" is now correct */}
           <button
+            type="submit"
             className="ls-btn ls-btn--primary"
-            onClick={() => onSubmit(pw)}
             disabled={disabled}
             title={
               verdict.passed
@@ -148,9 +179,10 @@ export function HostPasswordModal({ open, pending, error, onCancel, onSubmit }) 
             {pending ? "Creating…" : "Start sharing"}
           </button>
         </div>
-      </div>
+      </form>
     </div>
-  );
+  </div>
+);
 }
 
 export function ViewerPasswordModal({ open, pending, error, onCancel, onSubmit }) {

@@ -20,6 +20,7 @@ import { useMultiLineMode } from "../hooks/useMultiLineMode";
 import { useMouse } from '../hooks/useMouse';
 import { useKeyboard } from '../hooks/useKeyboard';
 import { useShare } from '../hooks/useShare';
+import { useShapes } from '../hooks/useShapes';
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -34,6 +35,7 @@ type EditorContextValue = {
   mouse: ReturnType<typeof useMouse>;
   keyboard: ReturnType<typeof useKeyboard>;
   share: ReturnType<typeof useShare>;
+  shapes: ReturnType<typeof useShapes>;
 };
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -42,6 +44,7 @@ export const useEditor = () => {
   if (!ctx) throw new Error("useEditor must be used within <EditorProvider>");
   return ctx;
 };
+
 
 export function EditorProvider({ children }: PropsWithChildren) {
   const ui = useUiPanels();
@@ -56,44 +59,148 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const mouse = useMouse();
   const keyboard = useKeyboard();
   const share = useShare();
+  const shapes = useShapes();
 
   // Keep latest slices in refs so history bindings always read current data
   const textRef = useRef(text);
   const imagesRef = useRef(images);
-  const shareRef = useRef(share)
-  
+  const shareRef = useRef(share);
+  const shapesRef = useRef(shapes);
+
+  // Sync locks to prevent circular updates
+  const isSyncingPagesToShapes = useRef(false);
+  const isSyncingShapesToPages = useRef(false);
+  // Store last synced shapes hash to prevent ping-pong
+  const lastShapesFromPages = useRef<string | null>(null);
+
   useEffect(() => {
     textRef.current = text;
     imagesRef.current = images;
     shareRef.current = share;
-  }, [text, images, share]);
+    shapesRef.current = shapes;
+  }, [text, images, share, shapes]);
 
   /**
-   * 🔁 Re-hydrate text & image stores EVERY TIME pages change.
-   * This ensures all pages (not just the first) are reflected in item stores.
-   * If your hydrateFromPages merges, you can keep using it; otherwise derive flat arrays.
+   * 🔁 Re-hydrate text, image, and shape stores from pages (single source of truth)
+   * This ensures all pages are reflected in item stores
    */
-  
-  
   useEffect(() => {
+    // Prevent circular updates: if we're currently syncing shapes to pages, skip this
+    if (isSyncingShapesToPages.current) return;
+
+    // CRITICAL: Skip pages→shapes sync during mixed-item dragging
+    // Otherwise updatePageItems (for text) will trigger this effect, which rehydrates shapes
+    // from pages with OLD positions, overwriting the updateShape changes
+    if (selection.isDraggingMixedItems) return;
+
     const pageList = pages.pages ?? [];
     if (!Array.isArray(pageList) || pageList.length === 0) return;
 
-    // Prefer explicit, side-effect-free derivation:
-    // IMPORTANT: Add index property to each item so draw code knows which page they belong to
+    // Set lock to prevent the other effect from triggering
+    isSyncingPagesToShapes.current = true;
+
+    // Extract all items from pages and add index property to each item
     const allText = pageList.flatMap((p, pageIndex) =>
       (p?.textItems ?? []).map((item) => ({ ...item, index: pageIndex }))
     );
     const allImages = pageList.flatMap((p, pageIndex) =>
       (p?.imageItems ?? []).map((item) => ({ ...item, index: pageIndex }))
     );
+    const allShapes = pageList.flatMap((p, pageIndex) =>
+      (p?.shapes ?? []).map((item) => ({ ...item, index: pageIndex }))
+    );
 
-    // Set into item stores (replace with your setters if named differently)
+    // Store hash of shapes we just loaded (without index property for comparison)
+    const shapesWithoutIndex = allShapes.map(({ index, ...shape }) => shape);
+    lastShapesFromPages.current = JSON.stringify(shapesWithoutIndex);
+
+    // Update item stores
     text.setTextItems?.(allText);
     images.setImageItems?.(allImages);
+    shapes.setShapeItems?.(allShapes);
 
-    // If you also keep counts/indices per page in those stores, update them here as well.
-  }, [pages.pages, text.setTextItems, images.setImageItems]);
+    // Release lock after state updates are queued
+    setTimeout(() => {
+      isSyncingPagesToShapes.current = false;
+    }, 0);
+  }, [pages.pages, text.setTextItems, images.setImageItems, shapes.setShapeItems, selection.isDraggingMixedItems]);
+
+  /**
+   * 🔁 Sync shapes back to pages whenever shapes change (for persistence)
+   * Skip during active user interactions to prevent flickering
+   */
+  useEffect(() => {
+    // CRITICAL: Skip shapes→pages sync during active user interactions
+    const isInteracting = shapes.isDraggingShape || shapes.isDraggingMultipleShapes ||
+                          shapes.isResizingShape || shapes.isCreatingShape ||
+                          selection.isDraggingMixedItems;
+
+    if (isInteracting) {
+      return;
+    }
+
+    // Prevent circular updates: if we're currently syncing pages to shapes, skip this
+    if (isSyncingPagesToShapes.current) return;
+
+    const pageList = pages.pages ?? [];
+    if (!Array.isArray(pageList) || pageList.length === 0) return;
+
+    if (!shapes.shapeItems || shapes.shapeItems.length === 0) {
+      // If no shapes, check if this is different from what we loaded
+      if (lastShapesFromPages.current !== '[]') {
+        const updatedPages = pageList.map(page => ({ ...page, shapes: [] }));
+        isSyncingShapesToPages.current = true;
+        pages.setPages(updatedPages);
+        lastShapesFromPages.current = '[]';
+        setTimeout(() => {
+          isSyncingShapesToPages.current = false;
+        }, 0);
+      }
+      return;
+    }
+
+    // Create current shapes hash (without index property)
+    const shapesWithoutIndex = shapes.shapeItems.map(({ index, ...shape }) => shape);
+    const currentShapesHash = JSON.stringify(shapesWithoutIndex);
+
+    // If shapes are the same as what we loaded from pages, skip update to prevent ping-pong
+    if (currentShapesHash === lastShapesFromPages.current) {
+      return;
+    }
+
+    // Set lock to prevent the other effect from triggering
+    isSyncingShapesToPages.current = true;
+
+    // Group shapes by page index
+    const shapesByPage: Record<number, any[]> = {};
+    shapes.shapeItems.forEach((shape) => {
+      const pageIdx = shape.index ?? 0;
+      if (!shapesByPage[pageIdx]) shapesByPage[pageIdx] = [];
+
+      // Remove the 'index' property before storing back to pages
+      const { index, ...shapeWithoutIndex } = shape;
+      shapesByPage[pageIdx].push(shapeWithoutIndex);
+    });
+
+    // Update pages with shapes
+    const updatedPages = pageList.map((page, pageIndex) => {
+      const pageShapes = shapesByPage[pageIndex] || [];
+      return { ...page, shapes: pageShapes };
+    });
+
+    // Update pages and store the new hash
+    pages.setPages(updatedPages);
+    lastShapesFromPages.current = currentShapesHash;
+
+    // Release lock after state updates are queued
+    setTimeout(() => {
+      isSyncingShapesToPages.current = false;
+    }, 0);
+
+    // NOTE: Interaction flags MUST be in dependencies so effect runs when interaction ends
+  }, [shapes.shapeItems, shapes.isDraggingShape, shapes.isDraggingMultipleShapes,
+      shapes.isResizingShape, shapes.isCreatingShape, selection.isDraggingMixedItems,
+      pages.pages, pages.setPages]);
 
   /**
    * Bind history sources once; the getters pull from refs so they see fresh arrays.
@@ -109,8 +216,8 @@ export function EditorProvider({ children }: PropsWithChildren) {
 
   // inside EditorProvider
 useLayoutEffect(() => {
-  history.bindFromSlices(text, images, pages); // 👈 pass ALL three
-}, [history, text, images, pages]);
+  history.bindFromSlices(text, images, pages, shapes); // 👈 pass ALL four
+}, [history, text, images, pages, shapes]);
 
   const value = useMemo<EditorContextValue>(
     () => ({
@@ -126,8 +233,9 @@ useLayoutEffect(() => {
       mouse,
       keyboard,
       share,
+      shapes,
     }),
-    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share]
+    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes]
   );
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;

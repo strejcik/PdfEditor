@@ -13,6 +13,10 @@ export function useSelection() {
   const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
   const [isResizing, setIsResizing] = useState(false);
 
+  // Mixed-item (text + shapes) dragging state
+  const [isDraggingMixedItems, setIsDraggingMixedItems] = useState(false);
+  const [initialMixedItemPositions, setInitialMixedItemPositions] = useState<any[]>([]);
+
   return {
     showGrid, setShowGrid,
     isSelecting, setIsSelecting,
@@ -23,5 +27,7 @@ export function useSelection() {
     isDragging, setIsDragging,
     dragStart, setDragStart,
     isResizing, setIsResizing,
+    isDraggingMixedItems, setIsDraggingMixedItems,
+    initialMixedItemPositions, setInitialMixedItemPositions,
   };
 }

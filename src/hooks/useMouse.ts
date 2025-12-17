@@ -331,13 +331,19 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         setIsImageDragging,
         setDragStart,
         textItems,
+        shapeItems,
         resolveTextLayoutForHit,
         setIsTextSelected,
         setSelectedTextIndex,
         selectedTextIndexes,
         setSelectedTextIndexes,
+        selectedShapeIndexes,
+        setSelectedShapeIndex,
+        setSelectedShapeIndexes,
         setIsDragging,
+        setIsDraggingMixedItems,
         setInitialPositions,
+        setInitialMixedItemPositions,
         textBox,
         setIsResizing,
         setTextBox,
@@ -446,6 +452,50 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
 
     // If we found a text item that contains the cursor, select it
     if (bestTextIndex !== null && bestTextScore < 10000) {
+        // Check if this is a mixed selection (both text and shapes selected) BEFORE modifying text selection
+        const hasMixedSelection = selectedShapeIndexes && selectedShapeIndexes.length > 0 &&
+                                  selectedTextIndexes.length > 0 &&
+                                  selectedTextIndexes.includes(bestTextIndex);
+
+        if (hasMixedSelection) {
+            // Clicking on a text item that's part of a mixed selection
+            // Start mixed-item dragging without changing any selections
+            setIsDraggingMixedItems(true);
+            setDragStart({ x: cssX, y: cssY });
+
+            // Store initial positions for both text items and shapes
+            const textPositions = selectedTextIndexes.map((i:any) => {
+                const Li = resolveTextLayoutForHit(textItems[i], ctx, canvas);
+                return {
+                    type: 'text',
+                    index: i,
+                    xTop: Li.x,
+                    yTop: Li.topY,
+                    activePage
+                };
+            });
+
+            const shapePositions = selectedShapeIndexes.map((i:any) => {
+                const shape = shapeItems[i];
+                // Resolve coordinates: prefer normalized, convert to pixels
+                // Use the outer rect (from line 362) to ensure consistent coordinate calculations
+                const resolvedX = shape.xNorm != null ? shape.xNorm * rect.width : shape.x;
+                const resolvedY = shape.yNormTop != null ? shape.yNormTop * rect.height : shape.y;
+                return {
+                    type: 'shape',
+                    index: i,
+                    x: resolvedX,
+                    y: resolvedY,
+                    activePage: shape.index
+                };
+            });
+
+            setInitialMixedItemPositions([...textPositions, ...shapePositions]);
+            setIsSelecting(false);
+            return;
+        }
+
+        // Not a mixed selection - handle as regular text selection
         setIsTextSelected(true);
         setSelectedTextIndex(bestTextIndex);
 
@@ -454,6 +504,8 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
             : [bestTextIndex];
 
         setSelectedTextIndexes(newSelectedIndexes);
+
+        // Regular text-only dragging
         setIsDragging(true);
         setDragStart({ x: cssX, y: cssY });
 
@@ -490,6 +542,8 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
     setIsImageDragging(false);
     setResizingImageIndex(null);
     setSelectedImageIndex(null);
+    setSelectedShapeIndex?.(null);
+    setSelectedShapeIndexes?.([]);
 
     setIsSelecting(true);
     setSelectionStart({ x: cssX, y: cssY });
@@ -535,9 +589,13 @@ const computeScaledTargetFont = (textBox:any) => {
         editingIndex,
         imageItems,
         textItems,
+        shapeItems,
         resolveTextLayoutForHit,
         selectedTextIndexes,
         setSelectedTextIndexes,
+        selectedShapeIndexes,
+        setSelectedShapeIndexes,
+        setSelectedShapeIndex,
         textBox,
         setSelectionEnd,
         isResizing,
@@ -555,9 +613,13 @@ const computeScaledTargetFont = (textBox:any) => {
         draggedImageIndex,
         dragStart,
         isDragging,
+        isDraggingMixedItems,
         initialPositions,
+        initialMixedItemPositions,
         setTextItems,
+        setShapeItems,
         saveTextItemsToIndexedDB,
+        updateShape,
         requestCanvasDraw
     } = opts;
 
@@ -569,8 +631,8 @@ const computeScaledTargetFont = (textBox:any) => {
     
       // CSS-space pointer; can be negative when moving outside left/top
       const rect = canvas.getBoundingClientRect();
-      const clientX = e.touches?.[0]?.clientX ?? e.clientX;
-      const clientY = e.touches?.[0]?.clientY ?? e.clientY;
+      const clientX = e.clientX;
+      const clientY = e.clientY;
       const cssX = clientX - rect.left;
       const cssY = clientY - rect.top;
     
@@ -623,11 +685,11 @@ if (isResizing && textBox) {
   return;
 }
 
-    
+
       // === SELECTION RECTANGLE (live preview) ===
-      if (isSelecting) {
+      if (isSelecting && selectionStart) {
         setSelectionEnd({ x: cssX, y: cssY });
-    
+
         const rectSel = {
           x: Math.min(selectionStart.x, cssX),
           y: Math.min(selectionStart.y, cssY),
@@ -641,17 +703,52 @@ if (isResizing && textBox) {
           if (it.index !== activePage) continue;
           const L = resolveTextLayoutForHit(it, ctx, canvas);
           const b = L.box;
-    
+
           const intersects =
             b.x < rectSel.x + rectSel.w &&
             b.x + b.w > rectSel.x &&
             b.y < rectSel.y + rectSel.h &&
             b.y + b.h > rectSel.y;
-    
+
           if (intersects) selected.push(i);
         }
-    
+
         setSelectedTextIndexes(selected);
+
+        // Also check for shapes in selection rectangle (real-time)
+        const selectedShapes = [];
+        if (shapeItems && shapeItems.length > 0) {
+          for (let i = 0; i < shapeItems.length; i++) {
+            const shape = shapeItems[i];
+            if (shape.index !== activePage) continue;
+
+            const shapeX = shape.xNorm != null ? shape.xNorm * rect.width : shape.x;
+            const shapeY = shape.yNormTop != null ? shape.yNormTop * rect.height : shape.y;
+            const shapeW = shape.widthNorm != null ? shape.widthNorm * rect.width : shape.width;
+            const shapeH = shape.heightNorm != null ? shape.heightNorm * rect.height : shape.height;
+
+            const shapeBounds = { x: shapeX, y: shapeY, w: shapeW, h: shapeH };
+
+            const intersects =
+              shapeBounds.x < rectSel.x + rectSel.w &&
+              shapeBounds.x + shapeBounds.w > rectSel.x &&
+              shapeBounds.y < rectSel.y + rectSel.h &&
+              shapeBounds.y + shapeBounds.h > rectSel.y;
+
+            if (intersects) {
+              selectedShapes.push(i);
+            }
+          }
+        }
+
+        if (selectedShapes.length > 0) {
+          setSelectedShapeIndexes(selectedShapes);
+          setSelectedShapeIndex(selectedShapes[selectedShapes.length - 1]);
+        } else {
+          setSelectedShapeIndexes([]);
+          setSelectedShapeIndex(null);
+        }
+
         drawCanvas(activePage);
         return;
       }
@@ -722,7 +819,58 @@ if (isResizing && textBox) {
         drawCanvas(activePage);
         return;
       }
-    
+
+      // === MIXED-ITEM DRAGGING (Text + Shapes) ===
+      if (isDraggingMixedItems && dragStart && initialMixedItemPositions && initialMixedItemPositions.length > 0) {
+        const dx = cssX - dragStart.x;
+        const dy = cssY - dragStart.y;
+
+        const updatedText = [...textItems];
+
+        // Update all mixed items (both text and shapes)
+        initialMixedItemPositions.forEach((pos:any) => {
+          if (pos.type === 'text') {
+            const item = updatedText[pos.index];
+            if (item && item.index === activePage) {
+              const newX = pos.xTop + dx;
+              const newY = pos.yTop + dy;
+
+              item.x = newX;
+              item.y = newY;
+              item.anchor = "top";
+
+              item.xNorm = rect.width ? (newX / rect.width) : 0;
+              item.yNormTop = rect.height ? (newY / rect.height) : 0;
+            }
+          } else if (pos.type === 'shape') {
+            const shape = shapeItems[pos.index];
+            if (shape && shape.index === activePage) {
+              const newX = pos.x + dx;
+              const newY = pos.y + dy;
+
+              // Use updateShape (same as multi-shape dragging) to avoid page sync conflicts
+              updateShape(pos.index, {
+                x: newX,
+                y: newY,
+                xNorm: newX / rect.width,
+                yNormTop: newY / rect.height,
+              });
+            }
+          }
+        });
+
+        // Save text items (but DON'T update pages during drag to avoid triggering sync)
+        setTextItems(updatedText);
+        // Skip updatePageItems during drag - it will sync automatically when drag ends
+        // saveTextItemsToIndexedDB(updatedText); // Also skip DB save during drag for performance
+
+        // Shapes are already updated via updateShape calls (same pattern as multi-shape dragging)
+        // Use requestCanvasDraw to defer redraw to next animation frame
+        // This ensures shapes have been updated before redrawing
+        requestCanvasDraw();
+        return;
+      }
+
       // === TEXT DRAGGING ===
       if (isDragging && dragStart && initialPositions.length > 0) {
         const dx = cssX - dragStart.x;
@@ -919,8 +1067,11 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         activePage,
         editingIndex,
         textItems,
+        shapeItems,
         resolveTextLayoutForHit,
         setSelectedTextIndexes,
+        setSelectedShapeIndexes,
+        setSelectedShapeIndex,
         textBox,
         setSelectionEnd,
         selectionEnd,
@@ -932,9 +1083,12 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         resizingImageIndex,
         isImageDragging,
         isDragging,
+        isDraggingMixedItems,
         setIsResizing,
         setIsDragging,
+        setIsDraggingMixedItems,
         setInitialPositions,
+        setInitialMixedItemPositions,
         setDragStart,
         pushSnapshotToUndo,
         setResizingImageIndex,
@@ -946,6 +1100,10 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         setIsSelecting,
         setShouldClearSelectionBox,
         setSelectionStart,
+        updatePageItems,
+        saveTextItemsToIndexedDB,
+        pageList,
+        setPages,
         history
       } = opts;
 
@@ -955,7 +1113,8 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
       const canvas = canvasRefs.current[activePage];
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
-    
+      const rect = canvas.getBoundingClientRect();
+
       const selX0 = Math.min(selectionStart?.x || 0, selectionEnd?.x || 0);
       const selY0 = Math.min(selectionStart?.y || 0, selectionEnd?.y || 0);
       const selW  = Math.abs((selectionEnd?.x || 0) - (selectionStart?.x || 0));
@@ -978,13 +1137,52 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
       }
     
      // Track if we were dragging before clearing state
-  const wasDragging = isDragging;
+  const wasDragging = isDragging || isDraggingMixedItems;
 
   if (isDragging) {
     setIsDragging(false);
     setInitialPositions([]);
     setDragStart({ x: 0, y: 0 });
     pushSnapshotToUndo(activePage);
+  }
+
+  if (isDraggingMixedItems) {
+    // CRITICAL: Manually sync BOTH text AND shapes to pages at once
+    // This prevents the race condition where pages→shapes sync runs before shapes→pages
+    // Build updated pages with both text items and shapes
+    const updatedPages = pageList.map((page:any, pageIndex:any) => {
+      if (pageIndex !== activePage) return page;
+
+      // Update text items for this page
+      const pageTextItems = textItems.filter((t:any) => t.index === pageIndex).map(({...item }) => item);
+
+      // Update shapes for this page
+      const pageShapes = shapeItems.filter((s:any) => s.index === pageIndex).map(({ ...shape }) => shape);
+
+      return {
+        ...page,
+        textItems: pageTextItems,
+        shapes: pageShapes
+      };
+    });
+
+    // Set pages once with all updated data
+    setPages(updatedPages);
+    saveTextItemsToIndexedDB(textItems);
+
+    // Clear mixed-item dragging state
+    setIsDraggingMixedItems(false);
+    setInitialMixedItemPositions([]);
+    setDragStart({ x: 0, y: 0 });
+
+    // Push to undo
+    pushSnapshotToUndo(activePage);
+
+    // CRITICAL: Defer canvas redraw to next frame to ensure React state has updated
+    // Otherwise canvas draws with old drag state still active (items follow cursor)
+    requestAnimationFrame(() => {
+      drawCanvas(activePage);
+    });
   }
 
   if (resizingImageIndex !== null) setResizingImageIndex(null);
@@ -996,6 +1194,10 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
   }
 
       if (isSelecting) {
+        // Check if this was an actual drag (selection rectangle has size)
+        // vs just a click (no rectangle)
+        const hasSelectionArea = selectionRect.width > 2 || selectionRect.height > 2;
+
         const selectedIndexes = [];
         const updatedInitials = [];
     
@@ -1027,7 +1229,42 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
           setSelectedTextIndex(null);
           setIsTextSelected(false);
         }
-    
+
+        // Also check for shapes in selection rectangle
+        const selectedShapeIndexes = [];
+        if (shapeItems && shapeItems.length > 0) {
+          for (let i = 0; i < shapeItems.length; i++) {
+            const shape = shapeItems[i];
+            if (shape.index !== activePage) continue;
+
+            const shapeX = shape.xNorm != null ? shape.xNorm * rect.width : shape.x;
+            const shapeY = shape.yNormTop != null ? shape.yNormTop * rect.height : shape.y;
+            const shapeW = shape.widthNorm != null ? shape.widthNorm * rect.width : shape.width;
+            const shapeH = shape.heightNorm != null ? shape.heightNorm * rect.height : shape.height;
+
+            const shapeBounds = { x: shapeX, y: shapeY, width: shapeW, height: shapeH };
+
+            const intersects =
+              selectionRect.x < shapeBounds.x + shapeBounds.width &&
+              selectionRect.x + selectionRect.width > shapeBounds.x &&
+              selectionRect.y < shapeBounds.y + shapeBounds.height &&
+              selectionRect.y + selectionRect.height > shapeBounds.y;
+
+            if (intersects) {
+              selectedShapeIndexes.push(i);
+            }
+          }
+        }
+
+        if (selectedShapeIndexes.length > 0) {
+          setSelectedShapeIndexes(selectedShapeIndexes);
+          // Also set the single selection to the last selected shape for compatibility
+          setSelectedShapeIndex(selectedShapeIndexes[selectedShapeIndexes.length - 1]);
+        } else {
+          setSelectedShapeIndexes([]);
+          setSelectedShapeIndex(null);
+        }
+
         if (isTextBoxEditEnabled && !textBox && selectionStart && selectionEnd) {
           const startX = selectionStart.x;
           const startY = selectionStart.y;
@@ -1052,9 +1289,17 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
             hasScaled: false
           });
         }
-    
+
+        // Clear selection state
         setIsSelecting(false);
         setShouldClearSelectionBox(true);
+
+        // If no actual selection area, treat as a click (will be handled in the else block below)
+        if (!hasSelectionArea) {
+          // Don't process as selection, fall through to click handling
+          // Clear the flag so the else block processes it
+          return; // Exit early, let it be processed as a simple click
+        }
       } else if (!wasDragging) {
         // --- SINGLE-ITEM PICK on click/tap ---
         // Only run this if we weren't dragging (i.e., didn't already select in handleMouseDown)
@@ -1124,10 +1369,15 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
           setIsTextSelected(false);
         }
       }
-    
+
       setSelectionStart(null);
       setSelectionEnd(null);
-      drawCanvas(activePage);
+
+      // Defer final canvas redraw to ensure all state updates have been processed
+      // This prevents items from appearing to follow the cursor after mouse up
+      requestAnimationFrame(() => {
+        drawCanvas(activePage);
+      });
     };
 
 

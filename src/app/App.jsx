@@ -15,6 +15,8 @@ import { ConfirmationModal } from "../components/ConfirmationModal";
 import { handleJSONImport } from "../utils/json/jsonImportHandler";
 import { clearAllEditorState } from "../utils/persistance/indexedDBCleaner";
 import { savePages } from "../utils/persistance/pagesStorage";
+import { saveShapeItemsToIndexedDB } from "../utils/persistance/indexedDBHelpers";
+import { exportStateToJson } from "../utils/json/exportStateToJson";
 import { deleteSelectedImage } from "../utils/images/deleteSelectedImage";
 import { resolveTopLeft } from "../utils/canvas/resolveTopLeft";
 import { saveAllPagesAsPDF } from "../utils/pdf/exportPdf";
@@ -22,6 +24,9 @@ import { saveEditedText } from "../utils/text/saveEditedText";
 import { closeEditModal } from "../utils/text/closeEditModal";
 import { uploadPdfToServer } from "../utils/pdf/uploadPdfToServer";
 import { handleFileChange } from "../utils/files/handleFileChange";
+import { ShapeToolbar } from "../components/ShapeToolbar";
+import { isPointInShape, getResizeHandle } from "../utils/shapes/shapeHitDetection";
+import { handleShapeMouseDown, handleShapeMouseMove, handleShapeMouseUp } from "../utils/shapes/shapeMouseHandlers";
 
 
 const App = () => {
@@ -135,7 +140,9 @@ useEffect(() => {
       shouldClearSelectionBox, setShouldClearSelectionBox,
       isDragging, setIsDragging,
       dragStart, setDragStart,
-      isResizing, setIsResizing
+      isResizing, setIsResizing,
+      isDraggingMixedItems, setIsDraggingMixedItems,
+      initialMixedItemPositions, setInitialMixedItemPositions,
     },
 
     textBox: {
@@ -191,6 +198,29 @@ useEffect(() => {
       viewerCount,
     },
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
+    shapes: {
+      shapeItems, setShapeItems,
+      selectedShapeIndex, setSelectedShapeIndex,
+      selectedShapeIndexes, setSelectedShapeIndexes,
+      isDraggingShape, setIsDraggingShape,
+      isDraggingMultipleShapes, setIsDraggingMultipleShapes,
+      isResizingShape, setIsResizingShape,
+      isCreatingShape,
+      activeShapeTool, setActiveShapeTool,
+      shapeCreationStart, shapeCreationCurrent,
+      dragStart: shapeDragStart, setDragStart: setShapeDragStart,
+      initialShape, setInitialShape,
+      initialMultiShapes, setInitialMultiShapes,
+      resizeStart: shapeResizeStart, setResizeStart: setShapeResizeStart,
+      resizeHandle, setResizeHandle,
+      initialSize, setInitialSize,
+      startCreatingShape,
+      updateShapeCreation,
+      finishCreatingShape,
+      deleteSelectedShape,
+      deleteSelectedShapes,
+      updateShape,
+    },
   } = useEditor(); // ✅ correct
   useClipboard(useEditor());
 
@@ -278,9 +308,9 @@ const requestCanvasDraw = (page) => {
         // const canvas = canvasRefs.current[i];
         // if (canvas) { /* set width/height*dpr and ctx.setTransform(dpr,0,0,dpr,0,0) */ }
         drawCanvas(i);
-      }); 
+      });
     });
-  }, [pageList, textItems, imageItems, mlText, mlAnchor,
+  }, [pageList, textItems, imageItems, shapeItems, mlText, mlAnchor,
 mlPreferredX /* + any other draw deps */]);
 
 
@@ -346,6 +376,13 @@ useEffect(() => {
       state: {
         textItems,
         imageItems,
+        shapeItems,
+        selectedShapeIndex,
+        selectedShapeIndexes,
+        isCreatingShape,
+        shapeCreationStart,
+        shapeCreationCurrent,
+        activeShapeTool,
         selectedTextIndexes,
         selectionStart,
         selectionEnd,
@@ -378,6 +415,13 @@ useEffect(() => {
             state: {
               textItems,
               imageItems,
+              shapeItems,
+              selectedShapeIndex,
+              selectedShapeIndexes,
+              isCreatingShape,
+              shapeCreationStart,
+              shapeCreationCurrent,
+              activeShapeTool,
               selectedTextIndexes,
               selectionStart,
               selectionEnd,
@@ -411,6 +455,13 @@ useEffect(() => {
   activePage,
   textItems,
   imageItems,
+  shapeItems,
+  selectedShapeIndex,
+  selectedShapeIndexes,
+  isCreatingShape,
+  shapeCreationStart,
+  shapeCreationCurrent,
+  activeShapeTool,
   selectedTextIndexes,
   selectionStart,
   selectionEnd,
@@ -444,11 +495,18 @@ useEffect(() => {
 useLayoutEffect(() => {
   const canvas = canvasRefs.current[activePage];
   if (canvas) {
-        canvas.width = canvas.clientWidth;
-    canvas.height = canvas.clientHeight;
+    // Only resize canvas if dimensions actually changed
+    // Setting canvas.width/height clears the canvas, so avoid unnecessary resets
+    const needsResize = canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight;
+
+    if (needsResize) {
+      canvas.width = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+    }
+
     drawCanvas(activePage);
   }
-}, [textItems, imageItems, isSelecting, selectionStart, selectionEnd]);
+}, [textItems, imageItems, shapeItems, isSelecting, selectionStart, selectionEnd]);
 
 
 
@@ -536,6 +594,248 @@ const handleRedo = () => {
   fnRedoStack(activePage);
 };
 
+// Wrapper mouse handlers that check shapes first, then fall through to existing handlers
+const wrappedMouseDown = (e) => {
+  // First, try shape handler
+  const shapeHandled = handleShapeMouseDown(e, {
+    canvasRefs,
+    activePage,
+    activeShapeTool,
+    shapeItems,
+    textItems,
+    resolveTextLayoutForHit,
+    startCreatingShape,
+    selectedShapeIndex,
+    setSelectedShapeIndex,
+    selectedShapeIndexes,
+    setSelectedShapeIndexes,
+    selectedTextIndexes,
+    setIsDraggingShape,
+    setIsDraggingMultipleShapes,
+    setIsDraggingMixedItems,
+    setIsResizingShape,
+    setIsSelecting,
+    setDragStart: setShapeDragStart,
+    setSelectionDragStart: setDragStart, // For mixed-item dragging (needs selection hook's setter)
+    setInitialShape,
+    setInitialMultiShapes,
+    setInitialMixedItemPositions,
+    setResizeStart: setShapeResizeStart,
+    setResizeHandle,
+    setInitialSize,
+  });
+
+  if (shapeHandled) return; // Shape handled it, don't propagate
+
+  // If multiline mode, handle that
+  if (handleCanvasMouseDownMl(e, {
+    isMultilineMode,
+    activePage,
+    canvasRefs,
+    pdfToCssMargins,
+    layoutMultiline,
+    mlConfig,
+    mlText,
+    setMlCaret,
+    setMlAnchor,
+    setMlPreferredX,
+    setIsMlDragging,
+  })) return;
+
+  // Otherwise, handle normal mouse down (text/images)
+  handleMouseDown(e, {
+    canvasRefs,
+    activePage,
+    editingIndex,
+    imageItems,
+    shapeItems,
+    resolveImageRectCss,
+    setResizingImageIndex,
+    setResizeStart,
+    setIsSelecting,
+    setSelectedImageIndex,
+    setDraggedImageIndex,
+    setIsImageDragging,
+    setDragStart,
+    textItems,
+    resolveTextLayoutForHit,
+    setIsTextSelected,
+    setSelectedTextIndex,
+    selectedTextIndexes,
+    setSelectedTextIndexes,
+    selectedShapeIndexes,
+    setSelectedShapeIndex,
+    setSelectedShapeIndexes,
+    setIsDragging,
+    setIsDraggingMixedItems,
+    setInitialPositions,
+    setInitialMixedItemPositions,
+    textBox,
+    setIsResizing,
+    setTextBox,
+    setSelectionStart,
+    setSelectionEnd,
+  });
+};
+
+const wrappedMouseMove = (e) => {
+  // First, try shape handler
+  const shapeHandled = handleShapeMouseMove(e, {
+    canvasRefs,
+    activePage,
+    isCreatingShape,
+    updateShapeCreation,
+    isDraggingShape,
+    isDraggingMultipleShapes,
+    isDraggingMixedItems,
+    isResizingShape,
+    selectedShapeIndex,
+    shapeItems,
+    dragStart: shapeDragStart,
+    initialShape,
+    initialMultiShapes,
+    resizeStart: shapeResizeStart,
+    resizeHandle,
+    initialSize,
+    updateShape,
+  });
+
+  if (shapeHandled) return; // Shape handled it, don't propagate
+
+  // If multiline mode, handle that
+  if (handleCanvasMouseMoveMl(e, {
+    isMultilineMode,
+    isMlDragging,
+    canvasRefs,
+    activePage,
+    pdfToCssMargins,
+    mlConfig,
+    layoutMultiline,
+    mlText,
+    setMlCaret,
+  })) return;
+
+  // Otherwise, handle normal mouse move (text/images)
+  handleMouseMove(e, {
+    canvasRefs,
+    activePage,
+    editingIndex,
+    imageItems,
+    textItems,
+    shapeItems,
+    resolveImageRectCss,
+    resolveTextLayoutForHit,
+    selectedTextIndex,
+    selectedTextIndexes,
+    setSelectedTextIndexes,
+    selectedShapeIndexes,
+    setSelectedShapeIndexes,
+    setSelectedShapeIndex,
+    setTextItems,
+    setShapeItems,
+    draggedImageIndex,
+    resizingImageIndex,
+    setImageItems,
+    setDragStart,
+    resizeStart,
+    setResizeStart,
+    isImageDragging,
+    isDragging,
+    isDraggingMixedItems,
+    setIsDragging,
+    initialPositions,
+    initialMixedItemPositions,
+    dragStart,
+    isSelecting,
+    setSelectionEnd,
+    selectionStart,
+    isResizing,
+    textBox,
+    setTextBox,
+    wrapTextResponsive,
+    drawCanvas,
+    saveImageItemsToIndexedDB,
+    updatePageItems,
+    saveTextItemsToIndexedDB,
+    updateShape,
+    requestCanvasDraw: () => drawCanvas(activePage),
+  });
+};
+
+const wrappedMouseUp = (e) => {
+  // First, try shape handler
+  const shapeHandled = handleShapeMouseUp(e, {
+    canvasRefs,
+    activePage,
+    isCreatingShape,
+    finishCreatingShape,
+    isDraggingShape,
+    isDraggingMultipleShapes,
+    isResizingShape,
+    setIsDraggingShape,
+    setIsDraggingMultipleShapes,
+    setIsResizingShape,
+    pushSnapshotToUndo,
+  });
+
+  if (shapeHandled) return; // Shape handled it, don't propagate
+
+  // If multiline mode, handle that
+  if (handleCanvasMouseUpMl(e, {
+    isMultilineMode,
+    isMlDragging,
+    setIsMlDragging,
+  })) return;
+
+  // Otherwise, handle normal mouse up (text/images)
+  handleMouseUp(e, {
+    canvasRefs,
+    activePage,
+    isImageDragging,
+    setIsImageDragging,
+    setDraggedImageIndex,
+    resizingImageIndex,
+    setResizingImageIndex,
+    setResizeStart,
+    isSelecting,
+    setIsSelecting,
+    selectionStart,
+    selectionEnd,
+    textItems,
+    setSelectedTextIndexes,
+    setSelectedTextIndex,
+    imageItems,
+    setSelectedImageIndex,
+    shapeItems,
+    setSelectedShapeIndexes,
+    setSelectedShapeIndex,
+    isDragging,
+    isDraggingMixedItems,
+    setIsDragging,
+    setIsDraggingMixedItems,
+    setInitialPositions,
+    setInitialMixedItemPositions,
+    setDragStart,
+    isResizing,
+    setIsResizing,
+    setTextBox,
+    setShouldClearSelectionBox,
+    editingIndex,
+    resolveTextLayoutForHit,
+    setSelectionEnd,
+    setSelectionStart,
+    textBox,
+    drawCanvas,
+    pushSnapshotToUndo,
+    setIsTextSelected,
+    isTextBoxEditEnabled,
+    updatePageItems,
+    saveTextItemsToIndexedDB,
+    pageList,
+    setPages,
+  });
+};
+
 
 
 
@@ -566,10 +866,10 @@ useEffect(() => {
     textItems,
     isMultilineMode,
     mlText,
-    mlCaret, 
-    mlAnchor, 
-    mlPreferredX, 
-    activePage, 
+    mlCaret,
+    mlAnchor,
+    mlPreferredX,
+    activePage,
     mlConfig,
     setSelectedTextIndexes,
     setIsTextSelected,
@@ -587,7 +887,12 @@ useEffect(() => {
     setMlCaret,
     setMlAnchor,
     setMlPreferredX,
-    indexToXY
+    indexToXY,
+    selectedShapeIndex,
+    selectedShapeIndexes,
+    deleteSelectedShape,
+    deleteSelectedShapes,
+    pushSnapshotToUndo
   });
 
   document.addEventListener("keydown", listener, { passive: false });
@@ -707,226 +1012,16 @@ useEffect(() => {
 }, [isPdfDownloaded, textItems, imageItems, pageList]);
 
 
-
-
-
-
-
-
-
-
-
-
-// ---------- canonical helpers ----------
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === "object") {
-    const out = {};
-    const keys = Object.keys(value).filter(k => k !== "checksum" && k !== "checksumRaw").sort();
-    for (const k of keys) out[k] = canonicalize(value[k]);
-    return out;
-  }
-  if (typeof value === "number" && !Number.isFinite(value)) return String(value);
-  return value;
-}
-function canonicalStringify(obj) {
-  return JSON.stringify(canonicalize(obj));
-}
-
-// ---------- hashing ----------
-async function sha256String(str) {
-  if (window.crypto?.subtle) {
-    const enc = new TextEncoder().encode(str);
-    const buf = await crypto.subtle.digest("SHA-256", enc);
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-  }
-  // fallback (non-crypto)
-  let h = 0;
-  for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; }
-  return "fallback_" + Math.abs(h).toString(16);
-}
-async function computeChecksum(obj) {
-  return sha256String(canonicalStringify(obj));
-}
-
-
-
-
-
-
-
-
-// Helper: open the shared PdfEditorDB (version must match your other code)
-function openEditorDB() {
-  return new Promise((resolve, reject) => {
-    if (!("indexedDB" in window)) {
-      return reject(new Error("IndexedDB not supported"));
-    }
-    const req = indexedDB.open("PdfEditorDB", 4); // must match your DB_VERSION
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-// Helper: read the single "main" record from a given store
-async function loadStoreRecord(storeName) {
-  let db;
-  try {
-    db = await openEditorDB();
-  } catch (e) {
-    // IndexedDB not available
-    return null;
-  }
-
-  try {
-    const tx = db.transaction(storeName, "readonly");
-    const store = tx.objectStore(storeName);
-
-    const record = await new Promise((resolve, reject) => {
-      const r = store.get("main");
-      r.onsuccess = () => resolve(r.result || null);
-      r.onerror = () => reject(r.error);
-    });
-
-    await new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
-    });
-
-    return record;
-  } finally {
-    db.close && db.close();
-  }
-}
-
-// Main export: reads state from IndexedDB only
-async function exportStateToJson(
-  filename = "state.json"
-) {
-  // 1) Read from IndexedDB
-  let pages = null;
-  let textItems = [];
-  let imageItems = [];
-
-  try {
-    const [pagesRec, textItemsRec, imageItemsRec] = await Promise.all([
-      loadStoreRecord("pages"),
-      loadStoreRecord("textItems"),
-      loadStoreRecord("imageItems"),
-    ]);
-
-    if (pagesRec && Array.isArray(pagesRec.data)) {
-      pages = pagesRec.data;
-    }
-    if (textItemsRec && Array.isArray(textItemsRec.data)) {
-      textItems = textItemsRec.data;
-    }
-    if (imageItemsRec && Array.isArray(imageItemsRec.data)) {
-      imageItems = imageItemsRec.data;
-    }
-  } catch (e) {
-    console.error("[exportStateToJson] IndexedDB read failed:", e);
-    alert("Failed to read data from IndexedDB. Cannot export state.");
-    throw e;
-  }
-
-  // 2) If pages is still not a proper Page[] shape, reconstruct from items
-  const isPageShape = (p) =>
-    p &&
-    typeof p === "object" &&
-    Array.isArray(p.textItems) &&
-    Array.isArray(p.imageItems);
-
-  if (!Array.isArray(pages) || !pages.every(isPageShape)) {
-    // Reconstruct pages from textItems and imageItems
-    const maxIndex = Math.max(
-      -1,
-      ...textItems.map((t) =>
-        Number.isFinite(t?.index) ? +t.index : -1
-      ),
-      ...imageItems.map((i) =>
-        Number.isFinite(i?.index) ? +i.index : -1
-      )
-    );
-
-    const pageCount = Math.max(0, maxIndex + 1);
-    const grouped = Array.from({ length: pageCount }, () => ({
-      textItems: [],
-      imageItems: [],
-    }));
-
-    textItems.forEach((t) => {
-      const i = Number.isFinite(t?.index) ? +t.index : 0;
-      (grouped[i] ?? (grouped[i] = { textItems: [], imageItems: [] }))
-        .textItems.push(t);
-    });
-
-    imageItems.forEach((img) => {
-      const p = Number.isFinite(img?.index) ? +img.index : 0;
-      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [] }))
-        .imageItems.push(img);
-    });
-
-    pages = grouped;
-  }
-
-  // 3) Ensure we have at least one page
-  if (!Array.isArray(pages) || pages.length === 0) {
-    pages = [{ textItems: [], imageItems: [] }];
-  }
-  console.log(pages, textItems, imageItems);
-  // 4) Base payload (no checksums)
-  const base = {
-    version: 2,
-    savedAt: new Date().toISOString(),
-    pages,
-    textItems,
-    imageItems,
-  };
-
-  // 5) Canonical checksum (object-based)
-  const checksum = await computeChecksum(base);
-
-  // 6) Prepare object WITH checksums, but leave checksumRaw blank for now
-  const withBlank = { ...base, checksum, checksumRaw: "" };
-
-  // Serialize once with blank checksumRaw — we will hash this exact text
-  const textWithBlank = JSON.stringify(withBlank, null, 2);
-
-  // 7) Raw text checksum (detects any textual edit)
-  const checksumRaw = await sha256String(textWithBlank);
-
-  // Final object
-  const finalObj = { ...withBlank, checksumRaw };
-  const finalText = JSON.stringify(finalObj, null, 2);
-
-  // 8) Download
-  const blob = new Blob([finalText], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-
-  return finalObj;
-}
-
-
-
-
-
 // Handler for JSON file import
 const onJSONChange = async (e) => {
   await handleJSONImport(e, {
     setPages,
     setTextItems,
     setImageItems,
+    setShapeItems,
     saveTextItemsToIndexedDB,
     saveImageItemsToIndexedDB,
+    saveShapeItemsToIndexedDB,
     savePagesToIndexedDB: savePages,
     onSuccess: () => {
       console.log("JSON state imported successfully");
@@ -1276,6 +1371,21 @@ return (
             ),
           },
           {
+            title: "Shapes",
+            icon: "⬜",
+            description: "Draw shapes on the canvas.",
+            content: (
+              <ShapeToolbar
+                activeShapeTool={activeShapeTool}
+                setActiveShapeTool={setActiveShapeTool}
+                selectedShapeIndex={selectedShapeIndex}
+                deleteSelectedShape={deleteSelectedShape}
+                isViewer={isViewer}
+                viewOnly={viewOnly}
+              />
+            ),
+          },
+          {
             title: "TextBox",
             icon: "📝",
             description: "Edit multi-line textbox content.",
@@ -1517,146 +1627,9 @@ return (
               <canvas
                 ref={(el) => (canvasRefs.current[index] = el)}
                 style={canvasStyle}
-                onMouseDown={
-                  isViewer
-                    ? viewOnly
-                    : (e) =>
-                        handleCanvasMouseDownMl(e, {
-                          isMultilineMode,
-                          activePage,
-                          canvasRefs,
-                          pdfToCssMargins,
-                          layoutMultiline,
-                          mlConfig,
-                          mlText,
-                          setMlCaret,
-                          setMlAnchor,
-                          setMlPreferredX,
-                          setIsMlDragging,
-                        })
-                          ? undefined
-                          : handleMouseDown(e, {
-                              canvasRefs,
-                              activePage,
-                              editingIndex,
-                              imageItems,
-                              resolveImageRectCss,
-                              setResizingImageIndex,
-                              setResizeStart,
-                              setIsSelecting,
-                              setSelectedImageIndex,
-                              setDraggedImageIndex,
-                              setIsImageDragging,
-                              setDragStart,
-                              textItems,
-                              resolveTextLayoutForHit,
-                              setIsTextSelected,
-                              setSelectedTextIndex,
-                              selectedTextIndexes,
-                              setSelectedTextIndexes,
-                              setIsDragging,
-                              setInitialPositions,
-                              textBox,
-                              setIsResizing,
-                              setTextBox,
-                              setSelectionStart,
-                              setSelectionEnd,
-                            })
-                }
-                onMouseMove={
-                  isViewer
-                    ? viewOnly
-                    : (e) =>
-                        handleCanvasMouseMoveMl(e, {
-                          isMultilineMode,
-                          isMlDragging,
-                          canvasRefs,
-                          activePage,
-                          pdfToCssMargins,
-                          mlConfig,
-                          layoutMultiline,
-                          mlText,
-                          setMlCaret,
-                        })
-                          ? undefined
-                          : handleMouseMove(e, {
-                              canvasRefs,
-                              activePage,
-                              editingIndex,
-                              imageItems,
-                              textItems,
-                              resolveTextLayoutForHit,
-                              selectedTextIndexes,
-                              setSelectedTextIndexes,
-                              textBox,
-                              setSelectionEnd,
-                              isResizing,
-                              wrapTextResponsive,
-                              setTextBox,
-                              drawCanvas,
-                              isSelecting,
-                              selectionStart,
-                              resizingImageIndex,
-                              resizeStart,
-                              setImageItems,
-                              saveImageItemsToIndexedDB,
-                              updatePageItems,
-                              isImageDragging,
-                              draggedImageIndex,
-                              dragStart,
-                              isDragging,
-                              initialPositions,
-                              setTextItems,
-                              saveTextItemsToIndexedDB,
-                              fontSize,
-                              requestCanvasDraw,
-                              textBoxRef
-                            })
-                }
-                onMouseUp={
-                  isViewer
-                    ? viewOnly
-                    : (e) =>
-                        handleCanvasMouseUpMl(e, {
-                          isMultilineMode,
-                          setIsMlDragging,
-                        })
-                          ? undefined
-                          : handleMouseUp(e, {
-                              canvasRefs,
-                              activePage,
-                              editingIndex,
-                              textItems,
-                              resolveTextLayoutForHit,
-                              setSelectedTextIndexes,
-                              textBox,
-                              setSelectionEnd,
-                              selectionEnd,
-                              isResizing,
-                              setTextBox,
-                              drawCanvas,
-                              isSelecting,
-                              selectionStart,
-                              resizingImageIndex,
-                              isImageDragging,
-                              isDragging,
-                              setIsResizing,
-                              setIsDragging,
-                              setInitialPositions,
-                              setDragStart,
-                              pushSnapshotToUndo,
-                              setResizingImageIndex,
-                              setIsImageDragging,
-                              setDraggedImageIndex,
-                              setIsTextSelected,
-                              setSelectedTextIndex,
-                              isTextBoxEditEnabled,
-                              setIsSelecting,
-                              setShouldClearSelectionBox,
-                              setSelectionStart,
-                              history,
-                            })
-                }
+                onMouseDown={isViewer ? viewOnly : wrappedMouseDown}
+                onMouseMove={isViewer ? viewOnly : wrappedMouseMove}
+                onMouseUp={isViewer ? viewOnly : wrappedMouseUp}
                 onDoubleClick={isViewer ? viewOnly : (e) => handleDoubleClick(e, {
                   canvasRefs,
                   activePage,

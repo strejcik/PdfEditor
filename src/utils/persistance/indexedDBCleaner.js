@@ -3,7 +3,7 @@
  */
 
 const DB_NAME = "PdfEditorDB";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 /**
  * Open the PdfEditorDB database
@@ -29,6 +29,9 @@ function openEditorDB() {
       }
       if (!db.objectStoreNames.contains("pages")) {
         db.createObjectStore("pages", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("shapes")) {
+        db.createObjectStore("shapes", { keyPath: "id" });
       }
     };
 
@@ -81,10 +84,10 @@ async function clearStore(storeName) {
 
 /**
  * Clear all editor data from IndexedDB
- * @param {Array<string>} [stores=['pages', 'textItems', 'imageItems']] - Store names to clear
+ * @param {Array<string>} [stores=['pages', 'textItems', 'imageItems', 'shapes']] - Store names to clear
  * @returns {Promise<void>}
  */
-export async function clearEditorData(stores = ['pages', 'textItems', 'imageItems']) {
+export async function clearEditorData(stores = ['pages', 'textItems', 'imageItems', 'shapes']) {
   try {
     const clearPromises = stores.map(storeName => clearStore(storeName));
     await Promise.all(clearPromises);
@@ -100,13 +103,14 @@ export async function clearEditorData(stores = ['pages', 'textItems', 'imageItem
  */
 export async function clearAllEditorState() {
   // Clear IndexedDB (gracefully handles empty DB)
-  await clearEditorData(['pages', 'textItems', 'imageItems']);
+  await clearEditorData(['pages', 'textItems', 'imageItems', 'shapes']);
 
   // Clear localStorage as fallback/legacy
   try {
     localStorage.removeItem("pages");
     localStorage.removeItem("textItems");
     localStorage.removeItem("imageItems");
+    localStorage.removeItem("shapeItems");
     localStorage.removeItem("undoStack");
     localStorage.removeItem("redoStack");
   } catch (err) {

@@ -9,8 +9,10 @@ import { importStateFromJson } from './importStateFromJson';
  * @param {Function} handlers.setPages - Set pages state
  * @param {Function} handlers.setTextItems - Set text items state
  * @param {Function} handlers.setImageItems - Set image items state
+ * @param {Function} handlers.setShapeItems - Set shape items state
  * @param {Function} handlers.saveTextItemsToIndexedDB - Save text items to IndexedDB
  * @param {Function} handlers.saveImageItemsToIndexedDB - Save image items to IndexedDB
+ * @param {Function} handlers.saveShapeItemsToIndexedDB - Save shape items to IndexedDB
  * @param {Function} handlers.savePagesToIndexedDB - Save pages to IndexedDB
  * @param {Function} handlers.onSuccess - Optional success callback
  * @param {Function} handlers.onError - Optional error callback
@@ -19,8 +21,10 @@ export const handleJSONImport = async (e, {
   setPages,
   setTextItems,
   setImageItems,
+  setShapeItems,
   saveTextItemsToIndexedDB,
   saveImageItemsToIndexedDB,
+  saveShapeItemsToIndexedDB,
   savePagesToIndexedDB,
   onSuccess,
   onError
@@ -53,11 +57,14 @@ export const handleJSONImport = async (e, {
       setPages,
       setTextItems,
       setImageItems,
+      setShapeItems,
       pagesKey: "pages",
       textItemsKey: "textItems",
       imageItemsKey: "imageItems",
+      shapeItemsKey: "shapeItems",
       saveTextItemsToIndexedDB,
       saveImageItemsToIndexedDB,
+      saveShapeItemsToIndexedDB,
       savePagesToIndexedDB,
     });
 

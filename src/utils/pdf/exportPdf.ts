@@ -112,8 +112,9 @@ export async function saveAllPagesAsPDF({
     const page = pageList[i] ?? {};
     const textItems = Array.isArray(page.textItems) ? page.textItems : [];
     const imageItems = Array.isArray(page.imageItems) ? page.imageItems : [];
+    const shapes = Array.isArray(page.shapes) ? page.shapes : [];
 
-    const pageManifest = { texts: [] as any[], images: [] as any[] };
+    const pageManifest = { texts: [] as any[], images: [] as any[], shapes: [] as any[] };
 
     // **Clip to the page rectangle** so overflow matches canvas behavior
     clipToPage(pdfPage, W, H);
@@ -193,6 +194,56 @@ export async function saveAllPagesAsPDF({
         widthNorm: +((drawW) / W).toFixed(6),
         heightNorm: +((drawH) / H).toFixed(6),
         ref: src, // keep original reference (svg/png/jpg)
+      });
+    }
+
+    // ---- SHAPES (rectangles, circles, lines) ----
+    for (const item of shapes) {
+      const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
+      const drawW = Number(item.width) || Math.round((item.widthNorm ?? 0) * W);
+      const drawH = Number(item.height) || Math.round((item.heightNorm ?? 0) * H);
+
+      const color = hexToRgb(item.strokeColor || "#000000");
+      const borderWidth = Number(item.strokeWidth) || 2;
+
+      if (item.type === "rectangle") {
+        pdfPage.drawRectangle({
+          x: xTop,
+          y: H - yTop - drawH,
+          width: drawW,
+          height: drawH,
+          borderColor: color,
+          borderWidth: borderWidth,
+        });
+      } else if (item.type === "circle") {
+        // pdf-lib uses ellipse, not circle
+        pdfPage.drawEllipse({
+          x: xTop + drawW / 2,
+          y: H - yTop - drawH / 2,
+          xScale: drawW / 2,
+          yScale: drawH / 2,
+          borderColor: color,
+          borderWidth: borderWidth,
+        });
+      } else if (item.type === "line") {
+        // Draw line
+        pdfPage.drawLine({
+          start: { x: xTop, y: H - yTop },
+          end: { x: xTop + drawW, y: H - (yTop + drawH) },
+          color: color,
+          thickness: borderWidth,
+        });
+      }
+
+      pageManifest.shapes.push({
+        type: item.type,
+        xNorm: +xNorm.toFixed(6),
+        yNormTop: +yNormTop.toFixed(6),
+        widthNorm: +((drawW) / W).toFixed(6),
+        heightNorm: +((drawH) / H).toFixed(6),
+        strokeColor: item.strokeColor || "#000000",
+        strokeWidth: borderWidth,
+        index: item.index,
       });
     }
 

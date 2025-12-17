@@ -168,7 +168,7 @@ export function useTextItems() {
 
 const openTextItemsDB = () => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("PdfEditorDB", 4);
+    const request = indexedDB.open("PdfEditorDB", 5);
     request.onupgradeneeded = (event:any) => {
       const db = event.target.result;
       if (!db.objectStoreNames.contains("textItems")) {
@@ -179,6 +179,9 @@ const openTextItemsDB = () => {
       }
       if (!db.objectStoreNames.contains("pages")) {
         db.createObjectStore("pages", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("shapes")) {
+        db.createObjectStore("shapes", { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -1204,7 +1207,9 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
   ): void => {
     const { activePage, canvasRefs, setPages, APP_FONT_FAMILY, setTextBox } = deps;
 
-    const sourceText = (textBox?.rawText ?? textBox?.text ?? "").toString();
+    if (!textBox) return;
+
+    const sourceText = (textBox.rawText ?? textBox.text ?? "").toString();
     if (!sourceText.trim()) return;
 
     const canvas = canvasRefs.current[activePage];

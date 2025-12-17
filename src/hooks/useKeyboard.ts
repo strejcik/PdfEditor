@@ -1,10 +1,8 @@
-import { useCallback } from "react";
-
 export function useKeyboard() {
 
     let _ghKeyDown:any = [];
 
-    const handleKeyDown = useCallback((e:any, opts:any) => {
+    const handleKeyDown = (e:any, opts:any) => {
       const {
         canvasRefs,
         fontSize,
@@ -13,10 +11,10 @@ export function useKeyboard() {
         textItems,
         isMultilineMode,
         mlText,
-        mlCaret, 
-        mlAnchor, 
-        mlPreferredX, 
-        activePage, 
+        mlCaret,
+        mlAnchor,
+        mlPreferredX,
+        activePage,
         mlConfig,
         setSelectedTextIndexes,
         setIsTextSelected,
@@ -34,7 +32,12 @@ export function useKeyboard() {
         setMlCaret,
         setMlAnchor,
         indexToXY,
-        setMlPreferredX
+        setMlPreferredX,
+        selectedShapeIndex,
+        selectedShapeIndexes,
+        deleteSelectedShape,
+        deleteSelectedShapes,
+        pushSnapshotToUndo
       } = opts;
       _ghKeyDown.push({
         activePage,
@@ -77,6 +80,22 @@ export function useKeyboard() {
     
       if (e.key === "Delete" && !isMultilineMode) {
         e.preventDefault();
+
+        // Priority 1: Delete multiple selected shapes
+        if (selectedShapeIndexes && selectedShapeIndexes.length > 0 && deleteSelectedShapes) {
+          pushSnapshotToUndo?.(activePage);
+          deleteSelectedShapes();
+          return;
+        }
+
+        // Priority 2: Delete single selected shape
+        if (selectedShapeIndex !== null && deleteSelectedShape) {
+          pushSnapshotToUndo?.(activePage);
+          deleteSelectedShape();
+          return;
+        }
+
+        // Priority 3: Delete selected text items
         const toRemove = selectedTextIndexesRef.current;
         if (toRemove.length > 0) {
           const updated = textItems.filter((_:any, i:any) => !toRemove.includes(i));
@@ -316,10 +335,7 @@ export function useKeyboard() {
     
         return; // handled multiline
       }
-    }, [
-      // keep these minimal—avoid re-creating handler constantly
-      _ghKeyDown
-    ]);
+    };
 
 
     return {

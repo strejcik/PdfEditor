@@ -9,7 +9,7 @@ export function usePages() {
   // Add a new page
   const addNewPage = () => {
     if(pages.length >= 1) {
-      setPages((prev) => [...prev, { textItems: [], imageItems: [] }]);
+      setPages((prev) => [...prev, { textItems: [], imageItems: [], shapes: [] }]);
       setActivePage(pages.length); // Switch to the new page
     }
   };
@@ -28,11 +28,14 @@ export function usePages() {
       setResizingImageIndex,
       setTextItems,
       setImageItems,
+      setShapeItems,
       saveTextItemsToIndexedDB,
       saveImageItemsToIndexedDB,
+      saveShapeItemsToIndexedDB,
       purgeUndoRedoForRemovedPage,
       textItems,
       imageItems,
+      shapeItems,
       isTextBoxEditEnabled,
       textBox,
       activePage,
@@ -50,7 +53,7 @@ export function usePages() {
       resolveTextLayout,
       layoutMultiline,
       setMlPreferredX,
-      showGrid, 
+      showGrid,
       APP_FONT_FAMILY,
       drawCanvas
     }: any = opts;
@@ -78,6 +81,7 @@ export function usePages() {
       ...pg,
       textItems: (pg.textItems || []).map((t:any) => ({ ...t, index: newIdx })),
       imageItems: (pg.imageItems || []).map((im:any) => ({ ...im, index: newIdx })),
+      shapes: (pg.shapes || []).map((s:any) => ({ ...s, index: newIdx })),
     }));
   };
 
@@ -85,6 +89,7 @@ export function usePages() {
   const nextPages = reindexPagesSlice(pages);
   const nextTextItems = reindexArrayItems(textItems || []);
   const nextImageItems = reindexArrayItems(imageItems || []);
+  const nextShapeItems = reindexArrayItems(shapeItems || []);
 
   // 3) Compute next active page
   const nextActivePage = (() => {
@@ -116,8 +121,10 @@ export function usePages() {
   setPages(nextPages);
   setTextItems(nextTextItems);
   setImageItems(nextImageItems);
+  setShapeItems?.(nextShapeItems);
   saveTextItemsToIndexedDB?.(nextTextItems);
   saveImageItemsToIndexedDB?.(nextImageItems);
+  saveShapeItemsToIndexedDB?.(nextShapeItems);
 
   // Undo/redo stacks purge for removed page (if you maintain per-page history)
   try {
@@ -139,6 +146,7 @@ export function usePages() {
           // fresh global stores:
           textItems: nextTextItems,
           imageItems: nextImageItems,
+          shapeItems: nextShapeItems,
 
           // basic UI state (cleared above):
           selectedTextIndexes: [],
@@ -149,7 +157,7 @@ export function usePages() {
           textBox,
           activePage: p,
 
-          // Optional multiline editor: only “active” page shows caret/blink
+          // Optional multiline editor: only "active" page shows caret/blink
           isMultilineMode: isMultilineMode && p === nextActivePage,
           canvasRefs,
           mlConfig,
@@ -189,7 +197,7 @@ useEffect(() => {
     } catch {
       if (!cancelled) {
         // fall back to one blank page if anything goes wrong
-        setPages([{ textItems: [], imageItems: [] }]);
+        setPages([{ textItems: [], imageItems: [], shapes: [] }]);
         setActivePage(0);
       }
     }
