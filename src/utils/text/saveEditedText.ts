@@ -5,6 +5,8 @@ export const saveEditedText = ({
   editingIndex,
   editingText,
   editingFontSize,
+  editingColor,
+  editingFont,
   textItems,
   activePage,
   setTextItems,
@@ -16,6 +18,8 @@ export const saveEditedText = ({
   editingIndex: number | null;
   editingText: string;
   editingFontSize: number;
+  editingColor?: string;
+  editingFont?: string;
   textItems: any[];
   activePage: number;
   setTextItems: (items: any[]) => void;
@@ -30,6 +34,8 @@ export const saveEditedText = ({
       ...updatedItems[editingIndex],
       text: editingText, // Update the text
       fontSize: editingFontSize, // Update the font size
+      color: editingColor || updatedItems[editingIndex].color || "black", // Update the color
+      fontFamily: editingFont || updatedItems[editingIndex].fontFamily || "Lato", // Update the font
       index: activePage,
       boxPadding: editingFontSize * 0.2,
     };

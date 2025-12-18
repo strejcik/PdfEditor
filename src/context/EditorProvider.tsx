@@ -93,6 +93,11 @@ export function EditorProvider({ children }: PropsWithChildren) {
     // from pages with OLD positions, overwriting the updateShape changes
     if (selection.isDraggingMixedItems) return;
 
+    // CRITICAL: Skip pages→shapes sync in viewer mode
+    // In viewer mode, shapes are synced directly via shapeItems broadcast, not through pages
+    // If we sync from pages here, we'll overwrite real-time shape positions with stale data
+    const isViewer = share.mode === "viewer";
+
     const pageList = pages.pages ?? [];
     if (!Array.isArray(pageList) || pageList.length === 0) return;
 
@@ -115,15 +120,21 @@ export function EditorProvider({ children }: PropsWithChildren) {
     lastShapesFromPages.current = JSON.stringify(shapesWithoutIndex);
 
     // Update item stores
-    text.setTextItems?.(allText);
+    // Only sync text and shapes from pages if NOT in viewer mode
+    // In viewer mode, both text and shapes come directly from the broadcast
+    if (!isViewer) {
+      text.setTextItems?.(allText);
+      shapes.setShapeItems?.(allShapes);
+    }
+
+    // Images always sync from pages (no real-time broadcast needed)
     images.setImageItems?.(allImages);
-    shapes.setShapeItems?.(allShapes);
 
     // Release lock after state updates are queued
     setTimeout(() => {
       isSyncingPagesToShapes.current = false;
     }, 0);
-  }, [pages.pages, text.setTextItems, images.setImageItems, shapes.setShapeItems, selection.isDraggingMixedItems]);
+  }, [pages.pages, text.setTextItems, images.setImageItems, shapes.setShapeItems, selection.isDraggingMixedItems, share.mode]);
 
   /**
    * 🔁 Sync shapes back to pages whenever shapes change (for persistence)

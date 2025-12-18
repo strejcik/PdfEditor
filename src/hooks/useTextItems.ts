@@ -47,6 +47,8 @@ export function useTextItems() {
   const [editingText, setEditingText] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingFontSize, setEditingFontSize] = useState(DEFAULT_FONT_SIZE);
+  const [editingColor, setEditingColor] = useState("black");
+  const [editingFont, setEditingFont] = useState("Lato");
   const [newFontSize, setNewFontSize] = useState(DEFAULT_FONT_SIZE);
 
   const [textColor, setTextColor] = useState("black");
@@ -1297,6 +1299,8 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     editingText, setEditingText,
     editingIndex, setEditingIndex,
     editingFontSize, setEditingFontSize,
+    editingColor, setEditingColor,
+    editingFont, setEditingFont,
     newFontSize, setNewFontSize,
     textColor, setTextColor,
     selectedFont, setSelectedFont,

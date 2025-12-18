@@ -7,7 +7,11 @@ export const useShare = () => {
   const getMethodsRef = useRef(null);
 
   // snapshot (host -> viewers)
-  const getAppState = () => getStateRef.current;
+  const getAppState = () => {
+    const stateGetter = getStateRef.current;
+    // Support both function (real-time) and object (cached) for backward compatibility
+    return typeof stateGetter === 'function' ? stateGetter() : stateGetter;
+  };
   const getMethods = () => getMethodsRef.current;
 
   // viewer apply (viewer <- host)
@@ -20,6 +24,7 @@ export const useShare = () => {
     if (typeof s.state.activePage === "number") m.setActivePage?.(s.state.activePage);
     if (Array.isArray(s.state.pageList)) m.setPages?.(s.state.pageList);
     if (Array.isArray(s.state.textItems)) m.setTextItems?.(s.state.textItems);
+    if (Array.isArray(s.state.shapeItems)) m.setShapeItems?.(s.state.shapeItems);
   };
 
   // live share hook (contains socket + password modals)

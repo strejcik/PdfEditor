@@ -1682,6 +1682,8 @@ const handleDoubleClick = (e: MouseEvent, opts: any) => {
     setIsEditing,
     setEditingText,
     setEditingFontSize,
+    setEditingColor,
+    setEditingFont,
     setEditingIndex
   } = opts;
 
@@ -1789,6 +1791,8 @@ const handleDoubleClick = (e: MouseEvent, opts: any) => {
     setIsEditing(true);
     setEditingText(item.text);
     setEditingFontSize(fontSize);
+    setEditingColor(item.color || "black");
+    setEditingFont(item.fontFamily || "Lato");
     setEditingIndex(bestIndex);
   }
 };

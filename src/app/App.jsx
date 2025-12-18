@@ -27,6 +27,8 @@ import { handleFileChange } from "../utils/files/handleFileChange";
 import { ShapeToolbar } from "../components/ShapeToolbar";
 import { isPointInShape, getResizeHandle } from "../utils/shapes/shapeHitDetection";
 import { handleShapeMouseDown, handleShapeMouseMove, handleShapeMouseUp } from "../utils/shapes/shapeMouseHandlers";
+import FontSelector from "../components/FontSelector";
+import ColorPicker from "../components/ColorPicker";
 
 
 const App = () => {
@@ -110,6 +112,8 @@ useEffect(() => {
       editingText, setEditingText,
       editingIndex, setEditingIndex,
       editingFontSize, setEditingFontSize,
+      editingColor, setEditingColor,
+      editingFont, setEditingFont,
       newFontSize, setNewFontSize,
       textColor, setTextColor,
       selectedFont, setSelectedFont,
@@ -266,24 +270,46 @@ const requestCanvasDraw = (page) => {
   useEffect(() => {
     if (mode !== "host" || !broadcasterRef.current) return;
     broadcasterRef.current.notifyChange();
-  }, [mode, activePage, pageList, textItems]);
+  }, [mode, activePage, pageList, textItems, shapeItems]);
 
 
-    // Whenever your app state changes (host mode), notify broadcaster
+  // Keep latest state in refs for real-time broadcasting
+  const latestStateRef = useRef({
+    activePage,
+    pageList,
+    textItems,
+    shapeItems,
+  });
+
+  // Update refs synchronously whenever state changes
   useEffect(() => {
-    getStateRef.current = {
+    latestStateRef.current = {
+      activePage,
+      pageList,
+      textItems,
+      shapeItems,
+    };
+  });
+
+  // Whenever your app state changes (host mode), notify broadcaster
+  useEffect(() => {
+    // Use a getter function that reads from the latestStateRef
+    // This ensures real-time updates during interactions (like shape dragging)
+    getStateRef.current = () => ({
       schemaVersion: 1,
       appVersion: "0.1.0",
-      activePage: activePage,
-      pageList: pageList,
-      textItems: textItems,
-    };
+      activePage: latestStateRef.current.activePage,
+      pageList: latestStateRef.current.pageList,
+      textItems: latestStateRef.current.textItems,
+      shapeItems: latestStateRef.current.shapeItems,
+    });
     getMethodsRef.current = {
       setTextItems,
       setPages,
       setActivePage,
+      setShapeItems,
     }
-  }, [activePage, pageList, textItems]);
+  }, [activePage, pageList, textItems, shapeItems]);
 
 
 
@@ -1049,47 +1075,6 @@ const onJSONChange = async (e) => {
 
 
 
-  const PRESET_COLORS = [
-  { label: "Black", value: "#000000" },
-  { label: "White", value: "#ffffff" },
-  { label: "Gray", value: "#6b7280" },
-  { label: "Red", value: "#ef4444" },
-  { label: "Orange", value: "#f97316" },
-  { label: "Yellow", value: "#eab308" },
-  { label: "Green", value: "#22c55e" },
-  { label: "Teal", value: "#14b8a6" },
-  { label: "Blue", value: "#3b82f6" },
-  { label: "Indigo", value: "#4f46e5" },
-];
-
-
-function normalizeColor(c) {
-  if (!c) return "#000000";
-
-  // Already a valid 7-char hex? (#rrggbb)
-  if (/^#[0-9A-Fa-f]{6}$/.test(c)) return c;
-
-  // Convert named colors or rgb() to hex
-  const ctx = document.createElement("canvas").getContext("2d");
-  ctx.fillStyle = c;
-
-  const computed = ctx.fillStyle; // returns standardized color value
-
-  // If browser returns something like "rgb(r,g,b)", convert to hex
-  const m = computed.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
-  if (m) {
-    const r = Number(m[1]).toString(16).padStart(2, "0");
-    const g = Number(m[2]).toString(16).padStart(2, "0");
-    const b = Number(m[3]).toString(16).padStart(2, "0");
-    return `#${r}${g}${b}`;
-  }
-
-  // Last fallback: return black
-  return "#000000";
-}
-
-
-
 return (
   <div className="app-shell">
     {/* Sidebar (left) */}
@@ -1639,6 +1624,8 @@ return (
                   setIsEditing,
                   setEditingText,
                   setEditingFontSize,
+                  setEditingColor,
+                  setEditingFont,
                   setEditingIndex
                 })}
               />
@@ -1704,109 +1691,18 @@ return (
       />
 
       {/* Font selection */}
-      <label className="field-label">Font</label>
-      <select
-        value={selectedFont}
-        onChange={
-          isViewer
-            ? viewOnly
-            : (e) => setSelectedFont(e.target.value)
-        }
-        className="input-text"
+      <FontSelector
+        selectedFont={selectedFont}
+        onChange={isViewer ? viewOnly : (e) => setSelectedFont(e.target.value)}
         disabled={isViewer}
-        style={{ fontFamily: selectedFont }}
-      >
-        <option value="Lato" style={{ fontFamily: "Lato" }}>Lato (Default)</option>
-        <option value="Arial" style={{ fontFamily: "Arial" }}>Arial</option>
-        <option value="Times New Roman" style={{ fontFamily: "Times New Roman" }}>Times New Roman</option>
-        <option value="Georgia" style={{ fontFamily: "Georgia" }}>Georgia</option>
-        <option value="Verdana" style={{ fontFamily: "Verdana" }}>Verdana</option>
-        <option value="Courier New" style={{ fontFamily: "Courier New" }}>Courier New</option>
-        <option value="Comic Sans MS" style={{ fontFamily: "Comic Sans MS" }}>Comic Sans MS</option>
-        <option value="Impact" style={{ fontFamily: "Impact" }}>Impact</option>
-        <option value="Trebuchet MS" style={{ fontFamily: "Trebuchet MS" }}>Trebuchet MS</option>
-        <option value="Palatino" style={{ fontFamily: "Palatino" }}>Palatino</option>
-      </select>
-
-      {/* Full color picker */}
-<label className="field-label">Text color</label>
-
-<div
-  style={{
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 10,
-  }}
->
-  <input
-    type="color"
-    className="input-color"
-    value={normalizeColor(textColor)}
-    onChange={
-      isViewer
-        ? viewOnly
-        : (e) => setTextColor(normalizeColor(e.target.value))
-    }
-    disabled={isViewer}
-    style={{ width: 40, height: 40, padding: 0, border: "none" }}
-  />
-
-  <div style={{ fontSize: 13, color: "#555" }}>
-    <div style={{ marginBottom: 4 }}>
-      Selected: {normalizeColor(textColor)}
-    </div>
-    <div
-      style={{
-        width: 32,
-        height: 16,
-        borderRadius: 4,
-        border: "1px solid #ccc",
-        background: normalizeColor(textColor),
-      }}
-    />
-  </div>
-</div>
-
-{/* Preset swatch palette */}
-<div style={{ marginBottom: 16 }}>
-  <div style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>
-    Preset colors
-  </div>
-
-  <div
-    style={{
-      display: "flex",
-      flexWrap: "wrap",
-      gap: 8,
-    }}
-  >
-    {PRESET_COLORS.map((c) => (
-      <button
-        key={c.value}
-        type="button"
-        disabled={isViewer}
-        onClick={
-          isViewer
-            ? viewOnly
-            : () => setTextColor(normalizeColor(c.value))
-        }
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: "999px",
-          border:
-            normalizeColor(textColor) === normalizeColor(c.value)
-              ? "2px solid #111827"
-              : "1px solid rgba(0,0,0,0.2)",
-          background: normalizeColor(c.value),
-          cursor: isViewer ? "not-allowed" : "pointer",
-        }}
-        title={c.label}
       />
-    ))}
-  </div>
-</div>
+
+      {/* Color picker */}
+      <ColorPicker
+        color={textColor}
+        onChange={isViewer ? () => {} : setTextColor}
+        disabled={isViewer}
+      />
 
       {/* Actions */}
       <div className="modal-actions">
@@ -1883,6 +1779,21 @@ return (
             className="input-text"
             disabled={isViewer}
           />
+
+          {/* Font selection */}
+          <FontSelector
+            selectedFont={editingFont}
+            onChange={isViewer ? viewOnly : (e) => setEditingFont(e.target.value)}
+            disabled={isViewer}
+          />
+
+          {/* Color picker */}
+          <ColorPicker
+            color={editingColor}
+            onChange={isViewer ? () => {} : setEditingColor}
+            disabled={isViewer}
+          />
+
           <div className="modal-actions">
             <button
               className="btn btn-primary"
@@ -1894,6 +1805,8 @@ return (
                         editingIndex,
                         editingText,
                         editingFontSize,
+                        editingColor,
+                        editingFont,
                         textItems,
                         activePage,
                         setTextItems,

@@ -253,6 +253,7 @@ export function handleShapeMouseMove(e, params) {
         yNormTop: newY / rect.height,
       });
     });
+
     return true; // Handled
   }
 
@@ -270,6 +271,7 @@ export function handleShapeMouseMove(e, params) {
       xNorm: newX / rect.width,
       yNormTop: newY / rect.height,
     });
+
     return true; // Handled
   }
 
@@ -328,6 +330,7 @@ export function handleShapeMouseMove(e, params) {
       widthNorm: newWidth / rect.width,
       heightNorm: newHeight / rect.height,
     });
+
     return true; // Handled
   }
 
