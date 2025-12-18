@@ -50,6 +50,7 @@ export function useTextItems() {
   const [newFontSize, setNewFontSize] = useState(DEFAULT_FONT_SIZE);
 
   const [textColor, setTextColor] = useState("black");
+  const [selectedFont, setSelectedFont] = useState("Lato");
 
 
 
@@ -84,8 +85,8 @@ export function useTextItems() {
   
     const { ctx } = setupCanvasA4(canvasRefs.current[activePage], /* portrait? */ true);
     if (!ctx) return;
-  
-    const fontFamily = "Lato";                 // match what you export with pdf-lib
+
+    const fontFamily = selectedFont || "Lato";                 // use selected font
     const fontSizeToUse = Number(newFontSize);
     const padding = Math.round(fontSizeToUse * 0.2);
   
@@ -924,7 +925,7 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     const cssW = (typeof rect.width === "number" && rect.width > 0) ? rect.width : CANVAS_WIDTH;
     const cssH = (typeof rect.height === "number" && rect.height > 0) ? rect.height : CANVAS_HEIGHT;
 
-    const fontFamilyDefault = "Lato";
+    const fontFamilyDefault = selectedFont || "Lato";
     const fallbackSize = Number(newFontSize) || Number(defaultFontSize) || 16;
 
     const newTextItems: any[] = [];
@@ -1298,6 +1299,7 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     editingFontSize, setEditingFontSize,
     newFontSize, setNewFontSize,
     textColor, setTextColor,
+    selectedFont, setSelectedFont,
     saveTextItemsToIndexedDB,
     removeSelectedText,
     wrapTextPreservingNewlinesResponsive,

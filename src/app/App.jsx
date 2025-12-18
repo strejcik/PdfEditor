@@ -112,6 +112,7 @@ useEffect(() => {
       editingFontSize, setEditingFontSize,
       newFontSize, setNewFontSize,
       textColor, setTextColor,
+      selectedFont, setSelectedFont,
       removeSelectedText, saveTextItemsToIndexedDB,
       wrapTextPreservingNewlinesResponsive, wrapTextResponsive,
       resolveTextLayout,
@@ -364,7 +365,7 @@ useEffect(() => {
   );
   const pageCount = Math.max(refCount, listCount, maxIndexFromItems + 1, 0);
 
-  const sharedConfig = { showGrid, APP_FONT_FAMILY };
+  const sharedConfig = { showGrid, APP_FONT_FAMILY: selectedFont || APP_FONT_FAMILY };
 
   for (let p = 0; p < pageCount; p++) {
     const canvas = canvasRefs.current?.[p];
@@ -478,6 +479,7 @@ useEffect(() => {
   mlConfig,
   showGrid,
   APP_FONT_FAMILY,
+  selectedFont,
   canvasRefs,
   pageList,
   wrapTextPreservingNewlinesResponsive,
@@ -525,7 +527,7 @@ useEffect(() => {
   // ✅ do NOT normalize whitespace (removes the "spaces drift" bug)
   // ✅ do NOT bake wrapping into rawText
 
-  const family = "Lato"; // or APP_FONT_FAMILY || "Lato"
+  const family = textBox.fontFamily || selectedFont || APP_FONT_FAMILY || "Lato";
   const requestedPadding = textBox.boxPadding ?? 10;
 
   // If your wrapper already clamps padding internally you can pass requestedPadding,
@@ -1253,7 +1255,7 @@ return (
                               layoutMultiline,
                               setMlPreferredX,
                               showGrid,
-                              APP_FONT_FAMILY,
+                              APP_FONT_FAMILY: selectedFont || APP_FONT_FAMILY,
                               drawCanvas,
                             })
                     }
@@ -1402,7 +1404,7 @@ return (
                             activePage,
                             canvasRefs,
                             setPages,
-                            APP_FONT_FAMILY,
+                            APP_FONT_FAMILY: selectedFont || APP_FONT_FAMILY,
                             setTextBox
                           });
                         } else {
@@ -1700,6 +1702,31 @@ return (
         className="input-text"
         disabled={isViewer}
       />
+
+      {/* Font selection */}
+      <label className="field-label">Font</label>
+      <select
+        value={selectedFont}
+        onChange={
+          isViewer
+            ? viewOnly
+            : (e) => setSelectedFont(e.target.value)
+        }
+        className="input-text"
+        disabled={isViewer}
+        style={{ fontFamily: selectedFont }}
+      >
+        <option value="Lato" style={{ fontFamily: "Lato" }}>Lato (Default)</option>
+        <option value="Arial" style={{ fontFamily: "Arial" }}>Arial</option>
+        <option value="Times New Roman" style={{ fontFamily: "Times New Roman" }}>Times New Roman</option>
+        <option value="Georgia" style={{ fontFamily: "Georgia" }}>Georgia</option>
+        <option value="Verdana" style={{ fontFamily: "Verdana" }}>Verdana</option>
+        <option value="Courier New" style={{ fontFamily: "Courier New" }}>Courier New</option>
+        <option value="Comic Sans MS" style={{ fontFamily: "Comic Sans MS" }}>Comic Sans MS</option>
+        <option value="Impact" style={{ fontFamily: "Impact" }}>Impact</option>
+        <option value="Trebuchet MS" style={{ fontFamily: "Trebuchet MS" }}>Trebuchet MS</option>
+        <option value="Palatino" style={{ fontFamily: "Palatino" }}>Palatino</option>
+      </select>
 
       {/* Full color picker */}
 <label className="field-label">Text color</label>
