@@ -6,12 +6,6 @@ type ImportOpts = {
   setImageItems?: (next: any[]) => void;
   setShapeItems?: (next: any[]) => void;
 
-  // LocalStorage keys (override if you use different ones)
-  pagesKey?: string;
-  textItemsKey?: string;
-  imageItemsKey?: string;
-  shapeItemsKey?: string;
-
   // IndexedDB save functions
   saveTextItemsToIndexedDB?: (items: any[]) => Promise<void>;
   saveImageItemsToIndexedDB?: (items: any[]) => Promise<void>;
@@ -37,10 +31,6 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   if (!file) throw new Error("No file provided");
   const {
     setPages, setTextItems, setImageItems, setShapeItems,
-    pagesKey = "pages",
-    textItemsKey = "textItems",
-    imageItemsKey = "imageItems",
-    shapeItemsKey = "shapeItems",
     saveTextItemsToIndexedDB,
     saveImageItemsToIndexedDB,
     saveShapeItemsToIndexedDB,
@@ -89,13 +79,7 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
     pages = grouped;
   }
 
-  // 3) Persist to localStorage (legacy support)
-  localStorage.setItem(pagesKey, JSON.stringify(pages));
-  localStorage.setItem(textItemsKey, JSON.stringify(textItems));
-  localStorage.setItem(imageItemsKey, JSON.stringify(imageItems));
-  localStorage.setItem(shapeItemsKey, JSON.stringify(shapeItems));
-
-  // 4) Persist to IndexedDB (primary storage)
+  // 3) Persist to IndexedDB
   if (saveTextItemsToIndexedDB) {
     await saveTextItemsToIndexedDB(textItems);
   }
@@ -109,7 +93,7 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
     await savePagesToIndexedDB(pages);
   }
 
-  // 5) Optionally hydrate React state right away
+  // 4) Optionally hydrate React state right away
   setPages?.(pages);
   setTextItems?.(textItems);
   setImageItems?.(imageItems);

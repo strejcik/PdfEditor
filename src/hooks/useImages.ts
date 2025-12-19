@@ -69,7 +69,7 @@ function openImageItemsDB() {
   });
 }
 
-/** Replaces localStorage.setItem("imageItems", JSON.stringify(serializedImages)) */
+/** Save imageItems to IndexedDB */
 const saveImageItemsToIndexedDB = useCallback(async (items:any) => {
   if (!window.indexedDB) {
     console.error("IndexedDB not supported in this browser.");

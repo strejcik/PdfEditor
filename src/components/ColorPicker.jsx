@@ -42,78 +42,43 @@ const ColorPicker = ({ color, onChange, disabled = false }) => {
   const normalizedColor = normalizeColor(color);
 
   return (
-    <>
+    <div className="color-picker-container">
       <label className="field-label">Text color</label>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          marginBottom: 10,
-        }}
-      >
+      <div className="color-picker-row">
         <input
           type="color"
           className="input-color"
           value={normalizedColor}
           onChange={(e) => onChange(normalizeColor(e.target.value))}
           disabled={disabled}
-          style={{ width: 40, height: 40, padding: 0, border: "none" }}
         />
 
-        <div style={{ fontSize: 13, color: "#555" }}>
-          <div style={{ marginBottom: 4 }}>
-            Selected: {normalizedColor}
-          </div>
+        <div className="color-picker-info">
+          <div>Selected: {normalizedColor}</div>
           <div
-            style={{
-              width: 32,
-              height: 16,
-              borderRadius: 4,
-              border: "1px solid #ccc",
-              background: normalizedColor,
-            }}
+            className="color-picker-preview"
+            style={{ background: normalizedColor }}
           />
         </div>
       </div>
 
       {/* Preset swatch palette */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>
-          Preset colors
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          {PRESET_COLORS.map((c) => (
-            <button
-              key={c.value}
-              type="button"
-              disabled={disabled}
-              onClick={() => onChange(normalizeColor(c.value))}
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: "999px",
-                border:
-                  normalizedColor === normalizeColor(c.value)
-                    ? "2px solid #111827"
-                    : "1px solid rgba(0,0,0,0.2)",
-                background: normalizeColor(c.value),
-                cursor: disabled ? "not-allowed" : "pointer",
-              }}
-              title={c.label}
-            />
-          ))}
-        </div>
+      <div className="color-picker-presets-label">Preset colors</div>
+      <div className="color-picker-swatches">
+        {PRESET_COLORS.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            className={`color-swatch ${normalizedColor === normalizeColor(c.value) ? 'active' : ''}`}
+            disabled={disabled}
+            onClick={() => onChange(normalizeColor(c.value))}
+            style={{ background: normalizeColor(c.value) }}
+            title={c.label}
+          />
+        ))}
       </div>
-    </>
+    </div>
   );
 };
 

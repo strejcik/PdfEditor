@@ -4,7 +4,6 @@ import type { Page } from "../../types/editor";
 const DB_NAME = "PdfEditorDB";
 const DB_VERSION = 5;               // bump if you add more stores later
 const STORE_PAGES = "pages";
-const LS_KEY = "pages";             // for fallback + one-time migration
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -43,11 +42,9 @@ function txDone(tx:any) {
 
 /**
  * Load pages from IndexedDB.
- * If IndexedDB is empty but localStorage has "pages", migrates it into IDB and returns it.
  * @returns {Promise<Array| null>}
  */
 export async function loadPages() {
-  // Try IDB first
   try {
     const db:any = await openDB();
     const tx = db.transaction(STORE_PAGES, "readonly");
@@ -68,13 +65,8 @@ export async function loadPages() {
 
     return null;
   } catch (err) {
-    // Fallback to localStorage if IDB unavailable
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
+    console.error("Failed to load pages from IndexedDB:", err);
+    return null;
   }
 }
 
@@ -84,7 +76,6 @@ export async function loadPages() {
  * @returns {Promise<void>}
  */
 export async function savePages(pages:any) {
-  // Try IDB first
   try {
     const db:any = await openDB();
     const tx = db.transaction(STORE_PAGES, "readwrite");
@@ -95,12 +86,7 @@ export async function savePages(pages:any) {
     await txDone(tx);
     db.close();
   } catch (err) {
-    // Fallback to localStorage if IDB unavailable
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify(pages));
-    } catch {
-      /* ignore */
-    }
+    console.error("Failed to save pages to IndexedDB:", err);
   }
 }
 

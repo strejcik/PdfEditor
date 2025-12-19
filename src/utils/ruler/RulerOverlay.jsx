@@ -55,11 +55,19 @@ const RulerOverlay = forwardRef(
         setDims({ w: Math.round(r.width), h: Math.round(r.height), dpr });
       };
 
+      // Immediate update
       update();
+
+      // Also schedule another update after a brief delay to handle page transitions
+      const timeoutId = setTimeout(update, 50);
+
       const ro = new ResizeObserver(update);
       ro.observe(canvas);
-      return () => ro.disconnect();
-    }, [canvasRef, zoom]);
+      return () => {
+        ro.disconnect();
+        clearTimeout(timeoutId);
+      };
+    }, [canvasRef, canvasRef?.current, zoom]);
 
     // Draw rulers (top/left). Also size the overlay.
     useEffect(() => {

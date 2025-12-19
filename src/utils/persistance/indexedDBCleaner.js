@@ -93,27 +93,14 @@ export async function clearEditorData(stores = ['pages', 'textItems', 'imageItem
     await Promise.all(clearPromises);
   } catch (err) {
     console.warn('Error clearing IndexedDB stores:', err);
-    // Continue anyway - we'll still clear localStorage
   }
 }
 
 /**
- * Clear IndexedDB and localStorage for editor state
+ * Clear IndexedDB for editor state
  * @returns {Promise<void>}
  */
 export async function clearAllEditorState() {
   // Clear IndexedDB (gracefully handles empty DB)
   await clearEditorData(['pages', 'textItems', 'imageItems', 'shapes']);
-
-  // Clear localStorage as fallback/legacy
-  try {
-    localStorage.removeItem("pages");
-    localStorage.removeItem("textItems");
-    localStorage.removeItem("imageItems");
-    localStorage.removeItem("shapeItems");
-    localStorage.removeItem("undoStack");
-    localStorage.removeItem("redoStack");
-  } catch (err) {
-    console.warn('Error clearing localStorage:', err);
-  }
 }

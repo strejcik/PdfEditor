@@ -193,7 +193,7 @@ const openTextItemsDB = () => {
 }
 
 
-/** Replaces localStorage.setItem("textItems", JSON.stringify(items)) */
+/** Save textItems to IndexedDB */
 const saveTextItemsToIndexedDB = useCallback(async (items:any) => {
   if (!window.indexedDB) {
     console.error("IndexedDB not supported in this browser.");
@@ -205,7 +205,7 @@ const saveTextItemsToIndexedDB = useCallback(async (items:any) => {
     const tx = db.transaction("textItems", "readwrite");
     const store = tx.objectStore("textItems");
 
-    // We always use a single entry (like localStorage), with key "main"
+    // Store all items under a single "main" key
     store.put({ id: "main", data: items });
 
     await new Promise((resolve:any, reject) => {

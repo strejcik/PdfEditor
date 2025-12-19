@@ -48,13 +48,21 @@ const App = () => {
   const [showLoadJsonModal, setShowLoadJsonModal] = useState(false);
   const pendingFileRef = useRef(null);
 
+  // Active panel state for icon rail navigation
+  const [activePanel, setActivePanel] = useState(null);
+
+  // Toggle panel - if same panel clicked, close it
+  const togglePanel = (panelName) => {
+    setActivePanel(prev => prev === panelName ? null : panelName);
+  };
+
   const onJsonPick = () => {
     setShowLoadJsonModal(true);
   };
 
   const handleLoadJsonConfirm = async () => {
     setShowLoadJsonModal(false);
-    // Clear IndexedDB and localStorage
+    // Clear IndexedDB
     await clearAllEditorState();
     // Trigger file picker
     jsonRef.current?.click();
@@ -374,23 +382,6 @@ useEffect(() => {
 const toUnits = (str) => Array.from(str ?? "");
 
 
-  // Load images and text items from local storage on mount
-  useEffect(() => {
-    const storedTextItems = localStorage?.getItem('textItems');
-    const storedImageItems = localStorage?.getItem('imageItems');
-    
-    if (storedTextItems?.length > 0) {
-      setTextItems(JSON.parse(storedTextItems));
-    }
-  
-    if (storedImageItems?.length > 0) {
-      const parsedImages = JSON.parse(storedImageItems).map((item) => ({
-        ...item,
-        image: createImageElement(item?.data), // Convert base64 back to Image element
-      }));
-      setImageItems(parsedImages);
-    }
-  }, []);
 
 
 
@@ -563,7 +554,7 @@ useLayoutEffect(() => {
 
     drawCanvas(activePage);
   }
-}, [textItems, imageItems, shapeItems, isSelecting, selectionStart, selectionEnd]);
+}, [textItems, imageItems, shapeItems, isSelecting, selectionStart, selectionEnd, activePage]);
 
 
 
@@ -981,7 +972,7 @@ useEffect(() => {
       selectedItem.y = Math.max(fontSize, Math.min(selectedItem.y, canvasRefs.current[activePage].height));
 
       setTextItems(updatedItems);
-      saveTextItemsToIndexedDB(updatedItems); // Save updated position in localStorage
+      saveTextItemsToIndexedDB(updatedItems); // Save updated position to IndexedDB
     }
 
   };
@@ -1109,573 +1100,606 @@ const onJSONChange = async (e) => {
 
 return (
   <div className="app-shell">
-    {/* Sidebar (left) */}
-    <aside className="sidebar">
-      {/* Sidebar header */}
-      <div className="sidebar-header">
-        <div className="sidebar-title">
-          <span className="sidebar-logo">📄</span>
-          <div>
-            <div className="sidebar-title-main">PdfEditor</div>
-            <div className="sidebar-title-sub">Live collaborate & annotate</div>
-          </div>
-        </div>
+    {/* Icon Rail (left) */}
+    <nav className="icon-rail">
+      <div className="rail-logo">P</div>
 
-        <div className="sidebar-share-row">
-          {mode !== "viewer" && (
-            <button
-              className="btn btn-primary btn-share"
-              onClick={isViewer ? viewOnly : onStartShare}
-              disabled={isViewer}
-            >
-              {mode === "host" ? "Sharing…" : "Share workspace"}
-            </button>
-          )}
-          {mode === "host" && (
-            <>
-              <div className="badge badge-room">Room: {roomId}</div>
-              <div className="badge badge-viewers">
-                👥 {viewerCount} {viewerCount === 1 ? "viewer" : "viewers"}
-              </div>
-            </>
-          )}
-          {isViewer && (
-            <div className="badge badge-viewer">VIEW-ONLY</div>
-          )}
-        </div>
+      {/* Main tool buttons */}
+      <button
+        className={`rail-btn ${activePanel === 'document' ? 'active' : ''}`}
+        title="Document"
+        onClick={() => togglePanel('document')}
+      >
+        📁
+      </button>
+      <button
+        className={`rail-btn ${activePanel === 'pages' ? 'active' : ''}`}
+        title="Pages"
+        onClick={() => togglePanel('pages')}
+      >
+        📄
+      </button>
+      <button
+        className={`rail-btn ${activePanel === 'text' ? 'active' : ''}`}
+        title="Text"
+        onClick={() => togglePanel('text')}
+      >
+        T
+      </button>
+      <button
+        className={`rail-btn ${activePanel === 'shapes' ? 'active' : ''}`}
+        title="Shapes"
+        onClick={() => togglePanel('shapes')}
+      >
+        ⬜
+      </button>
+      <button
+        className={`rail-btn ${activePanel === 'images' ? 'active' : ''}`}
+        title="Images"
+        onClick={() => togglePanel('images')}
+      >
+        🖼️
+      </button>
+
+      <div className="rail-divider" />
+
+      {/* Bottom buttons */}
+      <div className="rail-bottom">
+        <button
+          className="rail-btn"
+          title="Undo"
+          onClick={isViewer ? viewOnly : handleUndo}
+          disabled={isViewer}
+        >
+          ↩
+        </button>
+        <button
+          className="rail-btn"
+          title="Redo"
+          onClick={isViewer ? viewOnly : handleRedo}
+          disabled={isViewer}
+        >
+          ↪
+        </button>
+        <div className="rail-divider" />
+        <button
+          className={`rail-btn ${activePanel === 'share' ? 'active' : ''}`}
+          title="Share"
+          onClick={() => togglePanel('share')}
+        >
+          🔗
+        </button>
+        <button
+          className={`rail-btn ${activePanel === 'settings' ? 'active' : ''}`}
+          title="Settings"
+          onClick={() => togglePanel('settings')}
+        >
+          ⚙️
+        </button>
       </div>
+    </nav>
 
-      {/* Divider */}
-      <div className="sidebar-divider" />
-
-      {/* Sidebar sections */}
-      <div className="sidebar-sections">
-        {[
-          {
-            title: "PDF",
-            icon: "📂",
-            description: "Import and export your PDF document.",
-            content: (
-              <>
-                <label className="field-label">Upload PDF</label>
-                <input
-                  className="input-file"
-                  type="file"
-                  accept="application/pdf"
-                  onChange={
-                    isViewer
-                      ? viewOnly
-                      : (e) => handleFileChange({ event: e, setSelectedFile })
-                  }
-                  disabled={isViewer}
-                />
-                <div className="btn-row">
-                  <button
-                    className="btn btn-secondary"
-                    onClick={
-                      isViewer
-                        ? viewOnly
-                        : () =>
-                            uploadPdfToServer({
-                              selectedFile,
-                              setIsPdfDownloaded,
-                              addTextToCanvas3,
-                              pushSnapshotToUndo,
-                              activePage,
-                              canvasRefs,
-                              fontSize,
-                              setImageItems,
-                              setPages,
-                              saveImageItemsToIndexedDB,
-                              drawCanvas,
-                            })
-                    }
-                    disabled={isViewer}
-                  >
-                    Upload to server
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={
-                      isViewer
-                        ? viewOnly
-                        : () =>
-                            saveAllPagesAsPDF({
-                              canvasRefs,
-                              activePage,
-                              pageList,
-                              CANVAS_WIDTH: canvasWidth,
-                              CANVAS_HEIGHT: canvasHeight,
-                            })
-                    }
-                    disabled={isViewer}
-                  >
-                    Export as PDF
-                  </button>
-                </div>
-              </>
-            ),
-          },
-          {
-            title: "Pages",
-            icon: "📄",
-            description: "Manage pages in your document.",
-            content: (
-              <>
-                <div className="btn-row">
-                  <button
-                    className="btn btn-secondary"
-                    onClick={isViewer ? viewOnly : addNewPage}
-                    disabled={isViewer}
-                  >
-                    Add Page
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={
-                      isViewer
-                        ? viewOnly
-                        : () =>
-                            removePage({
-                              setSelectedTextIndexes,
-                              setSelectedTextIndex,
-                              setIsTextSelected,
-                              setSelectionStart,
-                              setSelectionEnd,
-                              setIsSelecting,
-                              setIsDragging,
-                              setIsImageDragging,
-                              setDraggedImageIndex,
-                              setResizingImageIndex,
-                              setTextItems,
-                              setImageItems,
-                              saveTextItemsToIndexedDB,
-                              saveImageItemsToIndexedDB,
-                              purgeUndoRedoForRemovedPage,
-                              textItems,
-                              imageItems,
-                              isTextBoxEditEnabled,
-                              textBox,
-                              activePage,
-                              isMultilineMode,
-                              canvasRefs,
-                              mlConfig,
-                              mlCaret,
-                              mlAnchor,
-                              mlPreferredX,
-                              mlText,
-                              mlCaretBlink,
-                              isMlDragging,
-                              fontSize,
-                              wrapTextPreservingNewlinesResponsive,
-                              resolveTextLayout,
-                              layoutMultiline,
-                              setMlPreferredX,
-                              showGrid,
-                              APP_FONT_FAMILY: selectedFont || APP_FONT_FAMILY,
-                              drawCanvas,
-                            })
-                    }
-                    disabled={isViewer}
-                  >
-                    Remove Page
-                  </button>
-                </div>
-              </>
-            ),
-          },
-          {
-            title: "Text",
-            icon: "🔤",
-            description: "Add and manage text items.",
-            content: (
-              <>
-                <div className="btn-row">
-                  <button
-                    className="btn btn-secondary"
-                    onClick={
-                      isViewer ? viewOnly : () => setShowAddTextModal(true)
-                    }
-                    disabled={isViewer}
-                  >
-                    Add Text
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={
-                      isViewer
-                        ? viewOnly
-                        : () =>
-                            removeSelectedText({
-                              updatePageItems,
-                              activePage,
-                            })
-                    }
-                    disabled={
-                      isViewer ||
-                      (selectedTextIndex === null &&
-                        selectedTextIndexes.length < 1)
-                    }
-                    style={{
-                      opacity:
-                        selectedTextIndex === null &&
-                        selectedTextIndexes.length < 1
-                          ? 0.5
-                          : 1,
-                    }}
-                  >
-                    Remove Selected
-                  </button>
-                </div>
-                <div className="toggle-row">
-                  <label className="toggle-label">
-                    <input
-                      type="checkbox"
-                      checked={showGrid}
-                      onChange={isViewer ? viewOnly : toggleGrid}
-                      disabled={isViewer}
-                    />
-                    <span>Show grid</span>
-                  </label>
-                </div>
-              </>
-            ),
-          },
-          {
-            title: "Images",
-            icon: "🖼️",
-            description: "Insert and manage images.",
-            content: (
-              <>
-                <label className="field-label">Upload Image</label>
-                <input
-                  className="input-file"
-                  type="file"
-                  accept="image/*"
-                  onChange={
-                    isViewer
-                      ? viewOnly
-                      : (e) => {
-                          handleAddImage(e, activePage, setPages);
-                        }
-                  }
-                  disabled={isViewer}
-                />
-                <button
-                  className="btn btn-secondary"
-                  onClick={
-                    isViewer
-                      ? viewOnly
-                      : () =>
-                          deleteSelectedImage({
-                            selectedImageIndex,
-                            imageItems,
-                            activePage,
-                            setImageItems,
-                            saveImageItemsToIndexedDB,
-                            updatePageItems,
-                            setSelectedImageIndex,
-                            drawCanvas,
-                          })
-                  }
-                  disabled={isViewer || selectedImageIndex === null}
-                  style={{
-                    opacity: selectedImageIndex === null ? 0.5 : 1,
-                    marginTop: 8,
-                  }}
-                >
-                  Delete Selected
-                </button>
-              </>
-            ),
-          },
-          {
-            title: "Shapes",
-            icon: "⬜",
-            description: "Draw shapes on the canvas.",
-            content: (
-              <ShapeToolbar
-                activeShapeTool={activeShapeTool}
-                setActiveShapeTool={setActiveShapeTool}
-                selectedShapeIndex={selectedShapeIndex}
-                deleteSelectedShape={deleteSelectedShape}
-                isViewer={isViewer}
-                viewOnly={viewOnly}
+    {/* Expandable Panel */}
+    <aside className={`sidebar-panel ${activePanel ? '' : 'collapsed'}`}>
+      {/* Document Panel */}
+      {activePanel === 'document' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">📁</span>
+              Document
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            <div className="panel-section">
+              <div className="panel-section-label">Import PDF</div>
+              <input
+                className="panel-input-file"
+                type="file"
+                accept="application/pdf"
+                onChange={isViewer ? viewOnly : (e) => handleFileChange({ event: e, setSelectedFile })}
+                disabled={isViewer}
               />
-            ),
-          },
-          {
-            title: "TextBox",
-            icon: "📝",
-            description: "Edit multi-line textbox content.",
-            content: (
               <button
-                className="btn btn-secondary"
-                onClick={
-                  isViewer
-                    ? viewOnly
-                    : () => {
-                        setIsTextBoxEditEnabled((prev) => !prev);
-                        if (textBox !== null) {
-                          addTextToCanvas2(textBox, {
-                            activePage,
-                            canvasRefs,
-                            setPages,
-                            APP_FONT_FAMILY: selectedFont || APP_FONT_FAMILY,
-                            setTextBox
-                          });
-                        } else {
-                          setTextBox(null);
-                        }
-                      }
-                }
+                className="panel-btn"
+                onClick={isViewer ? viewOnly : () => uploadPdfToServer({
+                  selectedFile, setIsPdfDownloaded, addTextToCanvas3, pushSnapshotToUndo,
+                  activePage, canvasRefs, fontSize, setImageItems, setPages,
+                  saveImageItemsToIndexedDB, drawCanvas,
+                })}
                 disabled={isViewer}
               >
-                {isTextBoxEditEnabled ? "Save TextBox" : "Enable TextBox Edit"}
+                <span className="panel-btn-icon">⬆️</span>
+                Upload to Server
               </button>
-            ),
-          },
-          {
-            title: "History",
-            icon: "⏪",
-            description: "Undo / redo recent changes.",
-            content: (
-              <div className="btn-row">
+            </div>
+
+            <div className="panel-section">
+              <div className="panel-section-label">Export</div>
+              <button
+                className="panel-btn"
+                onClick={isViewer ? viewOnly : () => saveAllPagesAsPDF({
+                  canvasRefs, activePage, pageList,
+                  CANVAS_WIDTH: canvasWidth, CANVAS_HEIGHT: canvasHeight,
+                })}
+                disabled={isViewer}
+              >
+                <span className="panel-btn-icon">📥</span>
+                Export as PDF
+              </button>
+            </div>
+
+            <div className="panel-section">
+              <div className="panel-section-label">State</div>
+              <button
+                className="panel-btn"
+                onClick={isViewer ? viewOnly : () => exportStateToJson()}
+                disabled={isViewer}
+              >
+                <span className="panel-btn-icon">💾</span>
+                Save JSON
+              </button>
+              <button
+                className="panel-btn"
+                onClick={isViewer ? viewOnly : onJsonPick}
+                disabled={isViewer}
+              >
+                <span className="panel-btn-icon">📂</span>
+                Load JSON
+              </button>
+              <input
+                ref={jsonRef}
+                type="file"
+                accept="application/json"
+                style={{ display: "none" }}
+                onChange={isViewer ? viewOnly : onJSONChange}
+                disabled={isViewer}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Pages Panel */}
+      {activePanel === 'pages' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">📄</span>
+              Pages
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            <div className="panel-section">
+              <div className="panel-section-label">Page: {activePage + 1} of {pageList.length}</div>
+              <button
+                className="panel-btn panel-btn-primary"
+                onClick={isViewer ? viewOnly : addNewPage}
+                disabled={isViewer}
+              >
+                <span className="panel-btn-icon">➕</span>
+                Add New Page
+              </button>
+              <button
+                className="panel-btn panel-btn-danger"
+                onClick={isViewer ? viewOnly : () => removePage({
+                  setSelectedTextIndexes, setSelectedTextIndex, setIsTextSelected,
+                  setSelectionStart, setSelectionEnd, setIsSelecting, setIsDragging,
+                  setIsImageDragging, setDraggedImageIndex, setResizingImageIndex,
+                  setTextItems, setImageItems, saveTextItemsToIndexedDB, saveImageItemsToIndexedDB,
+                  purgeUndoRedoForRemovedPage, textItems, imageItems, isTextBoxEditEnabled,
+                  textBox, activePage, isMultilineMode, canvasRefs, mlConfig, mlCaret,
+                  mlAnchor, mlPreferredX, mlText, mlCaretBlink, isMlDragging, fontSize,
+                  wrapTextPreservingNewlinesResponsive, resolveTextLayout, layoutMultiline,
+                  setMlPreferredX, showGrid, APP_FONT_FAMILY: selectedFont || APP_FONT_FAMILY,
+                  drawCanvas,
+                })}
+                disabled={isViewer || pageList.length <= 1}
+              >
+                <span className="panel-btn-icon">🗑️</span>
+                Remove Current Page
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Text Panel */}
+      {activePanel === 'text' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">T</span>
+              Text
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            <div className="panel-section">
+              <div className="panel-section-label">Add Text</div>
+              <button
+                className="panel-btn panel-btn-primary"
+                onClick={isViewer ? viewOnly : () => setShowAddTextModal(true)}
+                disabled={isViewer}
+              >
+                <span className="panel-btn-icon">➕</span>
+                Add Text
+              </button>
+              <button
+                className="panel-btn"
+                onClick={isViewer ? viewOnly : () => removeSelectedText({ updatePageItems, activePage })}
+                disabled={isViewer || (selectedTextIndex === null && selectedTextIndexes.length < 1)}
+              >
+                <span className="panel-btn-icon">🗑️</span>
+                Remove Selected
+              </button>
+            </div>
+
+            <div className="panel-section">
+              <div className="panel-section-label">TextBox Mode</div>
+              <button
+                className={`panel-btn ${isTextBoxEditEnabled ? 'panel-btn-primary' : ''}`}
+                onClick={isViewer ? viewOnly : () => {
+                  setIsTextBoxEditEnabled((prev) => !prev);
+                  if (textBox !== null) {
+                    addTextToCanvas2(textBox, {
+                      activePage, canvasRefs, setPages,
+                      APP_FONT_FAMILY: selectedFont || APP_FONT_FAMILY, setTextBox
+                    });
+                  } else {
+                    setTextBox(null);
+                  }
+                }}
+                disabled={isViewer}
+              >
+                <span className="panel-btn-icon">📝</span>
+                {isTextBoxEditEnabled ? "Save TextBox" : "Enable TextBox"}
+              </button>
+            </div>
+
+            <div className="panel-section">
+              <div className="panel-section-label">Multi-line Mode</div>
+              <button
+                className={`panel-btn ${isMultilineMode ? 'panel-btn-primary' : ''}`}
+                onClick={isViewer ? viewOnly : () => {
+                  toggleMultilineMode();
+                  if (isMultilineMode === true) {
+                    addTextToCanvasMlMode({
+                      canvasRefs, activePage, mlConfig, mlText, newFontSize,
+                      pushSnapshotToUndo, setPages, setTextItems, textItems,
+                    });
+                    setMlText("");
+                  }
+                }}
+                disabled={isViewer}
+              >
+                <span className="panel-btn-icon">║</span>
+                {isMultilineMode ? "Exit Multi-line" : "Enter Multi-line"}
+              </button>
+            </div>
+
+            <div className="panel-section">
+              <div className="panel-toggle">
+                <span className="panel-toggle-label">Show Grid</span>
+                <input
+                  type="checkbox"
+                  checked={showGrid}
+                  onChange={isViewer ? viewOnly : toggleGrid}
+                  disabled={isViewer}
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Shapes Panel */}
+      {activePanel === 'shapes' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">⬜</span>
+              Shapes
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            <div className="panel-section">
+              <div className="panel-section-label">Shape Tools</div>
+              <div className="tool-grid">
                 <button
-                  className="btn btn-secondary"
-                  onClick={isViewer ? viewOnly : handleUndo}
+                  className={`tool-grid-btn ${activeShapeTool === null ? 'active' : ''}`}
+                  title="Select"
+                  onClick={isViewer ? viewOnly : () => setActiveShapeTool(null)}
                   disabled={isViewer}
                 >
-                  Undo
+                  👆
                 </button>
                 <button
-                  className="btn btn-secondary"
-                  onClick={isViewer ? viewOnly : handleRedo}
+                  className={`tool-grid-btn ${activeShapeTool === 'rectangle' ? 'active' : ''}`}
+                  title="Rectangle"
+                  onClick={isViewer ? viewOnly : () => setActiveShapeTool('rectangle')}
                   disabled={isViewer}
                 >
-                  Redo
+                  ▢
+                </button>
+                <button
+                  className={`tool-grid-btn ${activeShapeTool === 'circle' ? 'active' : ''}`}
+                  title="Circle"
+                  onClick={isViewer ? viewOnly : () => setActiveShapeTool('circle')}
+                  disabled={isViewer}
+                >
+                  ○
+                </button>
+                <button
+                  className={`tool-grid-btn ${activeShapeTool === 'line' ? 'active' : ''}`}
+                  title="Line"
+                  onClick={isViewer ? viewOnly : () => setActiveShapeTool('line')}
+                  disabled={isViewer}
+                >
+                  ╱
+                </button>
+                <button
+                  className={`tool-grid-btn ${activeShapeTool === 'arrow' ? 'active' : ''}`}
+                  title="Arrow"
+                  onClick={isViewer ? viewOnly : () => setActiveShapeTool('arrow')}
+                  disabled={isViewer}
+                >
+                  →
+                </button>
+                <button
+                  className={`tool-grid-btn ${activeShapeTool === 'freehand' ? 'active' : ''}`}
+                  title="Freehand"
+                  onClick={isViewer ? viewOnly : () => setActiveShapeTool('freehand')}
+                  disabled={isViewer}
+                >
+                  ✏️
                 </button>
               </div>
-            ),
-          },
-          {
-            title: "MultiLine Mode",
-            icon: "║",
-            description: "Switch multiline input mode.",
-            content: (
+            </div>
+
+            <div className="panel-section">
+              <div className="panel-section-label">Selected Shape</div>
               <button
-                className="btn btn-secondary"
-                onClick={
-                  isViewer
-                    ? viewOnly
-                    : () => {
-                        toggleMultilineMode();
-                        if (isMultilineMode === true) {
-                          addTextToCanvasMlMode({
-                            canvasRefs,
-                            activePage,
-                            mlConfig,
-                            mlText,
-                            newFontSize,
-                            pushSnapshotToUndo,
-                            setPages,
-                            setTextItems,
-                            textItems,
-                          });
-                          setMlText("");
-                        }
-                      }
-                }
-                disabled={isViewer}
+                className="panel-btn panel-btn-danger"
+                onClick={isViewer ? viewOnly : deleteSelectedShape}
+                disabled={isViewer || selectedShapeIndex === null}
               >
-                {isMultilineMode
-                  ? "Exit Multi-line Mode"
-                  : "Enter Multi-line Mode"}
+                <span className="panel-btn-icon">🗑️</span>
+                Delete Selected
               </button>
-            ),
-          },
-          {
-            title: "State",
-            icon: "💾",
-            description: "Save and load editor state as JSON.",
-            content: (
-              <>
-                <div className="btn-row">
-                  <button
-                    className="btn btn-secondary"
-                    onClick={isViewer ? viewOnly : () => exportStateToJson()}
-                    disabled={isViewer}
-                  >
-                    Save JSON
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={isViewer ? viewOnly : onJsonPick}
-                    disabled={isViewer}
-                  >
-                    Load JSON
-                  </button>
-                </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Images Panel */}
+      {activePanel === 'images' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">🖼️</span>
+              Images
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            <div className="panel-section">
+              <div className="panel-section-label">Upload Image</div>
+              <input
+                className="panel-input-file"
+                type="file"
+                accept="image/*"
+                onChange={isViewer ? viewOnly : (e) => handleAddImage(e, activePage, setPages)}
+                disabled={isViewer}
+              />
+            </div>
+
+            <div className="panel-section">
+              <div className="panel-section-label">Selected Image</div>
+              <button
+                className="panel-btn panel-btn-danger"
+                onClick={isViewer ? viewOnly : () => deleteSelectedImage({
+                  selectedImageIndex, imageItems, activePage, setImageItems,
+                  saveImageItemsToIndexedDB, updatePageItems, setSelectedImageIndex, drawCanvas,
+                })}
+                disabled={isViewer || selectedImageIndex === null}
+              >
+                <span className="panel-btn-icon">🗑️</span>
+                Delete Selected
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Share Panel */}
+      {activePanel === 'share' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">🔗</span>
+              Share
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            <div className="panel-section">
+              {isViewer && (
+                <div className="panel-badge panel-badge-viewer">VIEW-ONLY MODE</div>
+              )}
+              {mode === "host" && (
+                <>
+                  <div className="panel-badge panel-badge-room">Room: {roomId}</div>
+                  <div className="panel-badge panel-badge-viewers">
+                    👥 {viewerCount} {viewerCount === 1 ? "viewer" : "viewers"}
+                  </div>
+                </>
+              )}
+              {mode !== "viewer" && (
+                <button
+                  className="panel-btn panel-btn-primary"
+                  onClick={isViewer ? viewOnly : onStartShare}
+                  disabled={isViewer}
+                >
+                  <span className="panel-btn-icon">🔗</span>
+                  {mode === "host" ? "Sharing Active" : "Start Sharing"}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Settings Panel */}
+      {activePanel === 'settings' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">⚙️</span>
+              Settings
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            <div className="panel-section">
+              <div className="panel-section-label">Display</div>
+              <div className="panel-toggle">
+                <span className="panel-toggle-label">Show Grid</span>
                 <input
-                  ref={jsonRef}
-                  type="file"
-                  accept="application/json"
-                  style={{ display: "none" }}
-                  onChange={isViewer ? viewOnly : onJSONChange}
+                  type="checkbox"
+                  checked={showGrid}
+                  onChange={isViewer ? viewOnly : toggleGrid}
                   disabled={isViewer}
                 />
-              </>
-            ),
-          },
-          {
-            title: "Data",
-            icon: "🗑️",
-            description: "Reset all persistent data.",
-            content: (
+              </div>
+            </div>
+
+            <div className="panel-section">
+              <div className="panel-section-label">Danger Zone</div>
               <button
-                className="btn btn-danger"
-                onClick={
-                  isViewer
-                    ? viewOnly
-                    : () => {
-                        if (
-                          window.confirm(
-                            "Are you sure you want to clear all saved data?"
-                          )
-                        ) {
-                          setUndoStack({});
-                          setRedoStack({});
-                          setTextItems([]);
-                          setImageItems([]);
-                          setPages([{ textItems: [], imageItems: [] }]);
-                          setActivePage(0);
-
-                          setSelectedTextIndex?.(null);
-                          setSelectedTextIndexes?.([]);
-                          setSelectedImageIndex?.(null);
-                          setIsSelecting?.(false);
-                          setIsDragging?.(false);
-                          setIsImageDragging?.(false);
-                          setResizingImageIndex?.(null);
-                          setTextBox?.(null);
-                          setIsTextSelected(false);
-
-                          drawCanvas(0);
-                        }
-                      }
-                }
+                className="panel-btn panel-btn-danger"
+                onClick={isViewer ? viewOnly : () => {
+                  if (window.confirm("Are you sure you want to clear all saved data?")) {
+                    setUndoStack({});
+                    setRedoStack({});
+                    setTextItems([]);
+                    setImageItems([]);
+                    setPages([{ textItems: [], imageItems: [] }]);
+                    setActivePage(0);
+                    setSelectedTextIndex?.(null);
+                    setSelectedTextIndexes?.([]);
+                    setSelectedImageIndex?.(null);
+                    setIsSelecting?.(false);
+                    setIsDragging?.(false);
+                    setIsImageDragging?.(false);
+                    setResizingImageIndex?.(null);
+                    setTextBox?.(null);
+                    setIsTextSelected(false);
+                    drawCanvas(0);
+                  }
+                }}
                 disabled={isViewer}
               >
+                <span className="panel-btn-icon">🗑️</span>
                 Clear All Data
               </button>
-            ),
-          },
-        ].map((section, idx) => (
-          <div key={idx} className="sidebar-section">
-            <button
-              className="section-header"
-              onClick={
-                isViewer
-                  ? viewOnly
-                  : () =>
-                      setOpenSections((prev) => ({
-                        ...prev,
-                        [section.title]: !prev[section.title],
-                      }))
-              }
-              type="button"
-            >
-              <div className="section-header-main">
-                <span className="section-icon">{section.icon}</span>
-                <span className="section-title">{section.title}</span>
-              </div>
-              <span className="section-chevron">
-                {openSections[section.title] ? "▴" : "▾"}
-              </span>
-            </button>
-            {openSections[section.title] && (
-              <div className="section-body">
-                {section.description && (
-                  <div className="section-description">
-                    {section.description}
-                  </div>
-                )}
-                {section.content}
-              </div>
-            )}
+            </div>
           </div>
-        ))}
-      </div>
+        </>
+      )}
     </aside>
 
     {/* Main (right) */}
     <main className="main-content">
       <div className="pages-grid">
-        {pageList.map((_, index) => {
-          const isActive = activePage === index;
-          const canvasEl = canvasRefs.current[index];
-
-          const pageWrapStyle = {
+        {/* Single canvas view - only show active page */}
+        <div
+          style={{
             position: "relative",
             display: "inline-block",
             boxShadow: "0 0 0 1px #e5e7eb",
             borderRadius: 8,
             background: "#f9fafb",
-          };
+          }}
+          className="page-wrapper page-wrapper-active"
+        >
+          <canvas
+            ref={(el) => (canvasRefs.current[activePage] = el)}
+            style={{
+              display: "block",
+              width: CANVAS_WIDTH,
+              height: CANVAS_HEIGHT,
+              backgroundColor: "white",
+              border: "1px solid #3b82f6",
+              userSelect: "none",
+              MozUserSelect: "none",
+              WebkitUserSelect: "none",
+              pointerEvents: "auto",
+            }}
+            onMouseDown={isViewer ? viewOnly : wrappedMouseDown}
+            onMouseMove={isViewer ? viewOnly : wrappedMouseMove}
+            onMouseUp={isViewer ? viewOnly : wrappedMouseUp}
+            onDoubleClick={isViewer ? viewOnly : (e) => handleDoubleClick(e, {
+              canvasRefs,
+              activePage,
+              textItems,
+              setIsEditing,
+              setEditingText,
+              setEditingFontSize,
+              setEditingColor,
+              setEditingFont,
+              setEditingIndex
+            })}
+          />
 
-          const canvasStyle = {
-            display: "block",
-            width: CANVAS_WIDTH,
-            height: CANVAS_HEIGHT,
-            backgroundColor: "white",
-            border: isActive ? "1px solid #3b82f6" : "1px solid #d1d5db",
-            userSelect: "none",
-            MozUserSelect: "none",
-            WebkitUserSelect: "none",
-            pointerEvents: "auto",
-          };
-
-          return (
-            <div
-              key={index}
-              style={pageWrapStyle}
-              className={`page-wrapper ${isActive ? "page-wrapper-active" : ""}`}
-              onClick={isViewer ? viewOnly : () => setActivePage(index)}
-            >
-              <canvas
-                ref={(el) => (canvasRefs.current[index] = el)}
-                style={canvasStyle}
-                onMouseDown={isViewer ? viewOnly : wrappedMouseDown}
-                onMouseMove={isViewer ? viewOnly : wrappedMouseMove}
-                onMouseUp={isViewer ? viewOnly : wrappedMouseUp}
-                onDoubleClick={isViewer ? viewOnly : (e) => handleDoubleClick(e, {
-                  canvasRefs,
-                  activePage,
-                  textItems,
-                  setIsEditing,
-                  setEditingText,
-                  setEditingFontSize,
-                  setEditingColor,
-                  setEditingFont,
-                  setEditingIndex
-                })}
+          {/* RulerOverlay for active page */}
+          {(
+            <div className="ruler-overlay-container">
+              <RulerOverlay
+                key={`ruler-${activePage}`}
+                canvasRef={{ current: canvasRefs.current[activePage] }}
+                zoom={1}
               />
-
-              {/* Only render RulerOverlay when canvas is ready */}
-              {isActive && canvasEl && (
-                <div className="ruler-overlay-container">
-                  <RulerOverlay
-                    canvasRef={{ current: canvasEl }}
-                    zoom={1}
-                  />
-                </div>
-              )}
             </div>
-          );
-        })}
+          )}
+        </div>
       </div>
     </main>
+
+    {/* Bottom Bar - Page Navigation */}
+    <div className="bottom-bar">
+      <button
+        className="page-btn"
+        title="Previous Page"
+        onClick={isViewer ? viewOnly : () => setActivePage(prev => Math.max(0, prev - 1))}
+        disabled={isViewer || activePage === 0}
+      >
+        ←
+      </button>
+      <span className="page-indicator">
+        Page {activePage + 1} of {pageList.length}
+      </span>
+      <button
+        className="page-btn"
+        title="Next Page"
+        onClick={isViewer ? viewOnly : () => setActivePage(prev => Math.min(pageList.length - 1, prev + 1))}
+        disabled={isViewer || activePage === pageList.length - 1}
+      >
+        →
+      </button>
+      <div className="bottom-bar-divider" />
+      <button
+        className="page-btn page-btn-add"
+        title="Add New Page"
+        onClick={isViewer ? viewOnly : addNewPage}
+        disabled={isViewer}
+      >
+        +
+      </button>
+    </div>
 
    {/* Add Text Modal */}
 {showAddTextModal && (

@@ -1,9 +1,12 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import './HostCursor.css';
 
 /**
  * HostCursor - Displays the host's cursor position for viewers
  * Uses requestAnimationFrame interpolation for smooth cursor movement
+ *
+ * Position is relative to .main-content area to ensure accurate positioning
+ * regardless of sidebar panel state (open/closed)
  */
 export const HostCursor = ({ position }) => {
   const cursorRef = useRef(null);
@@ -11,15 +14,68 @@ export const HostCursor = ({ position }) => {
   const targetPos = useRef({ x: 0, y: 0 });
   const rafId = useRef(null);
   const isAnimating = useRef(false);
+  const [mainContentRect, setMainContentRect] = useState(null);
 
   // Interpolation factor (0.3 = 30% of distance per frame, higher = faster)
   const LERP_FACTOR = 0.35;
   // Threshold to stop interpolation (in pixels)
   const THRESHOLD = 0.5;
 
+  // Track main-content position for accurate cursor placement
+  useEffect(() => {
+    const updateRect = () => {
+      const mainContent = document.querySelector('.main-content');
+      if (mainContent) {
+        const rect = mainContent.getBoundingClientRect();
+        setMainContentRect({
+          left: rect.left,
+          top: rect.top,
+          scrollLeft: mainContent.scrollLeft,
+          scrollTop: mainContent.scrollTop
+        });
+      }
+    };
+
+    // Initial update
+    updateRect();
+
+    // Update on scroll and resize
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) {
+      mainContent.addEventListener('scroll', updateRect);
+    }
+    window.addEventListener('resize', updateRect);
+
+    // Also observe sidebar changes with MutationObserver
+    const observer = new MutationObserver(updateRect);
+    const sidebar = document.querySelector('.sidebar-panel');
+    if (sidebar) {
+      observer.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    return () => {
+      if (mainContent) {
+        mainContent.removeEventListener('scroll', updateRect);
+      }
+      window.removeEventListener('resize', updateRect);
+      observer.disconnect();
+    };
+  }, []);
+
   const lerp = useCallback((start, end, factor) => {
     return start + (end - start) * factor;
   }, []);
+
+  // Calculate viewport position from main-content relative position
+  const getViewportPosition = useCallback((relX, relY) => {
+    if (!mainContentRect) {
+      return { x: relX, y: relY };
+    }
+    return {
+      x: mainContentRect.left + relX - mainContentRect.scrollLeft,
+      y: mainContentRect.top + relY - mainContentRect.scrollTop
+    };
+  }, [mainContentRect]);
 
   const animate = useCallback(() => {
     const dx = targetPos.current.x - currentPos.current.x;
@@ -32,7 +88,8 @@ export const HostCursor = ({ position }) => {
       currentPos.current.y = lerp(currentPos.current.y, targetPos.current.y, LERP_FACTOR);
 
       if (cursorRef.current) {
-        cursorRef.current.style.transform = `translate3d(${currentPos.current.x - 2}px, ${currentPos.current.y - 2}px, 0)`;
+        const viewportPos = getViewportPosition(currentPos.current.x, currentPos.current.y);
+        cursorRef.current.style.transform = `translate3d(${viewportPos.x - 2}px, ${viewportPos.y - 2}px, 0)`;
       }
 
       rafId.current = requestAnimationFrame(animate);
@@ -42,26 +99,28 @@ export const HostCursor = ({ position }) => {
       currentPos.current.y = targetPos.current.y;
 
       if (cursorRef.current) {
-        cursorRef.current.style.transform = `translate3d(${currentPos.current.x - 2}px, ${currentPos.current.y - 2}px, 0)`;
+        const viewportPos = getViewportPosition(currentPos.current.x, currentPos.current.y);
+        cursorRef.current.style.transform = `translate3d(${viewportPos.x - 2}px, ${viewportPos.y - 2}px, 0)`;
       }
 
       isAnimating.current = false;
     }
-  }, [lerp, LERP_FACTOR, THRESHOLD]);
+  }, [lerp, LERP_FACTOR, THRESHOLD, getViewportPosition]);
 
   useEffect(() => {
     if (!position || position.x == null || position.y == null) {
       return;
     }
 
-    // Update target position
+    // Update target position (these are main-content relative coordinates)
     targetPos.current = { x: position.x, y: position.y };
 
     // Initialize current position on first render
     if (currentPos.current.x === 0 && currentPos.current.y === 0) {
       currentPos.current = { x: position.x, y: position.y };
       if (cursorRef.current) {
-        cursorRef.current.style.transform = `translate3d(${position.x - 2}px, ${position.y - 2}px, 0)`;
+        const viewportPos = getViewportPosition(position.x, position.y);
+        cursorRef.current.style.transform = `translate3d(${viewportPos.x - 2}px, ${viewportPos.y - 2}px, 0)`;
       }
     }
 
@@ -76,7 +135,15 @@ export const HostCursor = ({ position }) => {
         cancelAnimationFrame(rafId.current);
       }
     };
-  }, [position, animate]);
+  }, [position, animate, getViewportPosition]);
+
+  // Update cursor position when mainContentRect changes (sidebar toggle, scroll, resize)
+  useEffect(() => {
+    if (cursorRef.current && currentPos.current) {
+      const viewportPos = getViewportPosition(currentPos.current.x, currentPos.current.y);
+      cursorRef.current.style.transform = `translate3d(${viewportPos.x - 2}px, ${viewportPos.y - 2}px, 0)`;
+    }
+  }, [mainContentRect, getViewportPosition]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -91,12 +158,14 @@ export const HostCursor = ({ position }) => {
     return null;
   }
 
+  const initialViewportPos = getViewportPosition(position.x, position.y);
+
   return (
     <div
       ref={cursorRef}
       className="host-cursor"
       style={{
-        transform: `translate3d(${position.x - 2}px, ${position.y - 2}px, 0)`,
+        transform: `translate3d(${initialViewportPos.x - 2}px, ${initialViewportPos.y - 2}px, 0)`,
       }}
     >
       <svg
