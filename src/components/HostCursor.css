@@ -1,10 +1,10 @@
 .host-cursor {
   position: fixed;
+  left: 0;
+  top: 0;
   pointer-events: none;
   z-index: 10000;
-  transform: translate(-2px, -2px);
-  transition: left 0.05s linear, top 0.05s linear;
-  will-change: left, top;
+  will-change: transform;
 }
 
 .host-cursor svg {
