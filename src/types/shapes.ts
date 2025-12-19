@@ -1,4 +1,4 @@
-export type ShapeType = "rectangle" | "circle" | "line";
+export type ShapeType = "rectangle" | "circle" | "line" | "arrow";
 
 export interface ShapeItem {
   // Shape type

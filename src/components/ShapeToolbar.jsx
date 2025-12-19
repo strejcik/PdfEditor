@@ -34,6 +34,14 @@ export function ShapeToolbar({ activeShapeTool, setActiveShapeTool, selectedShap
         >
           ╱ Line
         </button>
+        <button
+          className={buttonClass("arrow")}
+          onClick={isViewer ? viewOnly : () => handleToolClick("arrow")}
+          disabled={isViewer}
+          title="Draw arrow - Click and drag on canvas"
+        >
+          → Arrow
+        </button>
       </div>
 
       {deleteSelectedShape && (

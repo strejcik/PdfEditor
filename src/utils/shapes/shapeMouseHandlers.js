@@ -94,6 +94,11 @@ export function handleShapeMouseDown(e, params) {
 
     if (handle) {
       // Start resizing (clear multi-selection, only resize the clicked shape)
+      // Clear text selections when selecting a shape
+      params.setSelectedTextIndex?.(null);
+      params.setSelectedTextIndexes?.([]);
+      params.setIsTextSelected?.(false);
+
       setSelectedShapeIndex(clickedShapeIndex);
       setSelectedShapeIndexes([]);
       setIsResizingShape(true);
@@ -177,6 +182,11 @@ export function handleShapeMouseDown(e, params) {
         return true; // Handled
       } else {
         // Start dragging single shape (clear multi-selection)
+        // Clear text selections when selecting a shape
+        params.setSelectedTextIndex?.(null);
+        params.setSelectedTextIndexes?.([]);
+        params.setIsTextSelected?.(false);
+
         setSelectedShapeIndex(clickedShapeIndex);
         setSelectedShapeIndexes([]);
         setIsDraggingShape(true);

@@ -71,8 +71,9 @@ export function isPointInShape(shape, mouseX, mouseY, canvasWidth, canvasHeight)
       return true;
     }
 
-    case "line": {
-      // Line hit detection with tolerance (use same tolerance calculation)
+    case "line":
+    case "arrow": {
+      // Line/Arrow hit detection with tolerance (use same tolerance calculation)
       const lineTolerance = Math.max(strokeWidth / 2 + 3, 8); // Slightly larger for lines
       const x1 = x;
       const y1 = y;

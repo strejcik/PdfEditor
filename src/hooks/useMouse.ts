@@ -496,6 +496,10 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         }
 
         // Not a mixed selection - handle as regular text selection
+        // Clear shape selections when selecting text
+        setSelectedShapeIndex?.(null);
+        setSelectedShapeIndexes?.([]);
+
         setIsTextSelected(true);
         setSelectedTextIndex(bestTextIndex);
 
@@ -1356,10 +1360,14 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     
         if (pickedIdx !== null) {
           // Select exactly one item (use GLOBAL index, not page index)
+          // Clear shape selections when selecting text
+          setSelectedShapeIndex?.(null);
+          setSelectedShapeIndexes?.([]);
+
           setSelectedTextIndexes([pickedIdx]);
           setSelectedTextIndex(pickedIdx);
           setIsTextSelected(true);
-    
+
           const Lbest = resolveTextLayoutForHit(textItems[pickedIdx], ctx, canvas);
           setInitialPositions([{ index: pickedIdx, xTop: Lbest.x, yTop: Lbest.topY, activePage }]);
         } else {

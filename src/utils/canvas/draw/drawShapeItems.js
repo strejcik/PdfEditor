@@ -6,6 +6,29 @@ function resolveCoord(norm, pixel, canvasSize) {
 }
 
 /**
+ * Draw an arrowhead at the end of a line
+ */
+function drawArrowhead(ctx, x1, y1, x2, y2, arrowSize = 10) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+
+  // Calculate the two points for the arrowhead
+  const arrowAngle = Math.PI / 6; // 30 degrees
+
+  const x3 = x2 - arrowSize * Math.cos(angle - arrowAngle);
+  const y3 = y2 - arrowSize * Math.sin(angle - arrowAngle);
+
+  const x4 = x2 - arrowSize * Math.cos(angle + arrowAngle);
+  const y4 = y2 - arrowSize * Math.sin(angle + arrowAngle);
+
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x3, y3);
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x4, y4);
+  ctx.stroke();
+}
+
+/**
  * Draw all shapes for a specific page
  */
 export function drawShapeItems(ctx, rect, pageIndex, state) {
@@ -49,6 +72,16 @@ export function drawShapeItems(ctx, rect, pageIndex, state) {
         ctx.moveTo(x, y);
         ctx.lineTo(x + w, y + h);
         ctx.stroke();
+        break;
+
+      case "arrow":
+        // Draw the line
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + w, y + h);
+        ctx.stroke();
+        // Draw the arrowhead at the end
+        drawArrowhead(ctx, x, y, x + w, y + h, 15);
         break;
 
       default:
@@ -131,6 +164,16 @@ export function drawShapeCreationPreview(ctx, rect, state) {
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
+      break;
+
+    case "arrow":
+      // Draw the line
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      // Draw the arrowhead at the end
+      drawArrowhead(ctx, x1, y1, x2, y2, 15);
       break;
   }
 
