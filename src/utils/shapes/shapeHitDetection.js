@@ -112,9 +112,139 @@ export function isPointInShape(shape, mouseX, mouseY, canvasWidth, canvasHeight)
       return distance <= lineTolerance;
     }
 
+    case "triangle": {
+      // Triangle with vertices at: top center, bottom left, bottom right
+      const vertices = [
+        { x: x + w / 2, y: y },      // Top center
+        { x: x, y: y + h },          // Bottom left
+        { x: x + w, y: y + h }       // Bottom right
+      ];
+      return isPointInPolygon(mouseX, mouseY, vertices, tolerance);
+    }
+
+    case "diamond": {
+      // Diamond with vertices at: top, right, bottom, left
+      const vertices = [
+        { x: x + w / 2, y: y },      // Top
+        { x: x + w, y: y + h / 2 },  // Right
+        { x: x + w / 2, y: y + h },  // Bottom
+        { x: x, y: y + h / 2 }       // Left
+      ];
+      return isPointInPolygon(mouseX, mouseY, vertices, tolerance);
+    }
+
+    case "freehand": {
+      // For freehand, check if mouse is near any segment of the path
+      if (!shape.points || shape.points.length < 2) return false;
+
+      const pathTolerance = Math.max(strokeWidth / 2 + 3, 8);
+
+      for (let i = 0; i < shape.points.length - 1; i++) {
+        const p1 = shape.points[i];
+        const p2 = shape.points[i + 1];
+
+        const x1 = p1.x * canvasWidth;
+        const y1 = p1.y * canvasHeight;
+        const x2 = p2.x * canvasWidth;
+        const y2 = p2.y * canvasHeight;
+
+        // Distance from point to line segment
+        const A = mouseX - x1;
+        const B = mouseY - y1;
+        const C = x2 - x1;
+        const D = y2 - y1;
+
+        const dot = A * C + B * D;
+        const lenSq = C * C + D * D;
+        let param = -1;
+
+        if (lenSq !== 0) param = dot / lenSq;
+
+        let xx, yy;
+
+        if (param < 0) {
+          xx = x1;
+          yy = y1;
+        } else if (param > 1) {
+          xx = x2;
+          yy = y2;
+        } else {
+          xx = x1 + param * C;
+          yy = y1 + param * D;
+        }
+
+        const dx = mouseX - xx;
+        const dy = mouseY - yy;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance <= pathTolerance) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     default:
       return false;
   }
+}
+
+/**
+ * Check if a point is inside or near a polygon
+ * Uses ray casting algorithm for inside check and edge distance for near check
+ */
+function isPointInPolygon(x, y, vertices, tolerance) {
+  // First check if point is near any edge
+  for (let i = 0; i < vertices.length; i++) {
+    const v1 = vertices[i];
+    const v2 = vertices[(i + 1) % vertices.length];
+
+    // Distance from point to line segment
+    const A = x - v1.x;
+    const B = y - v1.y;
+    const C = v2.x - v1.x;
+    const D = v2.y - v1.y;
+
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    let param = -1;
+
+    if (lenSq !== 0) param = dot / lenSq;
+
+    let xx, yy;
+
+    if (param < 0) {
+      xx = v1.x;
+      yy = v1.y;
+    } else if (param > 1) {
+      xx = v2.x;
+      yy = v2.y;
+    } else {
+      xx = v1.x + param * C;
+      yy = v1.y + param * D;
+    }
+
+    const dx = x - xx;
+    const dy = y - yy;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance <= tolerance) {
+      return true;
+    }
+  }
+
+  // Then check if point is inside polygon (ray casting algorithm)
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const xi = vertices[i].x, yi = vertices[i].y;
+    const xj = vertices[j].x, yj = vertices[j].y;
+
+    const intersect = ((yi > y) !== (yj > y)) &&
+      (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+
+  return inside;
 }
 
 /**
@@ -143,6 +273,11 @@ export function isShapeInSelectionRect(shape, selectionRect, canvasWidth, canvas
  * Check if a point is on a resize handle
  */
 export function getResizeHandle(shape, mouseX, mouseY, canvasWidth, canvasHeight) {
+  // Freehand shapes cannot be resized with handles
+  if (shape.type === "freehand") {
+    return null;
+  }
+
   const x = shape.xNorm != null ? shape.xNorm * canvasWidth : shape.x;
   const y = shape.yNormTop != null ? shape.yNormTop * canvasHeight : shape.y;
   const w = shape.widthNorm != null ? shape.widthNorm * canvasWidth : shape.width;

@@ -6,6 +6,18 @@ export const useShare = () => {
   const getStateRef = useRef(null);
   const getMethodsRef = useRef(null);
 
+  // State for viewer-received shape creation states
+  const [viewerCreationState, setViewerCreationState] = useState({
+    isCreatingShape: false,
+    activeShapeTool: null,
+    shapeCreationStart: null,
+    shapeCreationCurrent: null,
+    freehandPoints: [],
+  });
+
+  // State for viewer-received cursor position
+  const [hostCursorPosition, setHostCursorPosition] = useState(null);
+
   // snapshot (host -> viewers)
   const getAppState = () => {
     const stateGetter = getStateRef.current;
@@ -25,6 +37,24 @@ export const useShare = () => {
     if (Array.isArray(s.state.pageList)) m.setPages?.(s.state.pageList);
     if (Array.isArray(s.state.textItems)) m.setTextItems?.(s.state.textItems);
     if (Array.isArray(s.state.shapeItems)) m.setShapeItems?.(s.state.shapeItems);
+
+    // Apply shape creation state for viewers to see real-time freehand drawing
+    if (s.state.isCreatingShape !== undefined ||
+        s.state.activeShapeTool !== undefined ||
+        s.state.freehandPoints !== undefined) {
+      setViewerCreationState({
+        isCreatingShape: s.state.isCreatingShape ?? false,
+        activeShapeTool: s.state.activeShapeTool ?? null,
+        shapeCreationStart: s.state.shapeCreationStart ?? null,
+        shapeCreationCurrent: s.state.shapeCreationCurrent ?? null,
+        freehandPoints: s.state.freehandPoints ?? [],
+      });
+    }
+
+    // Apply cursor position for viewers to see real-time cursor mirroring
+    if (s.state.cursorPosition !== undefined) {
+      setHostCursorPosition(s.state.cursorPosition);
+    }
   };
 
   // live share hook (contains socket + password modals)
@@ -143,6 +173,12 @@ export const useShare = () => {
     shareLinkModal,
     closeShareLinkModal,
     copyShareLinkAgain,
+
+    // Viewer creation state (for real-time freehand drawing)
+    viewerCreationState,
+
+    // Viewer cursor position (for cursor mirroring)
+    hostCursorPosition,
 
     // optional access
     makeViewerLink,

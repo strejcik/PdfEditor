@@ -84,6 +84,42 @@ export function drawShapeItems(ctx, rect, pageIndex, state) {
         drawArrowhead(ctx, x, y, x + w, y + h, 15);
         break;
 
+      case "triangle":
+        // Draw an equilateral-ish triangle with base at bottom
+        ctx.beginPath();
+        ctx.moveTo(x + w / 2, y); // Top center
+        ctx.lineTo(x, y + h); // Bottom left
+        ctx.lineTo(x + w, y + h); // Bottom right
+        ctx.closePath();
+        ctx.stroke();
+        break;
+
+      case "diamond":
+        // Draw a diamond (rhombus) with points at midpoints
+        ctx.beginPath();
+        ctx.moveTo(x + w / 2, y); // Top
+        ctx.lineTo(x + w, y + h / 2); // Right
+        ctx.lineTo(x + w / 2, y + h); // Bottom
+        ctx.lineTo(x, y + h / 2); // Left
+        ctx.closePath();
+        ctx.stroke();
+        break;
+
+      case "freehand":
+        // Draw freehand path from stored points
+        if (item.points && item.points.length > 1) {
+          ctx.beginPath();
+          const firstPoint = item.points[0];
+          ctx.moveTo(firstPoint.x * rect.width, firstPoint.y * rect.height);
+
+          for (let i = 1; i < item.points.length; i++) {
+            const point = item.points[i];
+            ctx.lineTo(point.x * rect.width, point.y * rect.height);
+          }
+          ctx.stroke();
+        }
+        break;
+
       default:
         console.warn("Unknown shape type:", item.type);
     }
@@ -101,19 +137,21 @@ export function drawShapeItems(ctx, rect, pageIndex, state) {
       ctx.setLineDash([5, 5]);
       ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
 
-      // Draw resize handles (small squares at corners)
-      const handleSize = 8;
-      ctx.fillStyle = "rgba(30, 144, 255, 0.8)";
-      ctx.setLineDash([]);
+      // Draw resize handles (small squares at corners) - but not for freehand
+      if (item.type !== "freehand") {
+        const handleSize = 8;
+        ctx.fillStyle = "rgba(30, 144, 255, 0.8)";
+        ctx.setLineDash([]);
 
-      // Top-left
-      ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
-      // Top-right
-      ctx.fillRect(x + w - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
-      // Bottom-left
-      ctx.fillRect(x - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
-      // Bottom-right
-      ctx.fillRect(x + w - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+        // Top-left
+        ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
+        // Top-right
+        ctx.fillRect(x + w - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
+        // Bottom-left
+        ctx.fillRect(x - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+        // Bottom-right
+        ctx.fillRect(x + w - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+      }
 
       ctx.restore();
     }
@@ -124,9 +162,25 @@ export function drawShapeItems(ctx, rect, pageIndex, state) {
  * Draw shape creation preview (while dragging)
  */
 export function drawShapeCreationPreview(ctx, rect, state) {
-  const { isCreatingShape, shapeCreationStart, shapeCreationCurrent, activeShapeTool } = state;
+  const { isCreatingShape, shapeCreationStart, shapeCreationCurrent, activeShapeTool, freehandPoints } = state;
 
   if (!isCreatingShape || !shapeCreationStart || !shapeCreationCurrent || !activeShapeTool) {
+    return;
+  }
+
+  // For freehand, draw the actual path being created
+  if (activeShapeTool === "freehand" && freehandPoints && freehandPoints.length > 1) {
+    ctx.strokeStyle = "rgba(30, 144, 255, 0.6)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    ctx.moveTo(freehandPoints[0].x, freehandPoints[0].y);
+    for (let i = 1; i < freehandPoints.length; i++) {
+      ctx.lineTo(freehandPoints[i].x, freehandPoints[i].y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
     return;
   }
 
@@ -174,6 +228,27 @@ export function drawShapeCreationPreview(ctx, rect, state) {
       ctx.stroke();
       // Draw the arrowhead at the end
       drawArrowhead(ctx, x1, y1, x2, y2, 15);
+      break;
+
+    case "triangle":
+      // Preview triangle with base at bottom
+      ctx.beginPath();
+      ctx.moveTo(x1 + w / 2, y1); // Top center
+      ctx.lineTo(x1, y1 + h); // Bottom left
+      ctx.lineTo(x1 + w, y1 + h); // Bottom right
+      ctx.closePath();
+      ctx.stroke();
+      break;
+
+    case "diamond":
+      // Preview diamond
+      ctx.beginPath();
+      ctx.moveTo(x1 + w / 2, y1); // Top
+      ctx.lineTo(x1 + w, y1 + h / 2); // Right
+      ctx.lineTo(x1 + w / 2, y1 + h); // Bottom
+      ctx.lineTo(x1, y1 + h / 2); // Left
+      ctx.closePath();
+      ctx.stroke();
       break;
   }
 

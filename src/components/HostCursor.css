@@ -1,0 +1,27 @@
+.host-cursor {
+  position: fixed;
+  pointer-events: none;
+  z-index: 10000;
+  transform: translate(-2px, -2px);
+  transition: left 0.05s linear, top 0.05s linear;
+  will-change: left, top;
+}
+
+.host-cursor svg {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+.host-cursor-label {
+  position: absolute;
+  left: 20px;
+  top: 0;
+  background: #FF6B6B;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  user-select: none;
+}

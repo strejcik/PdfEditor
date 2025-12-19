@@ -14,6 +14,7 @@ export function useShapes() {
   const [activeShapeTool, setActiveShapeTool] = useState<ShapeType | null>(null);
   const [shapeCreationStart, setShapeCreationStart] = useState<{ x: number; y: number } | null>(null);
   const [shapeCreationCurrent, setShapeCreationCurrent] = useState<{ x: number; y: number } | null>(null);
+  const [freehandPoints, setFreehandPoints] = useState<{ x: number; y: number }[]>([]);
 
   // Drag state (moved from refs to state)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
@@ -98,11 +99,37 @@ export function useShapes() {
     setIsCreatingShape(true);
     setShapeCreationStart({ x, y });
     setShapeCreationCurrent({ x, y });
+
+    // For freehand, initialize points array
+    if (activeShapeTool === "freehand") {
+      setFreehandPoints([{ x, y }]);
+    }
   };
 
   // Update shape creation
   const updateShapeCreation = (x: number, y: number) => {
     setShapeCreationCurrent({ x, y });
+
+    // For freehand, add point to the path (with distance threshold to avoid too many points)
+    if (activeShapeTool === "freehand") {
+      setFreehandPoints((prev) => {
+        if (prev.length === 0) {
+          return [{ x, y }];
+        }
+
+        // Only add point if it's far enough from the last point (minimum 2px distance)
+        const lastPoint = prev[prev.length - 1];
+        const dx = x - lastPoint.x;
+        const dy = y - lastPoint.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance >= 2) {
+          return [...prev, { x, y }];
+        }
+
+        return prev;
+      });
+    }
   };
 
   // Finish creating shape
@@ -111,9 +138,65 @@ export function useShapes() {
       setIsCreatingShape(false);
       setShapeCreationStart(null);
       setShapeCreationCurrent(null);
+      setFreehandPoints([]);
       return null;
     }
 
+    // Handle freehand shape
+    if (activeShapeTool === "freehand") {
+      // Minimum points check
+      if (freehandPoints.length < 2) {
+        setIsCreatingShape(false);
+        setShapeCreationStart(null);
+        setShapeCreationCurrent(null);
+        setFreehandPoints([]);
+        return null;
+      }
+
+      // Calculate bounding box from points
+      const xs = freehandPoints.map(p => p.x);
+      const ys = freehandPoints.map(p => p.y);
+      const x1 = Math.min(...xs);
+      const y1 = Math.min(...ys);
+      const x2 = Math.max(...xs);
+      const y2 = Math.max(...ys);
+
+      const width = x2 - x1;
+      const height = y2 - y1;
+
+      // Normalize points (0-1 relative to canvas)
+      const normalizedPoints = freehandPoints.map(p => ({
+        x: p.x / canvasWidth,
+        y: p.y / canvasHeight,
+      }));
+
+      const newShape: ShapeItem = {
+        type: "freehand",
+        x: x1,
+        y: y1,
+        width,
+        height,
+        xNorm: x1 / canvasWidth,
+        yNormTop: y1 / canvasHeight,
+        widthNorm: width / canvasWidth,
+        heightNorm: height / canvasHeight,
+        points: normalizedPoints,
+        strokeColor: "#000000",
+        strokeWidth: 2,
+        index: pageIndex,
+      };
+
+      setShapeItems((prev) => [...prev, newShape]);
+      setIsCreatingShape(false);
+      setShapeCreationStart(null);
+      setShapeCreationCurrent(null);
+      setFreehandPoints([]);
+      setActiveShapeTool(null);
+
+      return newShape;
+    }
+
+    // Handle regular shapes
     const x1 = Math.min(shapeCreationStart.x, shapeCreationCurrent.x);
     const y1 = Math.min(shapeCreationStart.y, shapeCreationCurrent.y);
     const x2 = Math.max(shapeCreationStart.x, shapeCreationCurrent.x);
@@ -127,6 +210,7 @@ export function useShapes() {
       setIsCreatingShape(false);
       setShapeCreationStart(null);
       setShapeCreationCurrent(null);
+      setFreehandPoints([]);
       return null;
     }
 
@@ -149,6 +233,7 @@ export function useShapes() {
     setIsCreatingShape(false);
     setShapeCreationStart(null);
     setShapeCreationCurrent(null);
+    setFreehandPoints([]);
     setActiveShapeTool(null);
 
     return newShape;
@@ -159,6 +244,7 @@ export function useShapes() {
     setIsCreatingShape(false);
     setShapeCreationStart(null);
     setShapeCreationCurrent(null);
+    setFreehandPoints([]);
     setActiveShapeTool(null);
   };
 
@@ -181,6 +267,7 @@ export function useShapes() {
     setActiveShapeTool,
     shapeCreationStart,
     shapeCreationCurrent,
+    freehandPoints,
 
     // Drag state (now all state, no refs)
     dragStart,

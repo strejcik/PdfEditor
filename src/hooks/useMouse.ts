@@ -486,7 +486,8 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
                     index: i,
                     x: resolvedX,
                     y: resolvedY,
-                    activePage: shape.index
+                    activePage: shape.index,
+                    points: shape.points // Store initial points for freehand shapes
                 };
             });
 
@@ -852,13 +853,26 @@ if (isResizing && textBox) {
               const newX = pos.x + dx;
               const newY = pos.y + dy;
 
-              // Use updateShape (same as multi-shape dragging) to avoid page sync conflicts
-              updateShape(pos.index, {
+              const updates: any = {
                 x: newX,
                 y: newY,
                 xNorm: newX / rect.width,
                 yNormTop: newY / rect.height,
-              });
+              };
+
+              // For freehand shapes, also update the points array
+              if (shape.type === "freehand" && pos.points) {
+                const dxNorm = dx / rect.width;
+                const dyNorm = dy / rect.height;
+
+                updates.points = pos.points.map((point: any) => ({
+                  x: point.x + dxNorm,
+                  y: point.y + dyNorm,
+                }));
+              }
+
+              // Use updateShape (same as multi-shape dragging) to avoid page sync conflicts
+              updateShape(pos.index, updates);
             }
           }
         });

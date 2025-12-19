@@ -159,7 +159,8 @@ export function handleShapeMouseDown(e, params) {
             index: i,
             x: resolvedX,
             y: resolvedY,
-            activePage: shapeItem.index
+            activePage: shapeItem.index,
+            points: shapeItem.points // Store initial points for freehand shapes
           };
         });
 
@@ -173,11 +174,15 @@ export function handleShapeMouseDown(e, params) {
         setDragStart({ x: mouseX, y: mouseY });
 
         // Store initial positions of all selected shapes
-        setInitialMultiShapes(selectedShapeIndexes.map(index => ({
-          index,
-          x: shapeItems[index].x,
-          y: shapeItems[index].y,
-        })));
+        setInitialMultiShapes(selectedShapeIndexes.map(index => {
+          const shape = shapeItems[index];
+          return {
+            index,
+            x: shape.x,
+            y: shape.y,
+            points: shape.points, // Store initial points for freehand shapes
+          };
+        }));
 
         return true; // Handled
       } else {
@@ -252,16 +257,31 @@ export function handleShapeMouseMove(e, params) {
     const dy = mouseY - dragStart.y;
 
     // Update all selected shapes
-    initialMultiShapes.forEach(({ index, x, y }) => {
+    initialMultiShapes.forEach(({ index, x, y, points }) => {
+      const shape = shapeItems[index];
       const newX = x + dx;
       const newY = y + dy;
 
-      updateShape(index, {
+      const updates = {
         x: newX,
         y: newY,
         xNorm: newX / rect.width,
         yNormTop: newY / rect.height,
-      });
+      };
+
+      // For freehand shapes, also update the points array
+      if (shape && shape.type === "freehand" && points) {
+        const dxNorm = dx / rect.width;
+        const dyNorm = dy / rect.height;
+
+        // Use the stored initial points (from when dragging started)
+        updates.points = points.map(point => ({
+          x: point.x + dxNorm,
+          y: point.y + dyNorm,
+        }));
+      }
+
+      updateShape(index, updates);
     });
 
     return true; // Handled
@@ -275,12 +295,25 @@ export function handleShapeMouseMove(e, params) {
     const newX = initialShape.x + dx;
     const newY = initialShape.y + dy;
 
-    updateShape(selectedShapeIndex, {
+    const updates = {
       x: newX,
       y: newY,
       xNorm: newX / rect.width,
       yNormTop: newY / rect.height,
-    });
+    };
+
+    // For freehand shapes, also update the points array
+    if (initialShape.type === "freehand" && initialShape.points) {
+      const dxNorm = dx / rect.width;
+      const dyNorm = dy / rect.height;
+
+      updates.points = initialShape.points.map(point => ({
+        x: point.x + dxNorm,
+        y: point.y + dyNorm,
+      }));
+    }
+
+    updateShape(selectedShapeIndex, updates);
 
     return true; // Handled
   }
@@ -379,6 +412,7 @@ export function handleShapeMouseUp(e, params) {
 
   // Priority 2: If dragging/resizing, stop
   if (isDraggingShape || isDraggingMultipleShapes || isResizingShape) {
+    pushSnapshotToUndo(activePage);
     setIsDraggingShape(false);
     setIsDraggingMultipleShapes(false);
     setIsResizingShape(false);

@@ -1,4 +1,4 @@
-export type ShapeType = "rectangle" | "circle" | "line" | "arrow";
+export type ShapeType = "rectangle" | "circle" | "line" | "arrow" | "triangle" | "diamond" | "freehand";
 
 export interface ShapeItem {
   // Shape type
@@ -15,6 +15,9 @@ export interface ShapeItem {
   yNormTop: number;
   widthNorm: number;
   heightNorm: number;
+
+  // For freehand shapes: array of points (normalized coordinates)
+  points?: { x: number; y: number }[];
 
   // Styling (MVP: simple defaults)
   strokeColor: string;      // default: "#000000"

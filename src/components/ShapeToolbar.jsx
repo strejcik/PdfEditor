@@ -42,6 +42,30 @@ export function ShapeToolbar({ activeShapeTool, setActiveShapeTool, selectedShap
         >
           → Arrow
         </button>
+        <button
+          className={buttonClass("triangle")}
+          onClick={isViewer ? viewOnly : () => handleToolClick("triangle")}
+          disabled={isViewer}
+          title="Draw triangle - Click and drag on canvas"
+        >
+          △ Triangle
+        </button>
+        <button
+          className={buttonClass("diamond")}
+          onClick={isViewer ? viewOnly : () => handleToolClick("diamond")}
+          disabled={isViewer}
+          title="Draw diamond - Click and drag on canvas"
+        >
+          ◇ Diamond
+        </button>
+        <button
+          className={buttonClass("freehand")}
+          onClick={isViewer ? viewOnly : () => handleToolClick("freehand")}
+          disabled={isViewer}
+          title="Draw freehand - Click and drag on canvas"
+        >
+          ✎ Freehand
+        </button>
       </div>
 
       {deleteSelectedShape && (

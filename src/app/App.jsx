@@ -29,6 +29,8 @@ import { isPointInShape, getResizeHandle } from "../utils/shapes/shapeHitDetecti
 import { handleShapeMouseDown, handleShapeMouseMove, handleShapeMouseUp } from "../utils/shapes/shapeMouseHandlers";
 import FontSelector from "../components/FontSelector";
 import ColorPicker from "../components/ColorPicker";
+import { useCursorPosition } from "../hooks/useCursorPosition";
+import { HostCursor } from "../components/HostCursor";
 
 
 const App = () => {
@@ -201,6 +203,8 @@ useEffect(() => {
       closeShareLinkModal,
       copyShareLinkAgain,
       viewerCount,
+      viewerCreationState,
+      hostCursorPosition,
     },
     pdf: { selectedFile, setSelectedFile, isPdfDownloaded, setIsPdfDownloaded },
     shapes: {
@@ -213,6 +217,7 @@ useEffect(() => {
       isCreatingShape,
       activeShapeTool, setActiveShapeTool,
       shapeCreationStart, shapeCreationCurrent,
+      freehandPoints,
       dragStart: shapeDragStart, setDragStart: setShapeDragStart,
       initialShape, setInitialShape,
       initialMultiShapes, setInitialMultiShapes,
@@ -229,7 +234,8 @@ useEffect(() => {
   } = useEditor(); // ✅ correct
   useClipboard(useEditor());
 
-
+  // Track cursor position for cursor mirroring in shared workspaces
+  const cursorPosition = useCursorPosition();
 
 
 
@@ -270,7 +276,7 @@ const requestCanvasDraw = (page) => {
   useEffect(() => {
     if (mode !== "host" || !broadcasterRef.current) return;
     broadcasterRef.current.notifyChange();
-  }, [mode, activePage, pageList, textItems, shapeItems]);
+  }, [mode, activePage, pageList, textItems, shapeItems, freehandPoints, isCreatingShape, cursorPosition]);
 
 
   // Keep latest state in refs for real-time broadcasting
@@ -279,6 +285,12 @@ const requestCanvasDraw = (page) => {
     pageList,
     textItems,
     shapeItems,
+    isCreatingShape,
+    activeShapeTool,
+    shapeCreationStart,
+    shapeCreationCurrent,
+    freehandPoints,
+    cursorPosition,
   });
 
   // Update refs synchronously whenever state changes
@@ -288,6 +300,12 @@ const requestCanvasDraw = (page) => {
       pageList,
       textItems,
       shapeItems,
+      isCreatingShape,
+      activeShapeTool,
+      shapeCreationStart,
+      shapeCreationCurrent,
+      freehandPoints,
+      cursorPosition,
     };
   });
 
@@ -302,6 +320,12 @@ const requestCanvasDraw = (page) => {
       pageList: latestStateRef.current.pageList,
       textItems: latestStateRef.current.textItems,
       shapeItems: latestStateRef.current.shapeItems,
+      isCreatingShape: latestStateRef.current.isCreatingShape,
+      activeShapeTool: latestStateRef.current.activeShapeTool,
+      shapeCreationStart: latestStateRef.current.shapeCreationStart,
+      shapeCreationCurrent: latestStateRef.current.shapeCreationCurrent,
+      freehandPoints: latestStateRef.current.freehandPoints,
+      cursorPosition: latestStateRef.current.cursorPosition,
     });
     getMethodsRef.current = {
       setTextItems,
@@ -309,7 +333,7 @@ const requestCanvasDraw = (page) => {
       setActivePage,
       setShapeItems,
     }
-  }, [activePage, pageList, textItems, shapeItems]);
+  }, [activePage, pageList, textItems, shapeItems, isCreatingShape, activeShapeTool, shapeCreationStart, shapeCreationCurrent, freehandPoints, cursorPosition]);
 
 
 
@@ -338,7 +362,7 @@ const requestCanvasDraw = (page) => {
       });
     });
   }, [pageList, textItems, imageItems, shapeItems, mlText, mlAnchor,
-mlPreferredX /* + any other draw deps */]);
+mlPreferredX, viewerCreationState /* + any other draw deps */]);
 
 
 useEffect(() => {
@@ -406,10 +430,12 @@ useEffect(() => {
         shapeItems,
         selectedShapeIndex,
         selectedShapeIndexes,
-        isCreatingShape,
-        shapeCreationStart,
-        shapeCreationCurrent,
-        activeShapeTool,
+        // Use viewer creation state when in viewer mode, otherwise use local state
+        isCreatingShape: isViewer ? viewerCreationState.isCreatingShape : isCreatingShape,
+        shapeCreationStart: isViewer ? viewerCreationState.shapeCreationStart : shapeCreationStart,
+        shapeCreationCurrent: isViewer ? viewerCreationState.shapeCreationCurrent : shapeCreationCurrent,
+        activeShapeTool: isViewer ? viewerCreationState.activeShapeTool : activeShapeTool,
+        freehandPoints: isViewer ? viewerCreationState.freehandPoints : freehandPoints,
         selectedTextIndexes,
         selectionStart,
         selectionEnd,
@@ -445,10 +471,12 @@ useEffect(() => {
               shapeItems,
               selectedShapeIndex,
               selectedShapeIndexes,
-              isCreatingShape,
-              shapeCreationStart,
-              shapeCreationCurrent,
-              activeShapeTool,
+              // Use viewer creation state when in viewer mode, otherwise use local state
+              isCreatingShape: isViewer ? viewerCreationState.isCreatingShape : isCreatingShape,
+              shapeCreationStart: isViewer ? viewerCreationState.shapeCreationStart : shapeCreationStart,
+              shapeCreationCurrent: isViewer ? viewerCreationState.shapeCreationCurrent : shapeCreationCurrent,
+              activeShapeTool: isViewer ? viewerCreationState.activeShapeTool : activeShapeTool,
+              freehandPoints: isViewer ? viewerCreationState.freehandPoints : freehandPoints,
               selectedTextIndexes,
               selectionStart,
               selectionEnd,
@@ -489,6 +517,7 @@ useEffect(() => {
   shapeCreationStart,
   shapeCreationCurrent,
   activeShapeTool,
+  freehandPoints,
   selectedTextIndexes,
   selectionStart,
   selectionEnd,
@@ -1885,6 +1914,11 @@ return (
       onConfirm={handleLoadJsonConfirm}
       onCancel={handleLoadJsonCancel}
     />
+
+    {/* Host Cursor Mirroring - Show host's cursor to viewers */}
+    {isViewer && hostCursorPosition && (
+      <HostCursor position={hostCursorPosition} />
+    )}
   </div>
 );
 
