@@ -2488,6 +2488,7 @@ return (
         >
           <canvas
             ref={(el) => (canvasRefs.current[activePage] = el)}
+            data-page-index={activePage}
             style={{
               display: "block",
               width: CANVAS_WIDTH,

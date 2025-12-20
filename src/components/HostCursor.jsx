@@ -5,8 +5,9 @@ import './HostCursor.css';
  * HostCursor - Displays the host's cursor position for viewers
  * Uses requestAnimationFrame interpolation for smooth cursor movement
  *
- * Position is relative to .main-content area to ensure accurate positioning
- * regardless of sidebar panel state (open/closed)
+ * Position uses normalized coordinates (0-1) relative to canvas dimensions,
+ * which are converted to viewport pixels based on the viewer's canvas size.
+ * This ensures accurate cursor positioning regardless of window/browser size.
  */
 export const HostCursor = ({ position }) => {
   const cursorRef = useRef(null);
@@ -14,40 +15,54 @@ export const HostCursor = ({ position }) => {
   const targetPos = useRef({ x: 0, y: 0 });
   const rafId = useRef(null);
   const isAnimating = useRef(false);
-  const [mainContentRect, setMainContentRect] = useState(null);
+  const [canvasRect, setCanvasRect] = useState(null);
+  const lastPageIndex = useRef(null);
 
   // Interpolation factor (0.3 = 30% of distance per frame, higher = faster)
   const LERP_FACTOR = 0.35;
   // Threshold to stop interpolation (in pixels)
   const THRESHOLD = 0.5;
 
-  // Track main-content position for accurate cursor placement
-  useEffect(() => {
-    const updateRect = () => {
-      const mainContent = document.querySelector('.main-content');
-      if (mainContent) {
-        const rect = mainContent.getBoundingClientRect();
-        setMainContentRect({
-          left: rect.left,
-          top: rect.top,
-          scrollLeft: mainContent.scrollLeft,
-          scrollTop: mainContent.scrollTop
-        });
-      }
-    };
+  // Find and track the canvas element for the specified page
+  const updateCanvasRect = useCallback(() => {
+    if (position?.pageIndex == null) return;
 
-    // Initial update
-    updateRect();
+    // Find canvas by data-page-index attribute
+    let canvas = document.querySelector(`canvas[data-page-index="${position.pageIndex}"]`);
+
+    // Fallback: try to find the active page canvas if data attribute not found
+    if (!canvas) {
+      const canvases = document.querySelectorAll('.main-content canvas');
+      if (canvases.length > 0) {
+        // Use the first visible canvas (usually the active page)
+        canvas = canvases[0];
+      }
+    }
+
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      setCanvasRect({
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height
+      });
+    }
+  }, [position?.pageIndex]);
+
+  // Track canvas position for accurate cursor placement
+  useEffect(() => {
+    updateCanvasRect();
 
     // Update on scroll and resize
     const mainContent = document.querySelector('.main-content');
     if (mainContent) {
-      mainContent.addEventListener('scroll', updateRect);
+      mainContent.addEventListener('scroll', updateCanvasRect);
     }
-    window.addEventListener('resize', updateRect);
+    window.addEventListener('resize', updateCanvasRect);
 
     // Also observe sidebar changes with MutationObserver
-    const observer = new MutationObserver(updateRect);
+    const observer = new MutationObserver(updateCanvasRect);
     const sidebar = document.querySelector('.sidebar-panel');
     if (sidebar) {
       observer.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
@@ -55,27 +70,37 @@ export const HostCursor = ({ position }) => {
 
     return () => {
       if (mainContent) {
-        mainContent.removeEventListener('scroll', updateRect);
+        mainContent.removeEventListener('scroll', updateCanvasRect);
       }
-      window.removeEventListener('resize', updateRect);
+      window.removeEventListener('resize', updateCanvasRect);
       observer.disconnect();
     };
-  }, []);
+  }, [updateCanvasRect]);
+
+  // Update canvas rect when page changes
+  useEffect(() => {
+    if (position?.pageIndex !== lastPageIndex.current) {
+      lastPageIndex.current = position?.pageIndex;
+      updateCanvasRect();
+    }
+  }, [position?.pageIndex, updateCanvasRect]);
 
   const lerp = useCallback((start, end, factor) => {
     return start + (end - start) * factor;
   }, []);
 
-  // Calculate viewport position from main-content relative position
-  const getViewportPosition = useCallback((relX, relY) => {
-    if (!mainContentRect) {
-      return { x: relX, y: relY };
+  // Convert normalized coordinates to viewport position
+  const getViewportPosition = useCallback((normalizedX, normalizedY) => {
+    if (!canvasRect) {
+      return { x: 0, y: 0 };
     }
+    // Convert normalized (0-1) coordinates to viewport pixels
+    // based on the viewer's canvas position and size
     return {
-      x: mainContentRect.left + relX - mainContentRect.scrollLeft,
-      y: mainContentRect.top + relY - mainContentRect.scrollTop
+      x: canvasRect.left + (normalizedX * canvasRect.width),
+      y: canvasRect.top + (normalizedY * canvasRect.height)
     };
-  }, [mainContentRect]);
+  }, [canvasRect]);
 
   const animate = useCallback(() => {
     const dx = targetPos.current.x - currentPos.current.x;
@@ -83,7 +108,7 @@ export const HostCursor = ({ position }) => {
     const distance = Math.sqrt(dx * dx + dy * dy);
 
     if (distance > THRESHOLD) {
-      // Interpolate towards target
+      // Interpolate towards target (using normalized coordinates)
       currentPos.current.x = lerp(currentPos.current.x, targetPos.current.x, LERP_FACTOR);
       currentPos.current.y = lerp(currentPos.current.y, targetPos.current.y, LERP_FACTOR);
 
@@ -108,18 +133,18 @@ export const HostCursor = ({ position }) => {
   }, [lerp, LERP_FACTOR, THRESHOLD, getViewportPosition]);
 
   useEffect(() => {
-    if (!position || position.x == null || position.y == null) {
+    if (!position || position.normalizedX == null || position.normalizedY == null) {
       return;
     }
 
-    // Update target position (these are main-content relative coordinates)
-    targetPos.current = { x: position.x, y: position.y };
+    // Update target position (these are normalized coordinates)
+    targetPos.current = { x: position.normalizedX, y: position.normalizedY };
 
     // Initialize current position on first render
     if (currentPos.current.x === 0 && currentPos.current.y === 0) {
-      currentPos.current = { x: position.x, y: position.y };
+      currentPos.current = { x: position.normalizedX, y: position.normalizedY };
       if (cursorRef.current) {
-        const viewportPos = getViewportPosition(position.x, position.y);
+        const viewportPos = getViewportPosition(position.normalizedX, position.normalizedY);
         cursorRef.current.style.transform = `translate3d(${viewportPos.x - 2}px, ${viewportPos.y - 2}px, 0)`;
       }
     }
@@ -137,13 +162,13 @@ export const HostCursor = ({ position }) => {
     };
   }, [position, animate, getViewportPosition]);
 
-  // Update cursor position when mainContentRect changes (sidebar toggle, scroll, resize)
+  // Update cursor position when canvasRect changes (resize, scroll, sidebar toggle)
   useEffect(() => {
     if (cursorRef.current && currentPos.current) {
       const viewportPos = getViewportPosition(currentPos.current.x, currentPos.current.y);
       cursorRef.current.style.transform = `translate3d(${viewportPos.x - 2}px, ${viewportPos.y - 2}px, 0)`;
     }
-  }, [mainContentRect, getViewportPosition]);
+  }, [canvasRect, getViewportPosition]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -154,11 +179,11 @@ export const HostCursor = ({ position }) => {
     };
   }, []);
 
-  if (!position || position.x == null || position.y == null) {
+  if (!position || position.normalizedX == null || position.normalizedY == null) {
     return null;
   }
 
-  const initialViewportPos = getViewportPosition(position.x, position.y);
+  const initialViewportPos = getViewportPosition(position.normalizedX, position.normalizedY);
 
   return (
     <div
