@@ -54,6 +54,8 @@ const App = () => {
   // Shape styling state
   const [shapeStrokeColor, setShapeStrokeColor] = useState('#000000');
   const [shapeStrokeWidth, setShapeStrokeWidth] = useState(2);
+  const [shapeFillColor, setShapeFillColor] = useState('transparent');
+  const [shapeFillEnabled, setShapeFillEnabled] = useState(false);
 
   // Preset colors for shapes
   const SHAPE_PRESET_COLORS = [
@@ -847,6 +849,7 @@ const wrappedMouseUp = (e) => {
     pushSnapshotToUndo,
     shapeStrokeColor,
     shapeStrokeWidth,
+    shapeFillColor: shapeFillEnabled ? shapeFillColor : null,
   });
 
   if (shapeHandled) return; // Shape handled it, don't propagate
@@ -1587,6 +1590,74 @@ return (
 
             <div className="panel-divider" />
 
+            {/* Fill Color Section */}
+            <div className="panel-section shape-color-section">
+              <div className="shape-color-header">
+                <div className="panel-section-label" style={{ marginBottom: 0 }}>Fill Color</div>
+                <div className="shape-color-current">
+                  <div
+                    className="shape-color-preview"
+                    style={{
+                      backgroundColor: shapeFillEnabled ? shapeFillColor : 'transparent',
+                      backgroundImage: !shapeFillEnabled ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                      backgroundSize: '8px 8px',
+                      backgroundPosition: '0 0, 0 4px, 4px -4px, -4px 0px'
+                    }}
+                  />
+                  <span className="shape-color-hex">{shapeFillEnabled ? shapeFillColor.toUpperCase() : 'NONE'}</span>
+                </div>
+              </div>
+
+              {/* Fill toggle */}
+              <div className="panel-toggle" style={{ marginBottom: 12 }}>
+                <span className="panel-toggle-label">Enable Fill</span>
+                <input
+                  type="checkbox"
+                  checked={shapeFillEnabled}
+                  onChange={isViewer ? viewOnly : (e) => {
+                    setShapeFillEnabled(e.target.checked);
+                    if (e.target.checked && shapeFillColor === 'transparent') {
+                      setShapeFillColor('#3b82f6');
+                    }
+                  }}
+                  disabled={isViewer}
+                />
+              </div>
+
+              {/* Color swatches - only show when fill is enabled */}
+              {shapeFillEnabled && (
+                <>
+                  <div className="shape-color-swatches">
+                    {SHAPE_PRESET_COLORS.map((color) => (
+                      <button
+                        key={`fill-${color}`}
+                        type="button"
+                        className={`shape-color-swatch ${shapeFillColor === color ? 'active' : ''}`}
+                        style={{ backgroundColor: color }}
+                        onClick={isViewer ? viewOnly : () => setShapeFillColor(color)}
+                        disabled={isViewer}
+                        title={color}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Custom fill color picker */}
+                  <div className="shape-custom-color-row">
+                    <input
+                      type="color"
+                      className="shape-custom-color-input"
+                      value={shapeFillColor === 'transparent' ? '#3b82f6' : shapeFillColor}
+                      onChange={isViewer ? viewOnly : (e) => setShapeFillColor(e.target.value)}
+                      disabled={isViewer}
+                    />
+                    <span className="shape-custom-color-label">Custom fill</span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="panel-divider" />
+
             {/* Selected Shape Actions */}
             <div className="panel-section">
               <div className="panel-section-label">Selected Shape</div>
@@ -1827,9 +1898,35 @@ return (
       >
         ←
       </button>
-      <span className="page-indicator">
-        Page {activePage + 1} of {pageList.length}
-      </span>
+      <div className="page-jump-container">
+        <span className="page-jump-label">Page</span>
+        <input
+          type="text"
+          className="page-jump-input"
+          value={activePage + 1}
+          onChange={(e) => {
+            const val = e.target.value;
+            // Allow empty input while typing
+            if (val === '') return;
+            // Only accept digits
+            if (!/^\d+$/.test(val)) return;
+            const pageNum = parseInt(val, 10);
+            // Validate range and navigate
+            if (pageNum >= 1 && pageNum <= pageList.length) {
+              setActivePage(pageNum - 1);
+            }
+          }}
+          onFocus={(e) => e.target.select()}
+          onBlur={(e) => {
+            // Reset to current page if invalid on blur
+            e.target.value = activePage + 1;
+          }}
+          disabled={isViewer}
+          min={1}
+          max={pageList.length}
+        />
+        <span className="page-jump-total">of {pageList.length}</span>
+      </div>
       <button
         className="page-btn"
         title="Next Page"

@@ -138,7 +138,8 @@ export function useShapes() {
     canvasWidth: number,
     canvasHeight: number,
     strokeColor: string = "#000000",
-    strokeWidth: number = 2
+    strokeWidth: number = 2,
+    fillColor: string | null = null
   ) => {
     if (!shapeCreationStart || !shapeCreationCurrent || !activeShapeTool) {
       setIsCreatingShape(false);
@@ -189,6 +190,7 @@ export function useShapes() {
         points: normalizedPoints,
         strokeColor,
         strokeWidth,
+        fillColor,
         index: pageIndex,
       };
 
@@ -232,6 +234,7 @@ export function useShapes() {
       heightNorm: height / canvasHeight,
       strokeColor,
       strokeWidth,
+      fillColor,
       index: pageIndex,
     };
 

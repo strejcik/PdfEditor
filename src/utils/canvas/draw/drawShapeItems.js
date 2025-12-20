@@ -49,10 +49,17 @@ export function drawShapeItems(ctx, rect, pageIndex, state) {
     // Set style
     ctx.strokeStyle = item.strokeColor || "#000000";
     ctx.lineWidth = item.strokeWidth || 2;
+    const hasFill = item.fillColor && item.fillColor !== 'transparent' && item.fillColor !== null;
+    if (hasFill) {
+      ctx.fillStyle = item.fillColor;
+    }
 
     // Draw based on type
     switch (item.type) {
       case "rectangle":
+        if (hasFill) {
+          ctx.fillRect(x, y, w, h);
+        }
         ctx.strokeRect(x, y, w, h);
         break;
 
@@ -64,6 +71,9 @@ export function drawShapeItems(ctx, rect, pageIndex, state) {
 
         ctx.beginPath();
         ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+        if (hasFill) {
+          ctx.fill();
+        }
         ctx.stroke();
         break;
 
@@ -91,6 +101,9 @@ export function drawShapeItems(ctx, rect, pageIndex, state) {
         ctx.lineTo(x, y + h); // Bottom left
         ctx.lineTo(x + w, y + h); // Bottom right
         ctx.closePath();
+        if (hasFill) {
+          ctx.fill();
+        }
         ctx.stroke();
         break;
 
@@ -102,6 +115,9 @@ export function drawShapeItems(ctx, rect, pageIndex, state) {
         ctx.lineTo(x + w / 2, y + h); // Bottom
         ctx.lineTo(x, y + h / 2); // Left
         ctx.closePath();
+        if (hasFill) {
+          ctx.fill();
+        }
         ctx.stroke();
         break;
 

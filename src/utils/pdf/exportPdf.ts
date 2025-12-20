@@ -197,14 +197,18 @@ export async function saveAllPagesAsPDF({
       });
     }
 
-    // ---- SHAPES (rectangles, circles, lines) ----
+    // ---- SHAPES (rectangles, circles, lines, arrows, triangles, diamonds, freehand) ----
     for (const item of shapes) {
       const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
       const drawW = Number(item.width) || Math.round((item.widthNorm ?? 0) * W);
       const drawH = Number(item.height) || Math.round((item.heightNorm ?? 0) * H);
 
-      const color = hexToRgb(item.strokeColor || "#000000");
+      const strokeColor = hexToRgb(item.strokeColor || "#000000");
       const borderWidth = Number(item.strokeWidth) || 2;
+
+      // Handle fill color
+      const hasFill = item.fillColor && item.fillColor !== 'transparent' && item.fillColor !== null;
+      const fillColor = hasFill ? hexToRgb(item.fillColor) : undefined;
 
       if (item.type === "rectangle") {
         pdfPage.drawRectangle({
@@ -212,8 +216,9 @@ export async function saveAllPagesAsPDF({
           y: H - yTop - drawH,
           width: drawW,
           height: drawH,
-          borderColor: color,
+          borderColor: strokeColor,
           borderWidth: borderWidth,
+          color: fillColor,
         });
       } else if (item.type === "circle") {
         // pdf-lib uses ellipse, not circle
@@ -222,17 +227,156 @@ export async function saveAllPagesAsPDF({
           y: H - yTop - drawH / 2,
           xScale: drawW / 2,
           yScale: drawH / 2,
-          borderColor: color,
+          borderColor: strokeColor,
           borderWidth: borderWidth,
+          color: fillColor,
         });
       } else if (item.type === "line") {
-        // Draw line
+        // Draw line (no fill for lines)
         pdfPage.drawLine({
           start: { x: xTop, y: H - yTop },
           end: { x: xTop + drawW, y: H - (yTop + drawH) },
-          color: color,
+          color: strokeColor,
           thickness: borderWidth,
         });
+      } else if (item.type === "arrow") {
+        // Draw line
+        const startX = xTop;
+        const startY = H - yTop;
+        const endX = xTop + drawW;
+        const endY = H - (yTop + drawH);
+
+        pdfPage.drawLine({
+          start: { x: startX, y: startY },
+          end: { x: endX, y: endY },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+
+        // Draw arrowhead
+        const angle = Math.atan2(endY - startY, endX - startX);
+        const arrowSize = 15;
+        const arrowAngle = Math.PI / 6;
+
+        const x3 = endX - arrowSize * Math.cos(angle - arrowAngle);
+        const y3 = endY - arrowSize * Math.sin(angle - arrowAngle);
+        const x4 = endX - arrowSize * Math.cos(angle + arrowAngle);
+        const y4 = endY - arrowSize * Math.sin(angle + arrowAngle);
+
+        pdfPage.drawLine({
+          start: { x: endX, y: endY },
+          end: { x: x3, y: y3 },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+        pdfPage.drawLine({
+          start: { x: endX, y: endY },
+          end: { x: x4, y: y4 },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+      } else if (item.type === "triangle") {
+        // Draw triangle - coordinates in PDF space (Y flipped)
+        const topX = xTop + drawW / 2;
+        const topY = H - yTop;
+        const bottomLeftX = xTop;
+        const bottomLeftY = H - yTop - drawH;
+        const bottomRightX = xTop + drawW;
+        const bottomRightY = H - yTop - drawH;
+
+        // Draw fill first (if enabled) using a polygon approximation
+        if (hasFill) {
+          // Use SVG path for filled triangle - path relative to origin
+          const path = `M ${drawW / 2},0 L 0,${drawH} L ${drawW},${drawH} Z`;
+          pdfPage.drawSvgPath(path, {
+            x: xTop,
+            y: H - yTop - drawH,
+            color: fillColor,
+          });
+        }
+
+        // Draw stroke lines
+        pdfPage.drawLine({
+          start: { x: topX, y: topY },
+          end: { x: bottomLeftX, y: bottomLeftY },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+        pdfPage.drawLine({
+          start: { x: bottomLeftX, y: bottomLeftY },
+          end: { x: bottomRightX, y: bottomRightY },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+        pdfPage.drawLine({
+          start: { x: bottomRightX, y: bottomRightY },
+          end: { x: topX, y: topY },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+      } else if (item.type === "diamond") {
+        // Draw diamond - coordinates in PDF space (Y flipped)
+        const topX = xTop + drawW / 2;
+        const topY = H - yTop;
+        const rightX = xTop + drawW;
+        const rightY = H - yTop - drawH / 2;
+        const bottomX = xTop + drawW / 2;
+        const bottomY = H - yTop - drawH;
+        const leftX = xTop;
+        const leftY = H - yTop - drawH / 2;
+
+        // Draw fill first (if enabled)
+        if (hasFill) {
+          // Use SVG path for filled diamond - path relative to origin
+          const path = `M ${drawW / 2},0 L ${drawW},${drawH / 2} L ${drawW / 2},${drawH} L 0,${drawH / 2} Z`;
+          pdfPage.drawSvgPath(path, {
+            x: xTop,
+            y: H - yTop - drawH,
+            color: fillColor,
+          });
+        }
+
+        // Draw stroke lines
+        pdfPage.drawLine({
+          start: { x: topX, y: topY },
+          end: { x: rightX, y: rightY },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+        pdfPage.drawLine({
+          start: { x: rightX, y: rightY },
+          end: { x: bottomX, y: bottomY },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+        pdfPage.drawLine({
+          start: { x: bottomX, y: bottomY },
+          end: { x: leftX, y: leftY },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+        pdfPage.drawLine({
+          start: { x: leftX, y: leftY },
+          end: { x: topX, y: topY },
+          color: strokeColor,
+          thickness: borderWidth,
+        });
+      } else if (item.type === "freehand" && item.points && item.points.length > 1) {
+        // Draw freehand as connected lines
+        const points = item.points;
+        for (let j = 0; j < points.length - 1; j++) {
+          const startX = points[j].x * W;
+          const startY = H - points[j].y * H;
+          const endX = points[j + 1].x * W;
+          const endY = H - points[j + 1].y * H;
+
+          pdfPage.drawLine({
+            start: { x: startX, y: startY },
+            end: { x: endX, y: endY },
+            color: strokeColor,
+            thickness: borderWidth,
+          });
+        }
       }
 
       pageManifest.shapes.push({
@@ -243,6 +387,7 @@ export async function saveAllPagesAsPDF({
         heightNorm: +((drawH) / H).toFixed(6),
         strokeColor: item.strokeColor || "#000000",
         strokeWidth: borderWidth,
+        fillColor: item.fillColor || null,
         index: item.index,
       });
     }

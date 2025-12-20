@@ -22,6 +22,7 @@ export interface ShapeItem {
   // Styling (MVP: simple defaults)
   strokeColor: string;      // default: "#000000"
   strokeWidth: number;      // default: 2
+  fillColor?: string | null; // default: null (no fill)
 
   // Page association
   index: number;            // which page (0-based)
