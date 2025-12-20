@@ -396,6 +396,8 @@ export function handleShapeMouseUp(e, params) {
     setIsDraggingMultipleShapes,
     setIsResizingShape,
     pushSnapshotToUndo,
+    shapeStrokeColor = "#000000",
+    shapeStrokeWidth = 2,
   } = params;
 
   // Priority 1: If creating a shape, finish creation
@@ -406,7 +408,7 @@ export function handleShapeMouseUp(e, params) {
     // Take snapshot BEFORE creating shape (for undo)
     pushSnapshotToUndo(activePage);
 
-    finishCreatingShape(activePage, rect.width, rect.height);
+    finishCreatingShape(activePage, rect.width, rect.height, shapeStrokeColor, shapeStrokeWidth);
     return true; // Handled
   }
 

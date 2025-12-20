@@ -133,7 +133,13 @@ export function useShapes() {
   };
 
   // Finish creating shape
-  const finishCreatingShape = (pageIndex: number, canvasWidth: number, canvasHeight: number) => {
+  const finishCreatingShape = (
+    pageIndex: number,
+    canvasWidth: number,
+    canvasHeight: number,
+    strokeColor: string = "#000000",
+    strokeWidth: number = 2
+  ) => {
     if (!shapeCreationStart || !shapeCreationCurrent || !activeShapeTool) {
       setIsCreatingShape(false);
       setShapeCreationStart(null);
@@ -181,8 +187,8 @@ export function useShapes() {
         widthNorm: width / canvasWidth,
         heightNorm: height / canvasHeight,
         points: normalizedPoints,
-        strokeColor: "#000000",
-        strokeWidth: 2,
+        strokeColor,
+        strokeWidth,
         index: pageIndex,
       };
 
@@ -224,8 +230,8 @@ export function useShapes() {
       yNormTop: y1 / canvasHeight,
       widthNorm: width / canvasWidth,
       heightNorm: height / canvasHeight,
-      strokeColor: "#000000",
-      strokeWidth: 2,
+      strokeColor,
+      strokeWidth,
       index: pageIndex,
     };
 

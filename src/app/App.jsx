@@ -51,6 +51,24 @@ const App = () => {
   // Active panel state for icon rail navigation
   const [activePanel, setActivePanel] = useState(null);
 
+  // Shape styling state
+  const [shapeStrokeColor, setShapeStrokeColor] = useState('#000000');
+  const [shapeStrokeWidth, setShapeStrokeWidth] = useState(2);
+
+  // Preset colors for shapes
+  const SHAPE_PRESET_COLORS = [
+    '#000000', // Black
+    '#3b82f6', // Blue
+    '#ef4444', // Red
+    '#22c55e', // Green
+    '#f59e0b', // Amber
+    '#8b5cf6', // Violet
+    '#ec4899', // Pink
+    '#06b6d4', // Cyan
+    '#84cc16', // Lime
+    '#6b7280', // Gray
+  ];
+
   // Toggle panel - if same panel clicked, close it
   const togglePanel = (panelName) => {
     setActivePanel(prev => prev === panelName ? null : panelName);
@@ -827,6 +845,8 @@ const wrappedMouseUp = (e) => {
     setIsDraggingMultipleShapes,
     setIsResizingShape,
     pushSnapshotToUndo,
+    shapeStrokeColor,
+    shapeStrokeWidth,
   });
 
   if (shapeHandled) return; // Shape handled it, don't propagate
@@ -1406,60 +1426,168 @@ return (
             <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
           </div>
           <div className="panel-content">
+            {/* Shape Tools Grid */}
             <div className="panel-section">
               <div className="panel-section-label">Shape Tools</div>
-              <div className="tool-grid">
+              <div className="tool-grid-shapes">
                 <button
-                  className={`tool-grid-btn ${activeShapeTool === null ? 'active' : ''}`}
+                  className={`tool-grid-btn-lg ${activeShapeTool === null ? 'active' : ''}`}
                   title="Select"
                   onClick={isViewer ? viewOnly : () => setActiveShapeTool(null)}
                   disabled={isViewer}
                 >
-                  👆
+                  <span>👆</span>
+                  <span className="tool-btn-label">Select</span>
                 </button>
                 <button
-                  className={`tool-grid-btn ${activeShapeTool === 'rectangle' ? 'active' : ''}`}
+                  className={`tool-grid-btn-lg ${activeShapeTool === 'rectangle' ? 'active' : ''}`}
                   title="Rectangle"
                   onClick={isViewer ? viewOnly : () => setActiveShapeTool('rectangle')}
                   disabled={isViewer}
                 >
-                  ▢
+                  <span>▢</span>
+                  <span className="tool-btn-label">Rect</span>
                 </button>
                 <button
-                  className={`tool-grid-btn ${activeShapeTool === 'circle' ? 'active' : ''}`}
+                  className={`tool-grid-btn-lg ${activeShapeTool === 'circle' ? 'active' : ''}`}
                   title="Circle"
                   onClick={isViewer ? viewOnly : () => setActiveShapeTool('circle')}
                   disabled={isViewer}
                 >
-                  ○
+                  <span>○</span>
+                  <span className="tool-btn-label">Circle</span>
                 </button>
                 <button
-                  className={`tool-grid-btn ${activeShapeTool === 'line' ? 'active' : ''}`}
+                  className={`tool-grid-btn-lg ${activeShapeTool === 'line' ? 'active' : ''}`}
                   title="Line"
                   onClick={isViewer ? viewOnly : () => setActiveShapeTool('line')}
                   disabled={isViewer}
                 >
-                  ╱
+                  <span>╱</span>
+                  <span className="tool-btn-label">Line</span>
                 </button>
                 <button
-                  className={`tool-grid-btn ${activeShapeTool === 'arrow' ? 'active' : ''}`}
+                  className={`tool-grid-btn-lg ${activeShapeTool === 'arrow' ? 'active' : ''}`}
                   title="Arrow"
                   onClick={isViewer ? viewOnly : () => setActiveShapeTool('arrow')}
                   disabled={isViewer}
                 >
-                  →
+                  <span>→</span>
+                  <span className="tool-btn-label">Arrow</span>
                 </button>
                 <button
-                  className={`tool-grid-btn ${activeShapeTool === 'freehand' ? 'active' : ''}`}
+                  className={`tool-grid-btn-lg ${activeShapeTool === 'triangle' ? 'active' : ''}`}
+                  title="Triangle"
+                  onClick={isViewer ? viewOnly : () => setActiveShapeTool('triangle')}
+                  disabled={isViewer}
+                >
+                  <span>△</span>
+                  <span className="tool-btn-label">Triangle</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeShapeTool === 'diamond' ? 'active' : ''}`}
+                  title="Diamond"
+                  onClick={isViewer ? viewOnly : () => setActiveShapeTool('diamond')}
+                  disabled={isViewer}
+                >
+                  <span>◇</span>
+                  <span className="tool-btn-label">Diamond</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeShapeTool === 'freehand' ? 'active' : ''}`}
                   title="Freehand"
                   onClick={isViewer ? viewOnly : () => setActiveShapeTool('freehand')}
                   disabled={isViewer}
                 >
-                  ✏️
+                  <span>✏️</span>
+                  <span className="tool-btn-label">Draw</span>
                 </button>
+              </div>
+
+              {/* Active tool indicator */}
+              {activeShapeTool && (
+                <div className="shape-tool-active-indicator">
+                  <span>✓</span>
+                  <strong>{activeShapeTool.charAt(0).toUpperCase() + activeShapeTool.slice(1)}</strong>
+                  <span>— Click and drag on canvas</span>
+                </div>
+              )}
+            </div>
+
+            <div className="panel-divider" />
+
+            {/* Stroke Width Section */}
+            <div className="panel-section stroke-width-section">
+              <div className="stroke-width-header">
+                <div className="panel-section-label" style={{ marginBottom: 0 }}>Stroke Width</div>
+                <span className="stroke-width-value">{shapeStrokeWidth}px</span>
+              </div>
+              <input
+                type="range"
+                className="stroke-slider"
+                min="1"
+                max="20"
+                value={shapeStrokeWidth}
+                onChange={isViewer ? viewOnly : (e) => setShapeStrokeWidth(parseInt(e.target.value, 10))}
+                disabled={isViewer}
+              />
+              <div className="stroke-preview">
+                <div
+                  className="stroke-preview-line"
+                  style={{
+                    height: `${shapeStrokeWidth}px`,
+                    backgroundColor: shapeStrokeColor,
+                  }}
+                />
               </div>
             </div>
 
+            <div className="panel-divider" />
+
+            {/* Color Section */}
+            <div className="panel-section shape-color-section">
+              <div className="shape-color-header">
+                <div className="panel-section-label" style={{ marginBottom: 0 }}>Stroke Color</div>
+                <div className="shape-color-current">
+                  <div
+                    className="shape-color-preview"
+                    style={{ backgroundColor: shapeStrokeColor }}
+                  />
+                  <span className="shape-color-hex">{shapeStrokeColor.toUpperCase()}</span>
+                </div>
+              </div>
+
+              {/* Color swatches */}
+              <div className="shape-color-swatches">
+                {SHAPE_PRESET_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className={`shape-color-swatch ${shapeStrokeColor === color ? 'active' : ''}`}
+                    style={{ backgroundColor: color }}
+                    onClick={isViewer ? viewOnly : () => setShapeStrokeColor(color)}
+                    disabled={isViewer}
+                    title={color}
+                  />
+                ))}
+              </div>
+
+              {/* Custom color picker */}
+              <div className="shape-custom-color-row">
+                <input
+                  type="color"
+                  className="shape-custom-color-input"
+                  value={shapeStrokeColor}
+                  onChange={isViewer ? viewOnly : (e) => setShapeStrokeColor(e.target.value)}
+                  disabled={isViewer}
+                />
+                <span className="shape-custom-color-label">Custom color</span>
+              </div>
+            </div>
+
+            <div className="panel-divider" />
+
+            {/* Selected Shape Actions */}
             <div className="panel-section">
               <div className="panel-section-label">Selected Shape</div>
               <button
@@ -1671,6 +1799,26 @@ return (
 
     {/* Bottom Bar - Page Navigation */}
     <div className="bottom-bar">
+      <button
+        className="page-btn page-btn-remove"
+        title="Remove Current Page"
+        onClick={isViewer ? viewOnly : () => removePage({
+          setSelectedTextIndexes, setSelectedTextIndex, setIsTextSelected,
+          setSelectionStart, setSelectionEnd, setIsSelecting, setIsDragging,
+          setIsImageDragging, setDraggedImageIndex, setResizingImageIndex,
+          setTextItems, setImageItems, saveTextItemsToIndexedDB, saveImageItemsToIndexedDB,
+          purgeUndoRedoForRemovedPage, textItems, imageItems, isTextBoxEditEnabled,
+          textBox, activePage, isMultilineMode, canvasRefs, mlConfig, mlCaret,
+          mlAnchor, mlPreferredX, mlText, mlCaretBlink, isMlDragging, fontSize,
+          wrapTextPreservingNewlinesResponsive, resolveTextLayout, layoutMultiline,
+          setMlPreferredX, showGrid, APP_FONT_FAMILY: selectedFont || APP_FONT_FAMILY,
+          drawCanvas,
+        })}
+        disabled={isViewer || pageList.length <= 1}
+      >
+        −
+      </button>
+      <div className="bottom-bar-divider" />
       <button
         className="page-btn"
         title="Previous Page"
