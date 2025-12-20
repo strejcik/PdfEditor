@@ -171,7 +171,7 @@ export function useTextItems() {
 
 const openTextItemsDB = () => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("PdfEditorDB", 5);
+    const request = indexedDB.open("PdfEditorDB", 7);
     request.onupgradeneeded = (event:any) => {
       const db = event.target.result;
       if (!db.objectStoreNames.contains("textItems")) {
@@ -185,6 +185,12 @@ const openTextItemsDB = () => {
       }
       if (!db.objectStoreNames.contains("shapes")) {
         db.createObjectStore("shapes", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("formFields")) {
+        db.createObjectStore("formFields", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("credentials")) {
+        db.createObjectStore("credentials", { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);

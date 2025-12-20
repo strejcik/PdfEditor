@@ -1,9 +1,9 @@
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { loadArrayBuffer } from "../files/loadArrayBuffer";
 import { resolveTopLeft } from "../canvas/resolveTopLeft";
 import { clipToPage, unclip } from "./clipping";
-import { hexToRgb } from "../colors/hexToRgb";
+import { hexToRgb, hexToRgbValues } from "../colors/hexToRgb";
 import { isSvgDataUri } from "../images/isSvgDataUri";
 import { isJpegLike } from "../images/isJpegLike";
 import { rasterizeSvgDataUriToPngBytes } from "../images/rasterizeSvgDataUriToPngBytes";
@@ -113,8 +113,9 @@ export async function saveAllPagesAsPDF({
     const textItems = Array.isArray(page.textItems) ? page.textItems : [];
     const imageItems = Array.isArray(page.imageItems) ? page.imageItems : [];
     const shapes = Array.isArray(page.shapes) ? page.shapes : [];
+    const formFieldsData = Array.isArray(page.formFields) ? page.formFields : [];
 
-    const pageManifest = { texts: [] as any[], images: [] as any[], shapes: [] as any[] };
+    const pageManifest = { texts: [] as any[], images: [] as any[], shapes: [] as any[], formFields: [] as any[] };
 
     // **Clip to the page rectangle** so overflow matches canvas behavior
     clipToPage(pdfPage, W, H);
@@ -394,6 +395,151 @@ export async function saveAllPagesAsPDF({
 
     // End clipping for this page
     unclip(pdfPage);
+
+    // ---- FORM FIELDS (interactive PDF form fields) ----
+    const form = pdfDoc.getForm();
+
+    for (const field of formFieldsData) {
+      const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(field, W, H);
+      const fieldW = Number(field.width) || Math.round((field.widthNorm ?? 0) * W);
+      const fieldH = Number(field.height) || Math.round((field.heightNorm ?? 0) * H);
+
+      // PDF Y coordinate is bottom-up
+      const fieldY = H - yTop - fieldH;
+
+      // Get colors
+      const borderColor = hexToRgb(field.borderColor || "#374151");
+      const bgColor = hexToRgb(field.backgroundColor || "#ffffff");
+      const textColorVal = hexToRgbValues(field.textColor || "#000000");
+
+      try {
+        if (field.type === "textInput") {
+          const textField = form.createTextField(field.fieldName);
+          // Use defaultValue if set, otherwise use placeholder as initial text
+          const initialText = field.defaultValue || field.placeholder || "";
+          textField.setText(initialText);
+          // Add to page first (creates default appearance)
+          textField.addToPage(pdfPage, {
+            x: xTop,
+            y: fieldY,
+            width: fieldW,
+            height: fieldH,
+            borderColor: borderColor,
+            backgroundColor: bgColor,
+            borderWidth: field.borderWidth || 1,
+          });
+          // Set font size AFTER addToPage (requires default appearance to exist)
+          try {
+            const fontSize = field.fontSize || 14;
+            textField.setFontSize(fontSize);
+          } catch (fontErr) {
+            console.warn("Could not set font size for textInput:", field.fieldName, fontErr);
+          }
+        } else if (field.type === "textarea") {
+          const textField = form.createTextField(field.fieldName);
+          // Enable multi-line for textarea
+          textField.enableMultiline();
+          // Use defaultValue if set, otherwise use placeholder as initial text
+          const initialText = field.defaultValue || field.placeholder || "";
+          textField.setText(initialText);
+          // Add to page first (creates default appearance)
+          textField.addToPage(pdfPage, {
+            x: xTop,
+            y: fieldY,
+            width: fieldW,
+            height: fieldH,
+            borderColor: borderColor,
+            backgroundColor: bgColor,
+            borderWidth: field.borderWidth || 1,
+          });
+          // Set font size AFTER addToPage (requires default appearance to exist)
+          try {
+            const fontSize = field.fontSize || 14;
+            textField.setFontSize(fontSize);
+          } catch (fontErr) {
+            console.warn("Could not set font size for textarea:", field.fieldName, fontErr);
+          }
+        } else if (field.type === "checkbox") {
+          const checkbox = form.createCheckBox(field.fieldName);
+          if (field.defaultValue === "true") {
+            checkbox.check();
+          }
+          checkbox.addToPage(pdfPage, {
+            x: xTop,
+            y: fieldY,
+            width: fieldW,
+            height: fieldH,
+            borderColor: borderColor,
+            backgroundColor: bgColor,
+            borderWidth: field.borderWidth || 1,
+          });
+        } else if (field.type === "radio") {
+          // Radio buttons need a group
+          const groupName = field.groupName || `radio_${field.fieldName}`;
+          let radioGroup;
+          try {
+            radioGroup = form.getRadioGroup(groupName);
+          } catch {
+            radioGroup = form.createRadioGroup(groupName);
+          }
+          radioGroup.addOptionToPage(field.fieldName, pdfPage, {
+            x: xTop,
+            y: fieldY,
+            width: fieldW,
+            height: fieldH,
+            borderColor: borderColor,
+            backgroundColor: bgColor,
+            borderWidth: field.borderWidth || 1,
+          });
+          if (field.defaultValue === "true") {
+            radioGroup.select(field.fieldName);
+          }
+        } else if (field.type === "dropdown") {
+          const dropdown = form.createDropdown(field.fieldName);
+          const options = Array.isArray(field.options) ? field.options : ["Option 1", "Option 2", "Option 3"];
+          dropdown.setOptions(options);
+          if (field.defaultValue && options.includes(field.defaultValue)) {
+            dropdown.select(field.defaultValue);
+          }
+          // Add to page first (creates default appearance)
+          dropdown.addToPage(pdfPage, {
+            x: xTop,
+            y: fieldY,
+            width: fieldW,
+            height: fieldH,
+            borderColor: borderColor,
+            backgroundColor: bgColor,
+            borderWidth: field.borderWidth || 1,
+          });
+          // Set font size AFTER addToPage (requires default appearance to exist)
+          try {
+            const fontSize = field.fontSize || 14;
+            dropdown.setFontSize(fontSize);
+          } catch (fontErr) {
+            console.warn("Could not set font size for dropdown:", field.fieldName, fontErr);
+          }
+        }
+
+        pageManifest.formFields.push({
+          type: field.type,
+          fieldName: field.fieldName,
+          xNorm: +xNorm.toFixed(6),
+          yNormTop: +yNormTop.toFixed(6),
+          widthNorm: +((fieldW) / W).toFixed(6),
+          heightNorm: +((fieldH) / H).toFixed(6),
+          index: i,
+        });
+      } catch (e) {
+        console.warn("Form field creation failed:", field.fieldName, e);
+      }
+    }
+
+    // Update field appearances with the embedded font
+    try {
+      form.updateFieldAppearances(pdfFont);
+    } catch (e) {
+      console.warn("Failed to update form field appearances:", e);
+    }
 
     manifest.pages.push(pageManifest);
   }

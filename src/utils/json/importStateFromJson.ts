@@ -5,11 +5,13 @@ type ImportOpts = {
   setTextItems?: (next: any[]) => void;
   setImageItems?: (next: any[]) => void;
   setShapeItems?: (next: any[]) => void;
+  setFormFields?: (next: any[]) => void;
 
   // IndexedDB save functions
   saveTextItemsToIndexedDB?: (items: any[]) => Promise<void>;
   saveImageItemsToIndexedDB?: (items: any[]) => Promise<void>;
   saveShapeItemsToIndexedDB?: (items: any[]) => Promise<void>;
+  saveFormFieldsToIndexedDB?: (items: any[]) => Promise<void>;
   savePagesToIndexedDB?: (pages: any[]) => Promise<void>;
 };
 
@@ -30,10 +32,11 @@ const isPageShape = (p: any) =>
 export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   if (!file) throw new Error("No file provided");
   const {
-    setPages, setTextItems, setImageItems, setShapeItems,
+    setPages, setTextItems, setImageItems, setShapeItems, setFormFields,
     saveTextItemsToIndexedDB,
     saveImageItemsToIndexedDB,
     saveShapeItemsToIndexedDB,
+    saveFormFieldsToIndexedDB,
     savePagesToIndexedDB,
   } = opts;
 
@@ -43,6 +46,7 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
     textItems?: any[];
     imageItems?: any[];
     shapeItems?: any[];
+    formFields?: any[];
   }>(text);
 
   // 1) Extract arrays (tolerate missing fields)
@@ -50,6 +54,7 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   const textItems = Array.isArray(payload.textItems) ? payload.textItems : [];
   const imageItems = Array.isArray(payload.imageItems) ? payload.imageItems : [];
   const shapeItems = Array.isArray(payload.shapeItems) ? payload.shapeItems : [];
+  const formFields = Array.isArray(payload.formFields) ? payload.formFields : [];
 
   // 2) If pages malformed/missing, rebuild from flat arrays
   if (!pages || !pages.every(isPageShape)) {
@@ -57,24 +62,30 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
       -1,
       ...textItems.map((t) => Number.isFinite(t?.index) ? Number(t.index) : -1),
       ...imageItems.map((i) => Number.isFinite(i?.index) ? Number(i.index) : -1),
-      ...shapeItems.map((s) => Number.isFinite(s?.index) ? Number(s.index) : -1)
+      ...shapeItems.map((s) => Number.isFinite(s?.index) ? Number(s.index) : -1),
+      ...formFields.map((f) => Number.isFinite(f?.index) ? Number(f.index) : -1)
     );
     const count = Math.max(0, maxIndex + 1);
-    const grouped:any[] = Array.from({ length: count }, () => ({ textItems: [], imageItems: [], shapes: [] }));
+    const grouped:any[] = Array.from({ length: count }, () => ({ textItems: [], imageItems: [], shapes: [], formFields: [] }));
     textItems.forEach((t) => {
       const idx = Number.isFinite(t?.index) ? Number(t.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [] };
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [] };
       grouped[idx].textItems.push(t);
     });
     imageItems.forEach((img) => {
       const idx = Number.isFinite(img?.index) ? Number(img.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [] };
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [] };
       grouped[idx].imageItems.push(img);
     });
     shapeItems.forEach((shape) => {
       const idx = Number.isFinite(shape?.index) ? Number(shape.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [] };
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [] };
       grouped[idx].shapes.push(shape);
+    });
+    formFields.forEach((field) => {
+      const idx = Number.isFinite(field?.index) ? Number(field.index) : 0;
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [] };
+      grouped[idx].formFields.push(field);
     });
     pages = grouped;
   }
@@ -89,6 +100,9 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   if (saveShapeItemsToIndexedDB) {
     await saveShapeItemsToIndexedDB(shapeItems);
   }
+  if (saveFormFieldsToIndexedDB) {
+    await saveFormFieldsToIndexedDB(formFields);
+  }
   if (savePagesToIndexedDB) {
     await savePagesToIndexedDB(pages);
   }
@@ -98,6 +112,7 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   setTextItems?.(textItems);
   setImageItems?.(imageItems);
   setShapeItems?.(shapeItems);
+  setFormFields?.(formFields);
 
-  return { pages, textItems, imageItems, shapeItems };
+  return { pages, textItems, imageItems, shapeItems, formFields };
 }

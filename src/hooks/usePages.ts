@@ -9,7 +9,7 @@ export function usePages() {
   // Add a new page
   const addNewPage = () => {
     if(pages.length >= 1) {
-      setPages((prev) => [...prev, { textItems: [], imageItems: [], shapes: [] }]);
+      setPages((prev) => [...prev, { textItems: [], imageItems: [], shapes: [], formFields: [] }]);
       setActivePage(pages.length); // Switch to the new page
     }
   };
@@ -82,6 +82,7 @@ export function usePages() {
       textItems: (pg.textItems || []).map((t:any) => ({ ...t, index: newIdx })),
       imageItems: (pg.imageItems || []).map((im:any) => ({ ...im, index: newIdx })),
       shapes: (pg.shapes || []).map((s:any) => ({ ...s, index: newIdx })),
+      formFields: (pg.formFields || []).map((f:any) => ({ ...f, index: newIdx })),
     }));
   };
 
@@ -197,7 +198,7 @@ useEffect(() => {
     } catch {
       if (!cancelled) {
         // fall back to one blank page if anything goes wrong
-        setPages([{ textItems: [], imageItems: [], shapes: [] }]);
+        setPages([{ textItems: [], imageItems: [], shapes: [], formFields: [] }]);
         setActivePage(0);
       }
     }

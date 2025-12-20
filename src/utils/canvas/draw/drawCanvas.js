@@ -3,6 +3,7 @@ import { drawGridIfNeeded } from "./layers/drawGrid";
 import { drawTextItems } from "./layers/drawTextItems";
 import { drawImageItems } from "./layers/drawImageItems";
 import { drawShapeItems, drawShapeCreationPreview } from "./drawShapeItems";
+import { drawFormFields, drawFormFieldCreationPreview } from "./drawFormFields";
 import { drawSelectionRect } from "./layers/drawSelectionRect";
 import { drawTextBoxEditor } from "./layers/drawTextBoxEditor";
 import { drawMultilinePage } from "./layers/drawMultilinePage";
@@ -41,6 +42,8 @@ export async function drawCanvas(pageIndex, opts = {}) {
   drawImageItems(ctx, rect, pageIndex, state, config);
   drawShapeItems(ctx, rect, pageIndex, state);
   drawShapeCreationPreview(ctx, rect, state);
+  drawFormFields(ctx, rect, pageIndex, state);
+  drawFormFieldCreationPreview(ctx, rect, state);
   drawSelectionRect(ctx, rect, pageIndex, state, config);
   drawTextBoxEditor(ctx, rect, pageIndex, state, config);
 }

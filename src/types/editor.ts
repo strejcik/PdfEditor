@@ -1,3 +1,5 @@
+import type { FormFieldItem } from './formFields';
+
 export type Point = { x: number; y: number };
 
 export type TextItem = {
@@ -32,6 +34,7 @@ export type Page = {
   textItems: TextItem[];
   imageItems: ImageItem[];
   shapes?: any[];
+  formFields?: FormFieldItem[];
 };
 
 export type UndoRedoState = Record<string, unknown>;

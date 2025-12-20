@@ -73,13 +73,15 @@ export async function exportStateToJson(
   let textItems = [];
   let imageItems = [];
   let shapeItems = [];
+  let formFields = [];
 
   try {
-    const [pagesRec, textItemsRec, imageItemsRec, shapesRec] = await Promise.all([
+    const [pagesRec, textItemsRec, imageItemsRec, shapesRec, formFieldsRec] = await Promise.all([
       loadStoreRecord("pages"),
       loadStoreRecord("textItems"),
       loadStoreRecord("imageItems"),
       loadStoreRecord("shapes"),
+      loadStoreRecord("formFields"),
     ]);
 
     if (pagesRec && Array.isArray(pagesRec.data)) {
@@ -93,6 +95,34 @@ export async function exportStateToJson(
     }
     if (shapesRec && Array.isArray(shapesRec.data)) {
       shapeItems = shapesRec.data;
+    }
+    if (formFieldsRec && Array.isArray(formFieldsRec.data)) {
+      formFields = formFieldsRec.data;
+    }
+
+    // If individual stores are empty but pages has items, extract from pages
+    // This handles the case where items were synced to pages but not saved to individual stores
+    if (Array.isArray(pages) && pages.length > 0) {
+      if (textItems.length === 0) {
+        textItems = pages.flatMap((p, pageIndex) =>
+          (p?.textItems ?? []).map((item) => ({ ...item, index: pageIndex }))
+        );
+      }
+      if (imageItems.length === 0) {
+        imageItems = pages.flatMap((p, pageIndex) =>
+          (p?.imageItems ?? []).map((item) => ({ ...item, index: pageIndex }))
+        );
+      }
+      if (shapeItems.length === 0) {
+        shapeItems = pages.flatMap((p, pageIndex) =>
+          (p?.shapes ?? []).map((item) => ({ ...item, index: pageIndex }))
+        );
+      }
+      if (formFields.length === 0) {
+        formFields = pages.flatMap((p, pageIndex) =>
+          (p?.formFields ?? []).map((item) => ({ ...item, index: pageIndex }))
+        );
+      }
     }
   } catch (e) {
     console.error("[exportStateToJson] IndexedDB read failed:", e);
@@ -108,7 +138,7 @@ export async function exportStateToJson(
     Array.isArray(p.imageItems);
 
   if (!Array.isArray(pages) || !pages.every(isPageShape)) {
-    // Reconstruct pages from textItems, imageItems, and shapeItems
+    // Reconstruct pages from textItems, imageItems, shapeItems, and formFields
     const maxIndex = Math.max(
       -1,
       ...textItems.map((t) =>
@@ -119,6 +149,9 @@ export async function exportStateToJson(
       ),
       ...shapeItems.map((s) =>
         Number.isFinite(s?.index) ? +s.index : -1
+      ),
+      ...formFields.map((f) =>
+        Number.isFinite(f?.index) ? +f.index : -1
       )
     );
 
@@ -127,24 +160,31 @@ export async function exportStateToJson(
       textItems: [],
       imageItems: [],
       shapes: [],
+      formFields: [],
     }));
 
     textItems.forEach((t) => {
       const i = Number.isFinite(t?.index) ? +t.index : 0;
-      (grouped[i] ?? (grouped[i] = { textItems: [], imageItems: [], shapes: [] }))
+      (grouped[i] ?? (grouped[i] = { textItems: [], imageItems: [], shapes: [], formFields: [] }))
         .textItems.push(t);
     });
 
     imageItems.forEach((img) => {
       const p = Number.isFinite(img?.index) ? +img.index : 0;
-      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [] }))
+      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [] }))
         .imageItems.push(img);
     });
 
     shapeItems.forEach((shape) => {
       const p = Number.isFinite(shape?.index) ? +shape.index : 0;
-      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [] }))
+      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [] }))
         .shapes.push(shape);
+    });
+
+    formFields.forEach((field) => {
+      const p = Number.isFinite(field?.index) ? +field.index : 0;
+      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [] }))
+        .formFields.push(field);
     });
 
     pages = grouped;
@@ -152,9 +192,9 @@ export async function exportStateToJson(
 
   // 3) Ensure we have at least one page
   if (!Array.isArray(pages) || pages.length === 0) {
-    pages = [{ textItems: [], imageItems: [], shapes: [] }];
+    pages = [{ textItems: [], imageItems: [], shapes: [], formFields: [] }];
   }
-  console.log(pages, textItems, imageItems, shapeItems);
+  console.log(pages, textItems, imageItems, shapeItems, formFields);
 
   // 4) Base payload (no checksums)
   const base = {
@@ -164,6 +204,7 @@ export async function exportStateToJson(
     textItems,
     imageItems,
     shapeItems,
+    formFields,
   };
 
   // 5) Canonical checksum (object-based)

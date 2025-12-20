@@ -3,7 +3,7 @@
  */
 
 const DB_NAME = "PdfEditorDB";
-const DB_VERSION = 5;
+const DB_VERSION = 7;
 
 /**
  * Open the PdfEditorDB database
@@ -32,6 +32,12 @@ function openEditorDB() {
       }
       if (!db.objectStoreNames.contains("shapes")) {
         db.createObjectStore("shapes", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("formFields")) {
+        db.createObjectStore("formFields", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("credentials")) {
+        db.createObjectStore("credentials", { keyPath: "id" });
       }
     };
 
@@ -84,10 +90,10 @@ async function clearStore(storeName) {
 
 /**
  * Clear all editor data from IndexedDB
- * @param {Array<string>} [stores=['pages', 'textItems', 'imageItems', 'shapes']] - Store names to clear
+ * @param {Array<string>} [stores=['pages', 'textItems', 'imageItems', 'shapes', 'formFields']] - Store names to clear
  * @returns {Promise<void>}
  */
-export async function clearEditorData(stores = ['pages', 'textItems', 'imageItems', 'shapes']) {
+export async function clearEditorData(stores = ['pages', 'textItems', 'imageItems', 'shapes', 'formFields']) {
   try {
     const clearPromises = stores.map(storeName => clearStore(storeName));
     await Promise.all(clearPromises);
@@ -102,5 +108,5 @@ export async function clearEditorData(stores = ['pages', 'textItems', 'imageItem
  */
 export async function clearAllEditorState() {
   // Clear IndexedDB (gracefully handles empty DB)
-  await clearEditorData(['pages', 'textItems', 'imageItems', 'shapes']);
+  await clearEditorData(['pages', 'textItems', 'imageItems', 'shapes', 'formFields']);
 }

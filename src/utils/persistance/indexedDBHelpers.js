@@ -12,7 +12,7 @@ export function openEditorDB() {
     if (!("indexedDB" in window)) {
       return reject(new Error("IndexedDB not supported"));
     }
-    const req = indexedDB.open("PdfEditorDB", 5); // must match your DB_VERSION
+    const req = indexedDB.open("PdfEditorDB", 7); // must match your DB_VERSION
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -118,6 +118,76 @@ export async function loadShapeItemsFromIndexedDB() {
     return record && record.data ? record.data : [];
   } catch (error) {
     console.error("Error loading shapes from IndexedDB:", error);
+    return [];
+  } finally {
+    db.close && db.close();
+  }
+}
+
+/**
+ * Save form fields to IndexedDB
+ * @param {Array} formFields - Array of form field items to save
+ * @returns {Promise<void>}
+ */
+export async function saveFormFieldsToIndexedDB(formFields) {
+  let db;
+  try {
+    db = await openEditorDB();
+  } catch (e) {
+    console.error("Error opening IndexedDB for formFields:", e);
+    return;
+  }
+
+  try {
+    const tx = db.transaction("formFields", "readwrite");
+    const store = tx.objectStore("formFields");
+
+    store.put({ id: "main", data: Array.isArray(formFields) ? formFields : [] });
+
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
+    });
+  } catch (error) {
+    console.error("Error saving formFields to IndexedDB:", error);
+  } finally {
+    db.close && db.close();
+  }
+}
+
+/**
+ * Load form fields from IndexedDB
+ * @returns {Promise<Array>} Array of form field items or empty array
+ */
+export async function loadFormFieldsFromIndexedDB() {
+  let db;
+  try {
+    db = await openEditorDB();
+  } catch (e) {
+    console.error("Error opening IndexedDB for formFields:", e);
+    return [];
+  }
+
+  try {
+    const tx = db.transaction("formFields", "readonly");
+    const store = tx.objectStore("formFields");
+
+    const record = await new Promise((resolve, reject) => {
+      const r = store.get("main");
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
+    });
+
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
+    });
+
+    return record && record.data ? record.data : [];
+  } catch (error) {
+    console.error("Error loading formFields from IndexedDB:", error);
     return [];
   } finally {
     db.close && db.close();

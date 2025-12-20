@@ -27,6 +27,7 @@ import { handleFileChange } from "../utils/files/handleFileChange";
 import { ShapeToolbar } from "../components/ShapeToolbar";
 import { isPointInShape, getResizeHandle } from "../utils/shapes/shapeHitDetection";
 import { handleShapeMouseDown, handleShapeMouseMove, handleShapeMouseUp } from "../utils/shapes/shapeMouseHandlers";
+import { handleFormFieldMouseDown, handleFormFieldMouseMove, handleFormFieldMouseUp } from "../utils/formFields/formFieldMouseHandlers";
 import FontSelector from "../components/FontSelector";
 import ColorPicker from "../components/ColorPicker";
 import { useCursorPosition } from "../hooks/useCursorPosition";
@@ -259,14 +260,48 @@ useEffect(() => {
       deleteSelectedShapes,
       updateShape,
     },
+    formFields: {
+      formFields, setFormFields,
+      selectedFormFieldIndex, setSelectedFormFieldIndex,
+      isDraggingFormField, setIsDraggingFormField,
+      isResizingFormField, setIsResizingFormField,
+      isCreatingFormField,
+      activeFormFieldTool, setActiveFormFieldTool,
+      formFieldCreationStart, formFieldCreationCurrent,
+      dragStart: formFieldDragStart, setDragStart: setFormFieldDragStart,
+      initialField, setInitialField,
+      resizeStart: formFieldResizeStart, setResizeStart: setFormFieldResizeStart,
+      resizeHandle: formFieldResizeHandle, setResizeHandle: setFormFieldResizeHandle,
+      initialSize: formFieldInitialSize, setInitialSize: setFormFieldInitialSize,
+      startCreatingFormField,
+      updateFormFieldCreation,
+      finishCreatingFormField,
+      deleteSelectedFormField,
+      updateFormField,
+    },
+    ai: {
+      connectionStatus,
+      isGenerating,
+      error: aiError,
+      hasStoredKey,
+      saveNewApiKey,
+      unlockApiKey,
+      lockApiKey,
+      clearStoredApiKey,
+      generateContent,
+      clearError: clearAiError,
+    },
   } = useEditor(); // ✅ correct
   useClipboard(useEditor());
 
   // Track cursor position for cursor mirroring in shared workspaces
   const cursorPosition = useCursorPosition();
 
-
-
+  // AI Panel local state
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiPassword, setAiPassword] = useState('');
+  const [aiNewApiKey, setAiNewApiKey] = useState('');
+  const [aiUnlockPassword, setAiUnlockPassword] = useState('');
 
 
 
@@ -447,6 +482,13 @@ useEffect(() => {
         shapeCreationCurrent: isViewer ? viewerCreationState.shapeCreationCurrent : shapeCreationCurrent,
         activeShapeTool: isViewer ? viewerCreationState.activeShapeTool : activeShapeTool,
         freehandPoints: isViewer ? viewerCreationState.freehandPoints : freehandPoints,
+        // Form fields state
+        formFields,
+        selectedFormFieldIndex,
+        isCreatingFormField,
+        formFieldCreationStart,
+        formFieldCreationCurrent,
+        activeFormFieldTool,
         selectedTextIndexes,
         selectionStart,
         selectionEnd,
@@ -488,6 +530,13 @@ useEffect(() => {
               shapeCreationCurrent: isViewer ? viewerCreationState.shapeCreationCurrent : shapeCreationCurrent,
               activeShapeTool: isViewer ? viewerCreationState.activeShapeTool : activeShapeTool,
               freehandPoints: isViewer ? viewerCreationState.freehandPoints : freehandPoints,
+              // Form fields state
+              formFields,
+              selectedFormFieldIndex,
+              isCreatingFormField,
+              formFieldCreationStart,
+              formFieldCreationCurrent,
+              activeFormFieldTool,
               selectedTextIndexes,
               selectionStart,
               selectionEnd,
@@ -529,6 +578,12 @@ useEffect(() => {
   shapeCreationCurrent,
   activeShapeTool,
   freehandPoints,
+  formFields,
+  selectedFormFieldIndex,
+  isCreatingFormField,
+  formFieldCreationStart,
+  formFieldCreationCurrent,
+  activeFormFieldTool,
   selectedTextIndexes,
   selectionStart,
   selectionEnd,
@@ -574,7 +629,7 @@ useLayoutEffect(() => {
 
     drawCanvas(activePage);
   }
-}, [textItems, imageItems, shapeItems, isSelecting, selectionStart, selectionEnd, activePage]);
+}, [textItems, imageItems, shapeItems, formFields, isSelecting, selectionStart, selectionEnd, activePage, selectedFormFieldIndex, selectedShapeIndex]);
 
 
 
@@ -662,9 +717,40 @@ const handleRedo = () => {
   fnRedoStack(activePage);
 };
 
-// Wrapper mouse handlers that check shapes first, then fall through to existing handlers
+// Wrapper mouse handlers that check form fields, then shapes, then fall through to existing handlers
 const wrappedMouseDown = (e) => {
-  // First, try shape handler
+  // First, try form field handler
+  const formFieldHandled = handleFormFieldMouseDown(e, {
+    canvasRefs,
+    activePage,
+    activeFormFieldTool,
+    formFields,
+    startCreatingFormField,
+    selectedFormFieldIndex,
+    setSelectedFormFieldIndex,
+    setIsDraggingFormField,
+    setIsResizingFormField,
+    setDragStart: setFormFieldDragStart,
+    setInitialField,
+    setResizeStart: setFormFieldResizeStart,
+    setResizeHandle: setFormFieldResizeHandle,
+    setInitialSize: setFormFieldInitialSize,
+    // For clearing other selections
+    setSelectedShapeIndex,
+    setSelectedShapeIndexes,
+    setSelectedTextIndex,
+    setSelectedTextIndexes,
+    setIsTextSelected,
+  });
+
+  if (formFieldHandled) return; // Form field handled it, don't propagate
+
+  // Clear form field selection when clicking elsewhere
+  if (selectedFormFieldIndex !== null) {
+    setSelectedFormFieldIndex(null);
+  }
+
+  // Next, try shape handler
   const shapeHandled = handleShapeMouseDown(e, {
     canvasRefs,
     activePage,
@@ -750,7 +836,27 @@ const wrappedMouseDown = (e) => {
 };
 
 const wrappedMouseMove = (e) => {
-  // First, try shape handler
+  // First, try form field handler
+  const formFieldHandled = handleFormFieldMouseMove(e, {
+    canvasRefs,
+    activePage,
+    isCreatingFormField,
+    updateFormFieldCreation,
+    isDraggingFormField,
+    isResizingFormField,
+    selectedFormFieldIndex,
+    formFields,
+    dragStart: formFieldDragStart,
+    initialField,
+    resizeStart: formFieldResizeStart,
+    resizeHandle: formFieldResizeHandle,
+    initialSize: formFieldInitialSize,
+    updateFormField,
+  });
+
+  if (formFieldHandled) return; // Form field handled it, don't propagate
+
+  // Next, try shape handler
   const shapeHandled = handleShapeMouseMove(e, {
     canvasRefs,
     activePage,
@@ -834,7 +940,22 @@ const wrappedMouseMove = (e) => {
 };
 
 const wrappedMouseUp = (e) => {
-  // First, try shape handler
+  // First, try form field handler
+  const formFieldHandled = handleFormFieldMouseUp(e, {
+    canvasRefs,
+    activePage,
+    isCreatingFormField,
+    finishCreatingFormField,
+    isDraggingFormField,
+    isResizingFormField,
+    setIsDraggingFormField,
+    setIsResizingFormField,
+    pushSnapshotToUndo,
+  });
+
+  if (formFieldHandled) return; // Form field handled it, don't propagate
+
+  // Next, try shape handler
   const shapeHandled = handleShapeMouseUp(e, {
     canvasRefs,
     activePage,
@@ -1042,7 +1163,7 @@ const toggleGrid = () => {
 
   useEffect(() => {
     drawCanvas(activePage);
-  }, [textItems,imageItems, showGrid, isTextSelected, pageList, activePage, textBox, isMultilineMode]);
+  }, [textItems, imageItems, formFields, showGrid, isTextSelected, pageList, activePage, textBox, isMultilineMode, selectedFormFieldIndex, selectedShapeIndex]);
 
 
 
@@ -1163,6 +1284,13 @@ return (
       >
         🖼️
       </button>
+      <button
+        className={`rail-btn ${activePanel === 'forms' ? 'active' : ''}`}
+        title="Forms"
+        onClick={() => togglePanel('forms')}
+      >
+        📝
+      </button>
 
       <div className="rail-divider" />
 
@@ -1191,6 +1319,13 @@ return (
           onClick={() => togglePanel('share')}
         >
           🔗
+        </button>
+        <button
+          className={`rail-btn ${activePanel === 'ai' ? 'active' : ''}`}
+          title="AI Assistant"
+          onClick={() => togglePanel('ai')}
+        >
+          🤖
         </button>
         <button
           className={`rail-btn ${activePanel === 'settings' ? 'active' : ''}`}
@@ -1714,6 +1849,356 @@ return (
         </>
       )}
 
+      {/* Forms Panel */}
+      {activePanel === 'forms' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">📝</span>
+              Forms
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            {/* Form Field Tools */}
+            <div className="panel-section">
+              <div className="panel-section-label">Form Fields</div>
+              <div className="tool-grid-shapes">
+                <button
+                  className={`tool-grid-btn-lg ${activeFormFieldTool === null ? 'active' : ''}`}
+                  title="Select"
+                  onClick={isViewer ? viewOnly : () => setActiveFormFieldTool(null)}
+                  disabled={isViewer}
+                >
+                  <span>👆</span>
+                  <span className="tool-btn-label">Select</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeFormFieldTool === 'textInput' ? 'active' : ''}`}
+                  title="Text Input"
+                  onClick={isViewer ? viewOnly : () => setActiveFormFieldTool('textInput')}
+                  disabled={isViewer}
+                >
+                  <span>📝</span>
+                  <span className="tool-btn-label">Text</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeFormFieldTool === 'textarea' ? 'active' : ''}`}
+                  title="Text Area (Multi-line)"
+                  onClick={isViewer ? viewOnly : () => setActiveFormFieldTool('textarea')}
+                  disabled={isViewer}
+                >
+                  <span>📄</span>
+                  <span className="tool-btn-label">Area</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeFormFieldTool === 'checkbox' ? 'active' : ''}`}
+                  title="Checkbox"
+                  onClick={isViewer ? viewOnly : () => setActiveFormFieldTool('checkbox')}
+                  disabled={isViewer}
+                >
+                  <span>☑️</span>
+                  <span className="tool-btn-label">Check</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeFormFieldTool === 'radio' ? 'active' : ''}`}
+                  title="Radio Button"
+                  onClick={isViewer ? viewOnly : () => setActiveFormFieldTool('radio')}
+                  disabled={isViewer}
+                >
+                  <span>🔘</span>
+                  <span className="tool-btn-label">Radio</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeFormFieldTool === 'dropdown' ? 'active' : ''}`}
+                  title="Dropdown"
+                  onClick={isViewer ? viewOnly : () => setActiveFormFieldTool('dropdown')}
+                  disabled={isViewer}
+                >
+                  <span>📋</span>
+                  <span className="tool-btn-label">Select</span>
+                </button>
+              </div>
+
+              {/* Active tool indicator */}
+              {activeFormFieldTool && (
+                <div className="shape-tool-active-indicator">
+                  <span>✓</span>
+                  <strong>{activeFormFieldTool === 'textInput' ? 'Text Input' :
+                           activeFormFieldTool === 'textarea' ? 'Text Area' :
+                           activeFormFieldTool.charAt(0).toUpperCase() + activeFormFieldTool.slice(1)}</strong>
+                  <span>— Click and drag on canvas</span>
+                </div>
+              )}
+            </div>
+
+            <div className="panel-divider" />
+
+            {/* Field Properties Editor - shown when a field is selected */}
+            {selectedFormFieldIndex !== null && formFields[selectedFormFieldIndex] && (
+              <>
+                <div className="panel-section">
+                  <div className="panel-section-label">Field Properties</div>
+
+                  {/* Field Name */}
+                  <div className="panel-input-group">
+                    <label className="panel-input-label">Field Name</label>
+                    <input
+                      type="text"
+                      className="panel-input"
+                      value={formFields[selectedFormFieldIndex].fieldName || ''}
+                      onChange={(e) => updateFormField(selectedFormFieldIndex, { fieldName: e.target.value })}
+                      placeholder="field_name"
+                      disabled={isViewer}
+                    />
+                  </div>
+
+                  {/* Placeholder - for text inputs and textareas */}
+                  {(formFields[selectedFormFieldIndex].type === 'textInput' || formFields[selectedFormFieldIndex].type === 'textarea') && (
+                    <div className="panel-input-group">
+                      <label className="panel-input-label">Placeholder</label>
+                      <input
+                        type="text"
+                        className="panel-input"
+                        value={formFields[selectedFormFieldIndex].placeholder || ''}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { placeholder: e.target.value })}
+                        placeholder="Enter placeholder text..."
+                        disabled={isViewer}
+                      />
+                    </div>
+                  )}
+
+                  {/* Default Value - for text inputs */}
+                  {formFields[selectedFormFieldIndex].type === 'textInput' && (
+                    <div className="panel-input-group">
+                      <label className="panel-input-label">Default Value</label>
+                      <input
+                        type="text"
+                        className="panel-input"
+                        value={formFields[selectedFormFieldIndex].defaultValue || ''}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { defaultValue: e.target.value })}
+                        placeholder="Default text..."
+                        disabled={isViewer}
+                      />
+                    </div>
+                  )}
+
+                  {/* Default Value - for textareas (multi-line) */}
+                  {formFields[selectedFormFieldIndex].type === 'textarea' && (
+                    <div className="panel-input-group">
+                      <label className="panel-input-label">Default Value</label>
+                      <textarea
+                        className="panel-textarea"
+                        value={formFields[selectedFormFieldIndex].defaultValue || ''}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { defaultValue: e.target.value })}
+                        placeholder="Default text..."
+                        rows={3}
+                        disabled={isViewer}
+                      />
+                    </div>
+                  )}
+
+                  {/* Checked state - for checkbox and radio */}
+                  {(formFields[selectedFormFieldIndex].type === 'checkbox' || formFields[selectedFormFieldIndex].type === 'radio') && (
+                    <div className="panel-input-group">
+                      <label className="panel-checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={formFields[selectedFormFieldIndex].defaultValue === 'true'}
+                          onChange={(e) => updateFormField(selectedFormFieldIndex, { defaultValue: e.target.checked ? 'true' : 'false' })}
+                          disabled={isViewer}
+                        />
+                        <span>Default Checked</span>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Radio Group Name */}
+                  {formFields[selectedFormFieldIndex].type === 'radio' && (
+                    <div className="panel-input-group">
+                      <label className="panel-input-label">Group Name</label>
+                      <input
+                        type="text"
+                        className="panel-input"
+                        value={formFields[selectedFormFieldIndex].groupName || ''}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { groupName: e.target.value })}
+                        placeholder="radio_group"
+                        disabled={isViewer}
+                      />
+                    </div>
+                  )}
+
+                  {/* Options - for dropdown */}
+                  {formFields[selectedFormFieldIndex].type === 'dropdown' && (
+                    <div className="panel-input-group">
+                      <label className="panel-input-label">Options (one per line)</label>
+                      <textarea
+                        className="panel-textarea"
+                        value={(formFields[selectedFormFieldIndex].options || []).join('\n')}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, {
+                          options: e.target.value.split('\n').filter(opt => opt.trim() !== '')
+                        })}
+                        placeholder="Option 1&#10;Option 2&#10;Option 3"
+                        rows={4}
+                        disabled={isViewer}
+                      />
+                    </div>
+                  )}
+
+                  {/* Default selected - for dropdown */}
+                  {formFields[selectedFormFieldIndex].type === 'dropdown' && (
+                    <div className="panel-input-group">
+                      <label className="panel-input-label">Default Selected</label>
+                      <select
+                        className="panel-select"
+                        value={formFields[selectedFormFieldIndex].defaultValue || ''}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { defaultValue: e.target.value })}
+                        disabled={isViewer}
+                      >
+                        <option value="">-- None --</option>
+                        {(formFields[selectedFormFieldIndex].options || []).map((opt, idx) => (
+                          <option key={idx} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Required toggle */}
+                  <div className="panel-input-group">
+                    <label className="panel-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={formFields[selectedFormFieldIndex].required || false}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { required: e.target.checked })}
+                        disabled={isViewer}
+                      />
+                      <span>Required Field</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="panel-divider" />
+
+                {/* Styling */}
+                <div className="panel-section">
+                  <div className="panel-section-label">Styling</div>
+
+                  {/* Font Size - for text inputs, textareas and dropdowns */}
+                  {(formFields[selectedFormFieldIndex].type === 'textInput' || formFields[selectedFormFieldIndex].type === 'textarea' || formFields[selectedFormFieldIndex].type === 'dropdown') && (
+                    <div className="panel-input-group">
+                      <label className="panel-input-label">Font Size: {formFields[selectedFormFieldIndex].fontSize || 14}px</label>
+                      <input
+                        type="range"
+                        className="panel-slider"
+                        min="8"
+                        max="32"
+                        value={formFields[selectedFormFieldIndex].fontSize || 14}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { fontSize: parseInt(e.target.value) })}
+                        disabled={isViewer}
+                      />
+                    </div>
+                  )}
+
+                  {/* Background Color */}
+                  <div className="panel-input-group">
+                    <label className="panel-input-label">Background</label>
+                    <div className="panel-color-row">
+                      <input
+                        type="color"
+                        className="panel-color-input"
+                        value={formFields[selectedFormFieldIndex].backgroundColor || '#ffffff'}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { backgroundColor: e.target.value })}
+                        disabled={isViewer}
+                      />
+                      <input
+                        type="text"
+                        className="panel-color-text"
+                        value={formFields[selectedFormFieldIndex].backgroundColor || '#ffffff'}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { backgroundColor: e.target.value })}
+                        disabled={isViewer}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Border Color */}
+                  <div className="panel-input-group">
+                    <label className="panel-input-label">Border</label>
+                    <div className="panel-color-row">
+                      <input
+                        type="color"
+                        className="panel-color-input"
+                        value={formFields[selectedFormFieldIndex].borderColor || '#374151'}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { borderColor: e.target.value })}
+                        disabled={isViewer}
+                      />
+                      <input
+                        type="text"
+                        className="panel-color-text"
+                        value={formFields[selectedFormFieldIndex].borderColor || '#374151'}
+                        onChange={(e) => updateFormField(selectedFormFieldIndex, { borderColor: e.target.value })}
+                        disabled={isViewer}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Text Color - for text inputs, textareas and dropdowns */}
+                  {(formFields[selectedFormFieldIndex].type === 'textInput' || formFields[selectedFormFieldIndex].type === 'textarea' || formFields[selectedFormFieldIndex].type === 'dropdown') && (
+                    <div className="panel-input-group">
+                      <label className="panel-input-label">Text Color</label>
+                      <div className="panel-color-row">
+                        <input
+                          type="color"
+                          className="panel-color-input"
+                          value={formFields[selectedFormFieldIndex].textColor || '#000000'}
+                          onChange={(e) => updateFormField(selectedFormFieldIndex, { textColor: e.target.value })}
+                          disabled={isViewer}
+                        />
+                        <input
+                          type="text"
+                          className="panel-color-text"
+                          value={formFields[selectedFormFieldIndex].textColor || '#000000'}
+                          onChange={(e) => updateFormField(selectedFormFieldIndex, { textColor: e.target.value })}
+                          disabled={isViewer}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Border Width */}
+                  <div className="panel-input-group">
+                    <label className="panel-input-label">Border Width: {formFields[selectedFormFieldIndex].borderWidth || 1}px</label>
+                    <input
+                      type="range"
+                      className="panel-slider"
+                      min="0"
+                      max="5"
+                      value={formFields[selectedFormFieldIndex].borderWidth || 1}
+                      onChange={(e) => updateFormField(selectedFormFieldIndex, { borderWidth: parseInt(e.target.value) })}
+                      disabled={isViewer}
+                    />
+                  </div>
+                </div>
+
+                <div className="panel-divider" />
+              </>
+            )}
+
+            {/* Selected Field Actions */}
+            <div className="panel-section">
+              <div className="panel-section-label">Actions</div>
+              <button
+                className="panel-btn panel-btn-danger"
+                onClick={isViewer ? viewOnly : deleteSelectedFormField}
+                disabled={isViewer || selectedFormFieldIndex === null}
+              >
+                <span className="panel-btn-icon">🗑️</span>
+                Delete Selected
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Share Panel */}
       {activePanel === 'share' && (
         <>
@@ -1748,6 +2233,182 @@ return (
                 </button>
               )}
             </div>
+          </div>
+        </>
+      )}
+
+      {/* AI Assistant Panel */}
+      {activePanel === 'ai' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">🤖</span>
+              AI Assistant
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            {/* Connection Status */}
+            <div className="panel-section">
+              <div className="panel-section-label">Status</div>
+              <div className={`panel-badge ${
+                connectionStatus === 'unlocked' ? 'panel-badge-viewers' :
+                connectionStatus === 'error' ? 'panel-badge-viewer' :
+                'panel-badge-room'
+              }`}>
+                {connectionStatus === 'unlocked' ? '🟢 Connected' :
+                 connectionStatus === 'error' ? '🔴 Error' :
+                 '🔒 Locked'}
+              </div>
+            </div>
+
+            {/* Error Display */}
+            {aiError && (
+              <div className="panel-section">
+                <div className="ai-error-message">
+                  {aiError}
+                  <button className="ai-error-dismiss" onClick={clearAiError}>✕</button>
+                </div>
+              </div>
+            )}
+
+            {/* Setup Form - when no key stored */}
+            {!hasStoredKey && connectionStatus !== 'unlocked' && (
+              <div className="panel-section">
+                <div className="panel-section-label">Setup API Key</div>
+                <div className="panel-input-group">
+                  <label className="panel-input-label">Claude API Key</label>
+                  <input
+                    type="password"
+                    className="panel-input"
+                    placeholder="sk-ant-..."
+                    value={aiNewApiKey}
+                    onChange={(e) => setAiNewApiKey(e.target.value)}
+                  />
+                </div>
+                <div className="panel-input-group">
+                  <label className="panel-input-label">Set Password</label>
+                  <input
+                    type="password"
+                    className="panel-input"
+                    placeholder="Create a password to encrypt your key..."
+                    value={aiPassword}
+                    onChange={(e) => setAiPassword(e.target.value)}
+                  />
+                </div>
+                <button
+                  className="panel-btn panel-btn-primary"
+                  onClick={async () => {
+                    const success = await saveNewApiKey(aiNewApiKey, aiPassword);
+                    if (success) {
+                      setAiNewApiKey('');
+                      setAiPassword('');
+                    }
+                  }}
+                  disabled={!aiNewApiKey || !aiPassword || aiPassword.length < 4}
+                >
+                  <span className="panel-btn-icon">🔐</span>
+                  Save & Encrypt
+                </button>
+              </div>
+            )}
+
+            {/* Unlock Form - when key stored but locked */}
+            {hasStoredKey && connectionStatus === 'disconnected' && (
+              <div className="panel-section">
+                <div className="panel-section-label">Unlock API Key</div>
+                <div className="panel-input-group">
+                  <label className="panel-input-label">Password</label>
+                  <input
+                    type="password"
+                    className="panel-input"
+                    placeholder="Enter your password..."
+                    value={aiUnlockPassword}
+                    onChange={(e) => setAiUnlockPassword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && aiUnlockPassword) {
+                        unlockApiKey(aiUnlockPassword).then((success) => {
+                          if (success) setAiUnlockPassword('');
+                        });
+                      }
+                    }}
+                  />
+                </div>
+                <button
+                  className="panel-btn panel-btn-primary"
+                  onClick={async () => {
+                    const success = await unlockApiKey(aiUnlockPassword);
+                    if (success) setAiUnlockPassword('');
+                  }}
+                  disabled={!aiUnlockPassword}
+                >
+                  <span className="panel-btn-icon">🔓</span>
+                  Unlock
+                </button>
+              </div>
+            )}
+
+            {/* Generate Content - when unlocked */}
+            {connectionStatus === 'unlocked' && (
+              <>
+                <div className="panel-section">
+                  <div className="panel-section-label">Generate Content</div>
+                  <textarea
+                    className="panel-textarea"
+                    placeholder={"Describe what you want to create...\n\nExamples:\n• Add a title 'Invoice' at the top\n• Create a contact form with name, email, phone\n• Draw a header box with company logo placeholder"}
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    rows={6}
+                    disabled={isGenerating}
+                  />
+                  <button
+                    className="panel-btn panel-btn-primary"
+                    onClick={async () => {
+                      const success = await generateContent(aiPrompt, {
+                        setTextItems,
+                        setShapeItems,
+                        setFormFields,
+                        textItems,
+                        shapeItems,
+                        formFields,
+                        imageItems,
+                        pushSnapshotToUndo,
+                        activePage,
+                      });
+                      if (success) setAiPrompt('');
+                    }}
+                    disabled={isGenerating || !aiPrompt.trim()}
+                  >
+                    <span className="panel-btn-icon">{isGenerating ? '⏳' : '✨'}</span>
+                    {isGenerating ? 'Generating...' : 'Generate'}
+                  </button>
+                </div>
+
+                <div className="panel-divider" />
+
+                <div className="panel-section">
+                  <div className="panel-section-label">Key Management</div>
+                  <button
+                    className="panel-btn"
+                    onClick={lockApiKey}
+                  >
+                    <span className="panel-btn-icon">🔒</span>
+                    Lock API Key
+                  </button>
+                  <button
+                    className="panel-btn panel-btn-danger"
+                    onClick={() => {
+                      if (window.confirm('Are you sure you want to remove your stored API key?')) {
+                        clearStoredApiKey();
+                      }
+                    }}
+                  >
+                    <span className="panel-btn-icon">🗑️</span>
+                    Remove API Key
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}

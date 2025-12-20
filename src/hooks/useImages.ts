@@ -47,7 +47,7 @@ export function useImages() {
 /** Opens (or creates) an IndexedDB named "PdfEditorDB" with objectStore "imageItems" */
 function openImageItemsDB() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("PdfEditorDB", 5);
+    const request = indexedDB.open("PdfEditorDB", 7);
     request.onupgradeneeded = (event:any) => {
       const db = event.target.result;
       // Create stores if missing (we can future-proof by ensuring both exist)
@@ -62,6 +62,12 @@ function openImageItemsDB() {
       }
       if (!db.objectStoreNames.contains("shapes")) {
         db.createObjectStore("shapes", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("formFields")) {
+        db.createObjectStore("formFields", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("credentials")) {
+        db.createObjectStore("credentials", { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);

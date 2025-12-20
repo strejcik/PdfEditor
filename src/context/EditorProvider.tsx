@@ -21,6 +21,8 @@ import { useMouse } from '../hooks/useMouse';
 import { useKeyboard } from '../hooks/useKeyboard';
 import { useShare } from '../hooks/useShare';
 import { useShapes } from '../hooks/useShapes';
+import { useFormFields } from '../hooks/useFormFields';
+import { useClaudeAI } from '../hooks/useClaudeAI';
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -36,6 +38,8 @@ type EditorContextValue = {
   keyboard: ReturnType<typeof useKeyboard>;
   share: ReturnType<typeof useShare>;
   shapes: ReturnType<typeof useShapes>;
+  formFields: ReturnType<typeof useFormFields>;
+  ai: ReturnType<typeof useClaudeAI>;
 };
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -60,33 +64,45 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const keyboard = useKeyboard();
   const share = useShare();
   const shapes = useShapes();
+  const formFields = useFormFields();
+  const ai = useClaudeAI();
 
   // Keep latest slices in refs so history bindings always read current data
   const textRef = useRef(text);
   const imagesRef = useRef(images);
   const shareRef = useRef(share);
   const shapesRef = useRef(shapes);
+  const formFieldsRef = useRef(formFields);
 
   // Sync locks to prevent circular updates
   const isSyncingPagesToShapes = useRef(false);
   const isSyncingShapesToPages = useRef(false);
-  // Store last synced shapes hash to prevent ping-pong
+  const isSyncingPagesToFormFields = useRef(false);
+  const isSyncingFormFieldsToPages = useRef(false);
+  const isSyncingPagesToText = useRef(false);
+  const isSyncingTextToPages = useRef(false);
+  // Store last synced hashes to prevent ping-pong
   const lastShapesFromPages = useRef<string | null>(null);
+  const lastFormFieldsFromPages = useRef<string | null>(null);
+  const lastTextFromPages = useRef<string | null>(null);
 
   useEffect(() => {
     textRef.current = text;
     imagesRef.current = images;
     shareRef.current = share;
     shapesRef.current = shapes;
-  }, [text, images, share, shapes]);
+    formFieldsRef.current = formFields;
+  }, [text, images, share, shapes, formFields]);
 
   /**
    * 🔁 Re-hydrate text, image, and shape stores from pages (single source of truth)
    * This ensures all pages are reflected in item stores
    */
   useEffect(() => {
-    // Prevent circular updates: if we're currently syncing shapes to pages, skip this
+    // Prevent circular updates: if we're currently syncing items to pages, skip this
     if (isSyncingShapesToPages.current) return;
+    if (isSyncingFormFieldsToPages.current) return;
+    if (isSyncingTextToPages.current) return;
 
     // CRITICAL: Skip pages→shapes sync during mixed-item dragging
     // Otherwise updatePageItems (for text) will trigger this effect, which rehydrates shapes
@@ -101,8 +117,10 @@ export function EditorProvider({ children }: PropsWithChildren) {
     const pageList = pages.pages ?? [];
     if (!Array.isArray(pageList) || pageList.length === 0) return;
 
-    // Set lock to prevent the other effect from triggering
+    // Set locks to prevent the other effects from triggering
     isSyncingPagesToShapes.current = true;
+    isSyncingPagesToFormFields.current = true;
+    isSyncingPagesToText.current = true;
 
     // Extract all items from pages and add index property to each item
     const allText = pageList.flatMap((p, pageIndex) =>
@@ -114,10 +132,21 @@ export function EditorProvider({ children }: PropsWithChildren) {
     const allShapes = pageList.flatMap((p, pageIndex) =>
       (p?.shapes ?? []).map((item) => ({ ...item, index: pageIndex }))
     );
+    const allFormFields = pageList.flatMap((p, pageIndex) =>
+      (p?.formFields ?? []).map((item) => ({ ...item, index: pageIndex }))
+    );
 
     // Store hash of shapes we just loaded (without index property for comparison)
     const shapesWithoutIndex = allShapes.map(({ index, ...shape }) => shape);
     lastShapesFromPages.current = JSON.stringify(shapesWithoutIndex);
+
+    // Store hash of formFields we just loaded (without index property for comparison)
+    const formFieldsWithoutIndex = allFormFields.map(({ index, ...field }) => field);
+    lastFormFieldsFromPages.current = JSON.stringify(formFieldsWithoutIndex);
+
+    // Store hash of textItems we just loaded (without index property for comparison)
+    const textWithoutIndex = allText.map(({ index, ...item }) => item);
+    lastTextFromPages.current = JSON.stringify(textWithoutIndex);
 
     // Update item stores
     // Only sync text and shapes from pages if NOT in viewer mode
@@ -125,16 +154,19 @@ export function EditorProvider({ children }: PropsWithChildren) {
     if (!isViewer) {
       text.setTextItems?.(allText);
       shapes.setShapeItems?.(allShapes);
+      formFields.setFormFields?.(allFormFields);
     }
 
     // Images always sync from pages (no real-time broadcast needed)
     images.setImageItems?.(allImages);
 
-    // Release lock after state updates are queued
+    // Release locks after state updates are queued
     setTimeout(() => {
       isSyncingPagesToShapes.current = false;
+      isSyncingPagesToFormFields.current = false;
+      isSyncingPagesToText.current = false;
     }, 0);
-  }, [pages.pages, text.setTextItems, images.setImageItems, shapes.setShapeItems, selection.isDraggingMixedItems, share.mode]);
+  }, [pages.pages, text.setTextItems, images.setImageItems, shapes.setShapeItems, formFields.setFormFields, selection.isDraggingMixedItems, share.mode]);
 
   /**
    * 🔁 Sync shapes back to pages whenever shapes change (for persistence)
@@ -159,9 +191,9 @@ export function EditorProvider({ children }: PropsWithChildren) {
     if (!shapes.shapeItems || shapes.shapeItems.length === 0) {
       // If no shapes, check if this is different from what we loaded
       if (lastShapesFromPages.current !== '[]') {
-        const updatedPages = pageList.map(page => ({ ...page, shapes: [] }));
         isSyncingShapesToPages.current = true;
-        pages.setPages(updatedPages);
+        // Use functional update to avoid overwriting other concurrent updates
+        pages.setPages(prevPages => prevPages.map(page => ({ ...page, shapes: [] })));
         lastShapesFromPages.current = '[]';
         setTimeout(() => {
           isSyncingShapesToPages.current = false;
@@ -193,14 +225,13 @@ export function EditorProvider({ children }: PropsWithChildren) {
       shapesByPage[pageIdx].push(shapeWithoutIndex);
     });
 
-    // Update pages with shapes
-    const updatedPages = pageList.map((page, pageIndex) => {
-      const pageShapes = shapesByPage[pageIndex] || [];
-      return { ...page, shapes: pageShapes };
+    // Update pages with shapes using functional update to avoid overwriting other concurrent updates
+    pages.setPages(prevPages => {
+      return prevPages.map((page, pageIndex) => {
+        const pageShapes = shapesByPage[pageIndex] || [];
+        return { ...page, shapes: pageShapes };
+      });
     });
-
-    // Update pages and store the new hash
-    pages.setPages(updatedPages);
     lastShapesFromPages.current = currentShapesHash;
 
     // Release lock after state updates are queued
@@ -212,6 +243,145 @@ export function EditorProvider({ children }: PropsWithChildren) {
   }, [shapes.shapeItems, shapes.isDraggingShape, shapes.isDraggingMultipleShapes,
       shapes.isResizingShape, shapes.isCreatingShape, selection.isDraggingMixedItems,
       pages.pages, pages.setPages]);
+
+  /**
+   * 🔁 Sync formFields back to pages whenever formFields change (for persistence)
+   * Skip during active user interactions to prevent flickering
+   */
+  useEffect(() => {
+    // CRITICAL: Skip formFields→pages sync during active user interactions
+    const isInteracting = formFields.isDraggingFormField ||
+                          formFields.isResizingFormField ||
+                          formFields.isCreatingFormField;
+
+    if (isInteracting) {
+      return;
+    }
+
+    // Prevent circular updates: if we're currently syncing pages to formFields, skip this
+    if (isSyncingPagesToFormFields.current) return;
+
+    const pageList = pages.pages ?? [];
+    if (!Array.isArray(pageList) || pageList.length === 0) return;
+
+    if (!formFields.formFields || formFields.formFields.length === 0) {
+      // If no formFields, check if this is different from what we loaded
+      if (lastFormFieldsFromPages.current !== '[]') {
+        isSyncingFormFieldsToPages.current = true;
+        // Use functional update to avoid overwriting other concurrent updates
+        pages.setPages(prevPages => prevPages.map(page => ({ ...page, formFields: [] })));
+        lastFormFieldsFromPages.current = '[]';
+        setTimeout(() => {
+          isSyncingFormFieldsToPages.current = false;
+        }, 0);
+      }
+      return;
+    }
+
+    // Create current formFields hash (without index property)
+    const formFieldsWithoutIndex = formFields.formFields.map(({ index, ...field }) => field);
+    const currentFormFieldsHash = JSON.stringify(formFieldsWithoutIndex);
+
+    // If formFields are the same as what we loaded from pages, skip update to prevent ping-pong
+    if (currentFormFieldsHash === lastFormFieldsFromPages.current) {
+      return;
+    }
+
+    // Set lock to prevent the other effect from triggering
+    isSyncingFormFieldsToPages.current = true;
+
+    // Group formFields by page index
+    const formFieldsByPage: Record<number, any[]> = {};
+    formFields.formFields.forEach((field) => {
+      const pageIdx = field.index ?? 0;
+      if (!formFieldsByPage[pageIdx]) formFieldsByPage[pageIdx] = [];
+
+      // Remove the 'index' property before storing back to pages
+      const { index, ...fieldWithoutIndex } = field;
+      formFieldsByPage[pageIdx].push(fieldWithoutIndex);
+    });
+
+    // Update pages with formFields using functional update to avoid overwriting other concurrent updates
+    pages.setPages(prevPages => {
+      return prevPages.map((page, pageIndex) => {
+        const pageFormFields = formFieldsByPage[pageIndex] || [];
+        return { ...page, formFields: pageFormFields };
+      });
+    });
+    lastFormFieldsFromPages.current = currentFormFieldsHash;
+
+    // Release lock after state updates are queued
+    setTimeout(() => {
+      isSyncingFormFieldsToPages.current = false;
+    }, 0);
+
+    // NOTE: Interaction flags MUST be in dependencies so effect runs when interaction ends
+  }, [formFields.formFields, formFields.isDraggingFormField,
+      formFields.isResizingFormField, formFields.isCreatingFormField,
+      pages.pages, pages.setPages]);
+
+  /**
+   * 🔁 Sync textItems back to pages whenever textItems change (for persistence)
+   * This is critical for AI-generated content to be saved to IndexedDB
+   */
+  useEffect(() => {
+    // Prevent circular updates: if we're currently syncing pages to text, skip this
+    if (isSyncingPagesToText.current) return;
+
+    const pageList = pages.pages ?? [];
+    if (!Array.isArray(pageList) || pageList.length === 0) return;
+
+    if (!text.textItems || text.textItems.length === 0) {
+      // If no textItems, check if this is different from what we loaded
+      if (lastTextFromPages.current !== '[]') {
+        isSyncingTextToPages.current = true;
+        // Use functional update to avoid overwriting other concurrent updates
+        pages.setPages(prevPages => prevPages.map(page => ({ ...page, textItems: [] })));
+        lastTextFromPages.current = '[]';
+        setTimeout(() => {
+          isSyncingTextToPages.current = false;
+        }, 0);
+      }
+      return;
+    }
+
+    // Create current textItems hash (without index property)
+    const textWithoutIndex = text.textItems.map(({ index, ...item }: any) => item);
+    const currentTextHash = JSON.stringify(textWithoutIndex);
+
+    // If textItems are the same as what we loaded from pages, skip update to prevent ping-pong
+    if (currentTextHash === lastTextFromPages.current) {
+      return;
+    }
+
+    // Set lock to prevent the other effect from triggering
+    isSyncingTextToPages.current = true;
+
+    // Group textItems by page index
+    const textByPage: Record<number, any[]> = {};
+    text.textItems.forEach((item: any) => {
+      const pageIdx = item.index ?? 0;
+      if (!textByPage[pageIdx]) textByPage[pageIdx] = [];
+
+      // Remove the 'index' property before storing back to pages
+      const { index, ...itemWithoutIndex } = item;
+      textByPage[pageIdx].push(itemWithoutIndex);
+    });
+
+    // Update pages with textItems using functional update to avoid overwriting other concurrent updates
+    pages.setPages(prevPages => {
+      return prevPages.map((page, pageIndex) => {
+        const pageText = textByPage[pageIndex] || [];
+        return { ...page, textItems: pageText };
+      });
+    });
+    lastTextFromPages.current = currentTextHash;
+
+    // Release lock after state updates are queued
+    setTimeout(() => {
+      isSyncingTextToPages.current = false;
+    }, 0);
+  }, [text.textItems, pages.pages, pages.setPages]);
 
   /**
    * Bind history sources once; the getters pull from refs so they see fresh arrays.
@@ -245,8 +415,10 @@ useLayoutEffect(() => {
       keyboard,
       share,
       shapes,
+      formFields,
+      ai,
     }),
-    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes]
+    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes, formFields, ai]
   );
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;
