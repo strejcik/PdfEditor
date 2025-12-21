@@ -9,7 +9,7 @@ function resolveCoord(norm, pixel, canvasSize) {
  * Draw all form fields for a specific page
  */
 export function drawFormFields(ctx, rect, pageIndex, state) {
-  const { formFields, selectedFormFieldIndex } = state;
+  const { formFields, selectedFormFieldIndex, selectedFormFieldIndexes } = state;
 
   if (!formFields || formFields.length === 0) return;
 
@@ -49,8 +49,9 @@ export function drawFormFields(ctx, rect, pageIndex, state) {
         console.warn("Unknown form field type:", field.type);
     }
 
-    // Draw selection highlight
-    const isSelected = globalIndex === selectedFormFieldIndex;
+    // Draw selection highlight (single selection OR multi-selection)
+    const isSelected = globalIndex === selectedFormFieldIndex ||
+                       (selectedFormFieldIndexes && selectedFormFieldIndexes.includes(globalIndex));
 
     if (isSelected) {
       ctx.save();

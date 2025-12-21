@@ -263,13 +263,16 @@ useEffect(() => {
     formFields: {
       formFields, setFormFields,
       selectedFormFieldIndex, setSelectedFormFieldIndex,
+      selectedFormFieldIndexes, setSelectedFormFieldIndexes,
       isDraggingFormField, setIsDraggingFormField,
+      isDraggingMultipleFormFields, setIsDraggingMultipleFormFields,
       isResizingFormField, setIsResizingFormField,
       isCreatingFormField,
       activeFormFieldTool, setActiveFormFieldTool,
       formFieldCreationStart, formFieldCreationCurrent,
       dragStart: formFieldDragStart, setDragStart: setFormFieldDragStart,
       initialField, setInitialField,
+      initialMultiFields, setInitialMultiFields,
       resizeStart: formFieldResizeStart, setResizeStart: setFormFieldResizeStart,
       resizeHandle: formFieldResizeHandle, setResizeHandle: setFormFieldResizeHandle,
       initialSize: formFieldInitialSize, setInitialSize: setFormFieldInitialSize,
@@ -363,6 +366,7 @@ const requestCanvasDraw = (page) => {
       activePage,
       pageList,
       textItems,
+      imageItems,
       shapeItems,
       formFields,
       isCreatingShape,
@@ -384,6 +388,7 @@ const requestCanvasDraw = (page) => {
       activePage: latestStateRef.current.activePage,
       pageList: latestStateRef.current.pageList,
       textItems: latestStateRef.current.textItems,
+      imageItems: latestStateRef.current.imageItems,
       shapeItems: latestStateRef.current.shapeItems,
       formFields: latestStateRef.current.formFields,
       isCreatingShape: latestStateRef.current.isCreatingShape,
@@ -395,12 +400,13 @@ const requestCanvasDraw = (page) => {
     });
     getMethodsRef.current = {
       setTextItems,
+      setImageItems,
       setPages,
       setActivePage,
       setShapeItems,
       setFormFields,
     }
-  }, [activePage, pageList, textItems, shapeItems, formFields, isCreatingShape, activeShapeTool, shapeCreationStart, shapeCreationCurrent, freehandPoints, cursorPosition]);
+  }, [activePage, pageList, textItems, imageItems, shapeItems, formFields, isCreatingShape, activeShapeTool, shapeCreationStart, shapeCreationCurrent, freehandPoints, cursorPosition]);
 
 
 
@@ -489,6 +495,7 @@ useEffect(() => {
         // Form fields state
         formFields,
         selectedFormFieldIndex,
+        selectedFormFieldIndexes,
         isCreatingFormField,
         formFieldCreationStart,
         formFieldCreationCurrent,
@@ -537,6 +544,7 @@ useEffect(() => {
               // Form fields state
               formFields,
               selectedFormFieldIndex,
+              selectedFormFieldIndexes,
               isCreatingFormField,
               formFieldCreationStart,
               formFieldCreationCurrent,
@@ -584,6 +592,7 @@ useEffect(() => {
   freehandPoints,
   formFields,
   selectedFormFieldIndex,
+  selectedFormFieldIndexes,
   isCreatingFormField,
   formFieldCreationStart,
   formFieldCreationCurrent,
@@ -729,16 +738,29 @@ const wrappedMouseDown = (e) => {
     activePage,
     activeFormFieldTool,
     formFields,
+    textItems,
+    shapeItems,
     startCreatingFormField,
     selectedFormFieldIndex,
     setSelectedFormFieldIndex,
+    selectedFormFieldIndexes,
+    setSelectedFormFieldIndexes,
+    selectedTextIndexes,
+    selectedShapeIndexes,
     setIsDraggingFormField,
+    setIsDraggingMultipleFormFields,
+    setIsDraggingMixedItems,
     setIsResizingFormField,
+    setIsSelecting,
     setDragStart: setFormFieldDragStart,
+    setSelectionDragStart: setDragStart,
     setInitialField,
+    setInitialMultiFields,
+    setInitialMixedItemPositions,
     setResizeStart: setFormFieldResizeStart,
     setResizeHandle: setFormFieldResizeHandle,
     setInitialSize: setFormFieldInitialSize,
+    resolveTextLayoutForHit,
     // For clearing other selections
     setSelectedShapeIndex,
     setSelectedShapeIndexes,
@@ -749,9 +771,60 @@ const wrappedMouseDown = (e) => {
 
   if (formFieldHandled) return; // Form field handled it, don't propagate
 
-  // Clear form field selection when clicking elsewhere
-  if (selectedFormFieldIndex !== null) {
-    setSelectedFormFieldIndex(null);
+  // Check if click is on a selected text/shape that would trigger mixed-item dragging
+  // If so, don't clear form field selection yet - let handleMouseDown decide
+  const canvas = canvasRefs.current[activePage];
+  const rect = canvas?.getBoundingClientRect();
+  const cssX = rect ? e.clientX - rect.left : 0;
+  const cssY = rect ? e.clientY - rect.top : 0;
+  const ctx = canvas?.getContext('2d');
+
+  let clickedOnSelectedText = false;
+  let clickedOnSelectedShape = false;
+
+  // Check if clicking on a selected text item
+  if (canvas && ctx && selectedTextIndexes?.length > 0) {
+    for (const idx of selectedTextIndexes) {
+      const item = textItems[idx];
+      if (item && item.index === activePage) {
+        const L = resolveTextLayoutForHit(item, ctx, canvas);
+        const b = L.box;
+        if (cssX >= b.x && cssX <= b.x + b.w && cssY >= b.y && cssY <= b.y + b.h) {
+          clickedOnSelectedText = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Check if clicking on a selected shape
+  if (canvas && selectedShapeIndexes?.length > 0) {
+    for (const idx of selectedShapeIndexes) {
+      const shape = shapeItems[idx];
+      if (shape && shape.index === activePage) {
+        const shapeX = shape.xNorm != null ? shape.xNorm * rect.width : shape.x;
+        const shapeY = shape.yNormTop != null ? shape.yNormTop * rect.height : shape.y;
+        const shapeW = shape.widthNorm != null ? shape.widthNorm * rect.width : shape.width;
+        const shapeH = shape.heightNorm != null ? shape.heightNorm * rect.height : shape.height;
+        if (cssX >= shapeX && cssX <= shapeX + shapeW && cssY >= shapeY && cssY <= shapeY + shapeH) {
+          clickedOnSelectedShape = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Only clear form field selection if NOT clicking on a selected text/shape
+  // (which would trigger mixed-item dragging and needs the form field selection intact)
+  const preserveFormFieldSelection = (clickedOnSelectedText || clickedOnSelectedShape) && selectedFormFieldIndexes?.length > 0;
+
+  if (!preserveFormFieldSelection) {
+    if (selectedFormFieldIndex !== null && !selectedFormFieldIndexes?.length) {
+      setSelectedFormFieldIndex(null);
+    }
+    if (selectedFormFieldIndexes?.length > 0) {
+      setSelectedFormFieldIndexes([]);
+    }
   }
 
   // Next, try shape handler
@@ -761,6 +834,7 @@ const wrappedMouseDown = (e) => {
     activeShapeTool,
     shapeItems,
     textItems,
+    formFields,
     resolveTextLayoutForHit,
     startCreatingShape,
     selectedShapeIndex,
@@ -768,6 +842,7 @@ const wrappedMouseDown = (e) => {
     selectedShapeIndexes,
     setSelectedShapeIndexes,
     selectedTextIndexes,
+    selectedFormFieldIndexes,
     setSelectedTextIndex,
     setSelectedTextIndexes,
     setIsTextSelected,
@@ -810,6 +885,7 @@ const wrappedMouseDown = (e) => {
     editingIndex,
     imageItems,
     shapeItems,
+    formFields,
     resolveImageRectCss,
     setResizingImageIndex,
     setResizeStart,
@@ -825,6 +901,7 @@ const wrappedMouseDown = (e) => {
     selectedTextIndexes,
     setSelectedTextIndexes,
     selectedShapeIndexes,
+    selectedFormFieldIndexes,
     setSelectedShapeIndex,
     setSelectedShapeIndexes,
     setIsDragging,
@@ -847,11 +924,14 @@ const wrappedMouseMove = (e) => {
     isCreatingFormField,
     updateFormFieldCreation,
     isDraggingFormField,
+    isDraggingMultipleFormFields,
+    isDraggingMixedItems,
     isResizingFormField,
     selectedFormFieldIndex,
     formFields,
     dragStart: formFieldDragStart,
     initialField,
+    initialMultiFields,
     resizeStart: formFieldResizeStart,
     resizeHandle: formFieldResizeHandle,
     initialSize: formFieldInitialSize,
@@ -904,6 +984,7 @@ const wrappedMouseMove = (e) => {
     imageItems,
     textItems,
     shapeItems,
+    formFields,
     resolveImageRectCss,
     resolveTextLayoutForHit,
     selectedTextIndex,
@@ -912,6 +993,9 @@ const wrappedMouseMove = (e) => {
     selectedShapeIndexes,
     setSelectedShapeIndexes,
     setSelectedShapeIndex,
+    selectedFormFieldIndexes,
+    setSelectedFormFieldIndexes,
+    setSelectedFormFieldIndex,
     setTextItems,
     setShapeItems,
     draggedImageIndex,
@@ -921,6 +1005,7 @@ const wrappedMouseMove = (e) => {
     resizeStart,
     setResizeStart,
     isImageDragging,
+    setIsImageDragging,
     isDragging,
     isDraggingMixedItems,
     setIsDragging,
@@ -939,6 +1024,7 @@ const wrappedMouseMove = (e) => {
     updatePageItems,
     saveTextItemsToIndexedDB,
     updateShape,
+    updateFormField,
     requestCanvasDraw: () => drawCanvas(activePage),
   });
 };
@@ -951,8 +1037,10 @@ const wrappedMouseUp = (e) => {
     isCreatingFormField,
     finishCreatingFormField,
     isDraggingFormField,
+    isDraggingMultipleFormFields,
     isResizingFormField,
     setIsDraggingFormField,
+    setIsDraggingMultipleFormFields,
     setIsResizingFormField,
     pushSnapshotToUndo,
   });
@@ -991,6 +1079,7 @@ const wrappedMouseUp = (e) => {
     canvasRefs,
     activePage,
     isImageDragging,
+    draggedImageIndex,
     setIsImageDragging,
     setDraggedImageIndex,
     resizingImageIndex,
@@ -1008,6 +1097,9 @@ const wrappedMouseUp = (e) => {
     shapeItems,
     setSelectedShapeIndexes,
     setSelectedShapeIndex,
+    formFields,
+    setSelectedFormFieldIndexes,
+    setSelectedFormFieldIndex,
     isDragging,
     isDraggingMixedItems,
     setIsDragging,
@@ -1030,6 +1122,7 @@ const wrappedMouseUp = (e) => {
     isTextBoxEditEnabled,
     updatePageItems,
     saveTextItemsToIndexedDB,
+    saveImageItemsToIndexedDB,
     pageList,
     setPages,
   });

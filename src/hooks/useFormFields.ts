@@ -6,9 +6,11 @@ export function useFormFields() {
   // Core state
   const [formFields, setFormFields] = useState<FormFieldItem[]>([]);
   const [selectedFormFieldIndex, setSelectedFormFieldIndex] = useState<number | null>(null);
+  const [selectedFormFieldIndexes, setSelectedFormFieldIndexes] = useState<number[]>([]);
 
   // Interaction state
   const [isDraggingFormField, setIsDraggingFormField] = useState(false);
+  const [isDraggingMultipleFormFields, setIsDraggingMultipleFormFields] = useState(false);
   const [isResizingFormField, setIsResizingFormField] = useState(false);
   const [isCreatingFormField, setIsCreatingFormField] = useState(false);
   const [activeFormFieldTool, setActiveFormFieldTool] = useState<FormFieldType | null>(null);
@@ -18,6 +20,7 @@ export function useFormFields() {
   // Drag state
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [initialField, setInitialField] = useState<FormFieldItem | null>(null);
+  const [initialMultiFields, setInitialMultiFields] = useState<{ index: number; x: number; y: number }[]>([]);
 
   // Resize state
   const [resizeStart, setResizeStart] = useState<{ x: number; y: number } | null>(null);
@@ -166,8 +169,12 @@ export function useFormFields() {
     setFormFields,
     selectedFormFieldIndex,
     setSelectedFormFieldIndex,
+    selectedFormFieldIndexes,
+    setSelectedFormFieldIndexes,
     isDraggingFormField,
     setIsDraggingFormField,
+    isDraggingMultipleFormFields,
+    setIsDraggingMultipleFormFields,
     isResizingFormField,
     setIsResizingFormField,
     isCreatingFormField,
@@ -181,6 +188,8 @@ export function useFormFields() {
     setDragStart,
     initialField,
     setInitialField,
+    initialMultiFields,
+    setInitialMultiFields,
 
     // Resize state
     resizeStart,

@@ -36,6 +36,7 @@ export const useShare = () => {
     if (typeof s.state.activePage === "number") m.setActivePage?.(s.state.activePage);
     if (Array.isArray(s.state.pageList)) m.setPages?.(s.state.pageList);
     if (Array.isArray(s.state.textItems)) m.setTextItems?.(s.state.textItems);
+    if (Array.isArray(s.state.imageItems)) m.setImageItems?.(s.state.imageItems);
     if (Array.isArray(s.state.shapeItems)) m.setShapeItems?.(s.state.shapeItems);
     if (Array.isArray(s.state.formFields)) m.setFormFields?.(s.state.formFields);
 

@@ -395,7 +395,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         }
     }
 
-    // ======== 2) IMAGE: inside -> start drag ========
+    // ======== 2) IMAGE: inside -> prepare for potential drag (don't set isImageDragging yet) ========
     for (let index = 0; index < imageItems.length; index++) {
         const item = imageItems[index];
         if (item.index !== activePage) continue;
@@ -405,7 +405,8 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         if (cssX >= x && cssX <= x + w && cssY >= y && cssY <= y + h) {
         setSelectedImageIndex(index);
         setDraggedImageIndex(index);
-        setIsImageDragging(true);
+        // DON'T set isImageDragging here - only set it when actual movement occurs
+        // This prevents simple clicks from triggering drag behavior and sync effects
         setDragStart({
             x: cssX,
             y: cssY,
@@ -452,8 +453,11 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
 
     // If we found a text item that contains the cursor, select it
     if (bestTextIndex !== null && bestTextScore < 10000) {
-        // Check if this is a mixed selection (both text and shapes selected) BEFORE modifying text selection
-        const hasMixedSelection = selectedShapeIndexes && selectedShapeIndexes.length > 0 &&
+        // Check if this is a mixed selection (text, shapes, or form fields selected) BEFORE modifying text selection
+        const { formFields, selectedFormFieldIndexes } = opts;
+        const hasShapeSelection = selectedShapeIndexes && selectedShapeIndexes.length > 0;
+        const hasFormFieldSelection = selectedFormFieldIndexes && selectedFormFieldIndexes.length > 0;
+        const hasMixedSelection = (hasShapeSelection || hasFormFieldSelection) &&
                                   selectedTextIndexes.length > 0 &&
                                   selectedTextIndexes.includes(bestTextIndex);
 
@@ -463,7 +467,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
             setIsDraggingMixedItems(true);
             setDragStart({ x: cssX, y: cssY });
 
-            // Store initial positions for both text items and shapes
+            // Store initial positions for all selected items
             const textPositions = selectedTextIndexes.map((i:any) => {
                 const Li = resolveTextLayoutForHit(textItems[i], ctx, canvas);
                 return {
@@ -475,7 +479,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
                 };
             });
 
-            const shapePositions = selectedShapeIndexes.map((i:any) => {
+            const shapePositions = (selectedShapeIndexes || []).map((i:any) => {
                 const shape = shapeItems[i];
                 // Resolve coordinates: prefer normalized, convert to pixels
                 // Use the outer rect (from line 362) to ensure consistent coordinate calculations
@@ -491,7 +495,20 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
                 };
             });
 
-            setInitialMixedItemPositions([...textPositions, ...shapePositions]);
+            const formFieldPositions = (selectedFormFieldIndexes || []).map((i:any) => {
+                const field = formFields[i];
+                const resolvedX = field.xNorm != null ? field.xNorm * rect.width : field.x;
+                const resolvedY = field.yNormTop != null ? field.yNormTop * rect.height : field.y;
+                return {
+                    type: 'formField',
+                    index: i,
+                    x: resolvedX,
+                    y: resolvedY,
+                    activePage: field.index
+                };
+            });
+
+            setInitialMixedItemPositions([...textPositions, ...shapePositions, ...formFieldPositions]);
             setIsSelecting(false);
             return;
         }
@@ -615,6 +632,7 @@ const computeScaledTargetFont = (textBox:any) => {
         saveImageItemsToIndexedDB,
         updatePageItems,
         isImageDragging,
+        setIsImageDragging,
         draggedImageIndex,
         dragStart,
         isDragging,
@@ -701,7 +719,7 @@ if (isResizing && textBox) {
           w: Math.abs(cssX - selectionStart.x),
           h: Math.abs(cssY - selectionStart.y),
         };
-    
+
         const selected = [];
         for (let i = 0; i < textItems.length; i++) {
           const it = textItems[i];
@@ -754,6 +772,41 @@ if (isResizing && textBox) {
           setSelectedShapeIndex(null);
         }
 
+        // Also check for form fields in selection rectangle (real-time)
+        const { formFields, setSelectedFormFieldIndexes, setSelectedFormFieldIndex } = opts;
+        if (formFields && setSelectedFormFieldIndexes) {
+          const selectedFields = [];
+          for (let i = 0; i < formFields.length; i++) {
+            const field = formFields[i];
+            if (field.index !== activePage) continue;
+
+            const fieldX = field.xNorm != null ? field.xNorm * rect.width : field.x;
+            const fieldY = field.yNormTop != null ? field.yNormTop * rect.height : field.y;
+            const fieldW = field.widthNorm != null ? field.widthNorm * rect.width : field.width;
+            const fieldH = field.heightNorm != null ? field.heightNorm * rect.height : field.height;
+
+            const fieldBounds = { x: fieldX, y: fieldY, w: fieldW, h: fieldH };
+
+            const intersects =
+              fieldBounds.x < rectSel.x + rectSel.w &&
+              fieldBounds.x + fieldBounds.w > rectSel.x &&
+              fieldBounds.y < rectSel.y + rectSel.h &&
+              fieldBounds.y + fieldBounds.h > rectSel.y;
+
+            if (intersects) {
+              selectedFields.push(i);
+            }
+          }
+
+          if (selectedFields.length > 0) {
+            setSelectedFormFieldIndexes(selectedFields);
+            setSelectedFormFieldIndex?.(selectedFields[selectedFields.length - 1]);
+          } else {
+            setSelectedFormFieldIndexes([]);
+            setSelectedFormFieldIndex?.(null);
+          }
+        }
+
         drawCanvas(activePage);
         return;
       }
@@ -787,52 +840,67 @@ if (isResizing && textBox) {
     
         item.width  = newW;               // pixels
         item.height = newH;
-    
+
         // normalized (UNCLAMPED)
         item.widthNorm  = rect.width  ? (newW / rect.width)  : 0;
         item.heightNorm = rect.height ? (newH / rect.height) : 0;
-    
+
         setImageItems(updated);
-        saveImageItemsToIndexedDB(updated);
-        updatePageItems('imageItems', updated.filter(i => i.index === activePage));
-        drawCanvas(activePage);
-        return;
-      }
-    
-      // === IMAGE DRAGGING ===
-      if (isImageDragging && draggedImageIndex !== null) {
-        const updated = [...imageItems];
-        const item = updated[draggedImageIndex];
-        if (!item || item.index !== activePage) return;
-    
-        const grabDX = dragStart?.grabDX ?? 0;
-        const grabDY = dragStart?.grabDY ?? 0;
-    
-        const newX = cssX - grabDX; // can be negative
-        const newY = cssY - grabDY;
-    
-        item.x = newX;
-        item.y = newY;
-    
-        // UNCLAMPED normalized
-        item.xNorm    = rect.width  ? (newX / rect.width)  : 0;
-        item.yNormTop = rect.height ? (newY / rect.height) : 0;
-    
-        setImageItems(updated);
-        saveImageItemsToIndexedDB(updated);
-        updatePageItems('imageItems', updated.filter(i => i.index === activePage));
+        // Skip updatePageItems during resize - let sync effect handle it when interaction ends
+        // Skip saveImageItemsToIndexedDB during resize for performance - save on mouseUp
         drawCanvas(activePage);
         return;
       }
 
-      // === MIXED-ITEM DRAGGING (Text + Shapes) ===
+      // === IMAGE DRAGGING (or potential drag) ===
+      // Check for potential drag: draggedImageIndex is set but isImageDragging may not be yet
+      if (draggedImageIndex !== null && dragStart) {
+        const updated = [...imageItems];
+        const item = updated[draggedImageIndex];
+        if (!item || item.index !== activePage) return;
+
+        // Calculate movement distance
+        const moveDX = Math.abs(cssX - dragStart.x);
+        const moveDY = Math.abs(cssY - dragStart.y);
+        const DRAG_THRESHOLD = 3; // pixels
+
+        // Only set isImageDragging when actual movement beyond threshold occurs
+        if (!isImageDragging && (moveDX > DRAG_THRESHOLD || moveDY > DRAG_THRESHOLD)) {
+          setIsImageDragging(true);
+        }
+
+        // Only update position if we're actually dragging (beyond threshold)
+        if (isImageDragging || moveDX > DRAG_THRESHOLD || moveDY > DRAG_THRESHOLD) {
+          const grabDX = dragStart?.grabDX ?? 0;
+          const grabDY = dragStart?.grabDY ?? 0;
+
+          const newX = cssX - grabDX; // can be negative
+          const newY = cssY - grabDY;
+
+          item.x = newX;
+          item.y = newY;
+
+          // UNCLAMPED normalized
+          item.xNorm    = rect.width  ? (newX / rect.width)  : 0;
+          item.yNormTop = rect.height ? (newY / rect.height) : 0;
+
+          setImageItems(updated);
+          // Skip updatePageItems during drag - let sync effect handle it when interaction ends
+          // Skip saveImageItemsToIndexedDB during drag for performance - save on mouseUp
+          drawCanvas(activePage);
+        }
+        return;
+      }
+
+      // === MIXED-ITEM DRAGGING (Text + Shapes + FormFields) ===
       if (isDraggingMixedItems && dragStart && initialMixedItemPositions && initialMixedItemPositions.length > 0) {
         const dx = cssX - dragStart.x;
         const dy = cssY - dragStart.y;
 
         const updatedText = [...textItems];
+        const { formFields, updateFormField } = opts;
 
-        // Update all mixed items (both text and shapes)
+        // Update all mixed items (text, shapes, and form fields)
         initialMixedItemPositions.forEach((pos:any) => {
           if (pos.type === 'text') {
             const item = updatedText[pos.index];
@@ -874,6 +942,19 @@ if (isResizing && textBox) {
               // Use updateShape (same as multi-shape dragging) to avoid page sync conflicts
               updateShape(pos.index, updates);
             }
+          } else if (pos.type === 'formField' && formFields && updateFormField) {
+            const field = formFields[pos.index];
+            if (field && field.index === activePage) {
+              const newX = pos.x + dx;
+              const newY = pos.y + dy;
+
+              updateFormField(pos.index, {
+                x: newX,
+                y: newY,
+                xNorm: newX / rect.width,
+                yNormTop: newY / rect.height,
+              });
+            }
           }
         });
 
@@ -883,6 +964,7 @@ if (isResizing && textBox) {
         // saveTextItemsToIndexedDB(updatedText); // Also skip DB save during drag for performance
 
         // Shapes are already updated via updateShape calls (same pattern as multi-shape dragging)
+        // Form fields are updated via updateFormField calls
         // Use requestCanvasDraw to defer redraw to next animation frame
         // This ensures shapes have been updated before redrawing
         requestCanvasDraw();
@@ -1086,6 +1168,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         editingIndex,
         textItems,
         shapeItems,
+        imageItems,
         resolveTextLayoutForHit,
         setSelectedTextIndexes,
         setSelectedShapeIndexes,
@@ -1100,6 +1183,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         selectionStart,
         resizingImageIndex,
         isImageDragging,
+        draggedImageIndex,
         isDragging,
         isDraggingMixedItems,
         setIsResizing,
@@ -1120,6 +1204,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         setSelectionStart,
         updatePageItems,
         saveTextItemsToIndexedDB,
+        saveImageItemsToIndexedDB,
         pageList,
         setPages,
         history
@@ -1165,9 +1250,10 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
   }
 
   if (isDraggingMixedItems) {
-    // CRITICAL: Manually sync BOTH text AND shapes to pages at once
-    // This prevents the race condition where pages→shapes sync runs before shapes→pages
-    // Build updated pages with both text items and shapes
+    // CRITICAL: Manually sync text, shapes, AND formFields to pages at once
+    // This prevents the race condition where pages→items sync runs before items→pages
+    // Build updated pages with all item types
+    const { formFields } = opts;
     const updatedPages = pageList.map((page:any, pageIndex:any) => {
       if (pageIndex !== activePage) return page;
 
@@ -1177,10 +1263,14 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
       // Update shapes for this page
       const pageShapes = shapeItems.filter((s:any) => s.index === pageIndex).map(({ ...shape }) => shape);
 
+      // Update form fields for this page
+      const pageFormFields = (formFields || []).filter((f:any) => f.index === pageIndex).map(({ ...field }) => field);
+
       return {
         ...page,
         textItems: pageTextItems,
-        shapes: pageShapes
+        shapes: pageShapes,
+        formFields: pageFormFields
       };
     });
 
@@ -1203,12 +1293,24 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     });
   }
 
-  if (resizingImageIndex !== null) setResizingImageIndex(null);
-  if (isImageDragging) {
-    setIsImageDragging(false);
+  if (resizingImageIndex !== null) {
+    // Save to IndexedDB when resize ends (we skipped this during resize for performance)
+    saveImageItemsToIndexedDB?.(imageItems);
+    setResizingImageIndex(null);
+    pushSnapshotToUndo(activePage);
+  }
+
+  // Handle image interaction end (either actual drag or just a click)
+  if (draggedImageIndex !== null) {
+    if (isImageDragging) {
+      // Actual drag occurred - save and push to undo
+      saveImageItemsToIndexedDB?.(imageItems);
+      pushSnapshotToUndo(activePage);
+      setIsImageDragging(false);
+    }
+    // Always clear draggedImageIndex and dragStart when mouseUp
     setDraggedImageIndex(null);
     setDragStart({ x: 0, y: 0 });
-    pushSnapshotToUndo(activePage);
   }
 
       if (isSelecting) {
@@ -1281,6 +1383,41 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
         } else {
           setSelectedShapeIndexes([]);
           setSelectedShapeIndex(null);
+        }
+
+        // Also check for form fields in selection rectangle
+        const { formFields, setSelectedFormFieldIndexes, setSelectedFormFieldIndex } = opts;
+        if (formFields && setSelectedFormFieldIndexes) {
+          const selectedFormFieldIdxs = [];
+          for (let i = 0; i < formFields.length; i++) {
+            const field = formFields[i];
+            if (field.index !== activePage) continue;
+
+            const fieldX = field.xNorm != null ? field.xNorm * rect.width : field.x;
+            const fieldY = field.yNormTop != null ? field.yNormTop * rect.height : field.y;
+            const fieldW = field.widthNorm != null ? field.widthNorm * rect.width : field.width;
+            const fieldH = field.heightNorm != null ? field.heightNorm * rect.height : field.height;
+
+            const fieldBounds = { x: fieldX, y: fieldY, width: fieldW, height: fieldH };
+
+            const intersects =
+              selectionRect.x < fieldBounds.x + fieldBounds.width &&
+              selectionRect.x + selectionRect.width > fieldBounds.x &&
+              selectionRect.y < fieldBounds.y + fieldBounds.height &&
+              selectionRect.y + selectionRect.height > fieldBounds.y;
+
+            if (intersects) {
+              selectedFormFieldIdxs.push(i);
+            }
+          }
+
+          if (selectedFormFieldIdxs.length > 0) {
+            setSelectedFormFieldIndexes(selectedFormFieldIdxs);
+            setSelectedFormFieldIndex?.(selectedFormFieldIdxs[selectedFormFieldIdxs.length - 1]);
+          } else {
+            setSelectedFormFieldIndexes([]);
+            setSelectedFormFieldIndex?.(null);
+          }
         }
 
         if (isTextBoxEditEnabled && !textBox && selectionStart && selectionEnd) {

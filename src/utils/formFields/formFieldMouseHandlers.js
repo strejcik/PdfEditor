@@ -9,16 +9,29 @@ export function handleFormFieldMouseDown(e, params) {
     activePage,
     activeFormFieldTool,
     formFields,
+    textItems,
+    shapeItems,
     startCreatingFormField,
     selectedFormFieldIndex,
     setSelectedFormFieldIndex,
+    selectedFormFieldIndexes,
+    setSelectedFormFieldIndexes,
+    selectedTextIndexes,
+    selectedShapeIndexes,
     setIsDraggingFormField,
+    setIsDraggingMultipleFormFields,
+    setIsDraggingMixedItems,
     setIsResizingFormField,
+    setIsSelecting,
     setDragStart,
+    setSelectionDragStart,
     setInitialField,
+    setInitialMultiFields,
+    setInitialMixedItemPositions,
     setResizeStart,
     setResizeHandle,
     setInitialSize,
+    resolveTextLayoutForHit,
     // For clearing other selections
     setSelectedShapeIndex,
     setSelectedShapeIndexes,
@@ -80,18 +93,19 @@ export function handleFormFieldMouseDown(e, params) {
   if (clickedFieldIndex !== null) {
     const field = formFields[clickedFieldIndex];
 
-    // Clear other selections when selecting a form field
-    setSelectedShapeIndex?.(null);
-    setSelectedShapeIndexes?.([]);
-    setSelectedTextIndex?.(null);
-    setSelectedTextIndexes?.([]);
-    setIsTextSelected?.(false);
-
     // Check resize handles on clicked field
     const handle = getFormFieldResizeHandle(field, mouseX, mouseY, rect.width, rect.height);
 
     if (handle) {
+      // Clear other selections when resizing
+      setSelectedShapeIndex?.(null);
+      setSelectedShapeIndexes?.([]);
+      setSelectedTextIndex?.(null);
+      setSelectedTextIndexes?.([]);
+      setIsTextSelected?.(false);
+
       setSelectedFormFieldIndex(clickedFieldIndex);
+      setSelectedFormFieldIndexes?.([]);
       setIsResizingFormField(true);
       setResizeStart({ x: mouseX, y: mouseY });
       setResizeHandle(handle);
@@ -109,11 +123,105 @@ export function handleFormFieldMouseDown(e, params) {
       });
       return true;
     } else {
-      // Start dragging
+      // Check if this is part of a multi-selection
+      const isPartOfMultiSelection = selectedFormFieldIndexes && selectedFormFieldIndexes.includes(clickedFieldIndex);
+
+      // Check for mixed selection (text + shapes + form fields)
+      const hasTextSelection = selectedTextIndexes && selectedTextIndexes.length > 0;
+      const hasShapeSelection = selectedShapeIndexes && selectedShapeIndexes.length > 0;
+      const hasFormFieldSelection = selectedFormFieldIndexes && selectedFormFieldIndexes.length > 0;
+
+      // Determine if we have a mixed selection (at least 2 different types of items selected)
+      const selectionTypeCount = (hasTextSelection ? 1 : 0) + (hasShapeSelection ? 1 : 0) + (hasFormFieldSelection ? 1 : 0);
+      const isMixedSelection = selectionTypeCount >= 2;
+
+      // If clicked form field is part of a mixed selection, start mixed-item dragging
+      if (isMixedSelection && isPartOfMultiSelection) {
+        const ctx = canvas.getContext('2d');
+        setIsDraggingMixedItems?.(true);
+        setIsSelecting?.(false);
+        setSelectionDragStart?.({ x: mouseX, y: mouseY });
+
+        // Store initial positions for all selected items
+        const textPositions = (selectedTextIndexes || []).map(i => {
+          const textItem = textItems[i];
+          const Li = resolveTextLayoutForHit?.(textItem, ctx, canvas);
+          return {
+            type: 'text',
+            index: i,
+            xTop: Li?.x || textItem.x,
+            yTop: Li?.topY || textItem.y,
+            activePage: textItem.index
+          };
+        });
+
+        const shapePositions = (selectedShapeIndexes || []).map(i => {
+          const shape = shapeItems[i];
+          const resolvedX = shape.xNorm != null ? shape.xNorm * rect.width : shape.x;
+          const resolvedY = shape.yNormTop != null ? shape.yNormTop * rect.height : shape.y;
+          return {
+            type: 'shape',
+            index: i,
+            x: resolvedX,
+            y: resolvedY,
+            activePage: shape.index,
+            points: shape.points
+          };
+        });
+
+        const formFieldPositions = (selectedFormFieldIndexes || []).map(i => {
+          const formField = formFields[i];
+          const resolvedX = formField.xNorm != null ? formField.xNorm * rect.width : formField.x;
+          const resolvedY = formField.yNormTop != null ? formField.yNormTop * rect.height : formField.y;
+          return {
+            type: 'formField',
+            index: i,
+            x: resolvedX,
+            y: resolvedY,
+            activePage: formField.index
+          };
+        });
+
+        setInitialMixedItemPositions?.([...textPositions, ...shapePositions, ...formFieldPositions]);
+        return true;
+      }
+
+      // If clicking on a form field that's part of multi-form-field selection
+      if (isPartOfMultiSelection && selectedFormFieldIndexes.length > 1) {
+        setIsDraggingMultipleFormFields?.(true);
+        setDragStart({ x: mouseX, y: mouseY });
+
+        // Store initial positions of all selected form fields
+        setInitialMultiFields?.(selectedFormFieldIndexes.map(index => {
+          const f = formFields[index];
+          const resolvedX = f.xNorm != null ? f.xNorm * rect.width : f.x;
+          const resolvedY = f.yNormTop != null ? f.yNormTop * rect.height : f.y;
+          return {
+            index,
+            x: resolvedX,
+            y: resolvedY
+          };
+        }));
+        return true;
+      }
+
+      // Single form field selection - clear other selections
+      setSelectedShapeIndex?.(null);
+      setSelectedShapeIndexes?.([]);
+      setSelectedTextIndex?.(null);
+      setSelectedTextIndexes?.([]);
+      setIsTextSelected?.(false);
+
+      // Start dragging single form field
       setSelectedFormFieldIndex(clickedFieldIndex);
+      setSelectedFormFieldIndexes?.([]);
       setIsDraggingFormField(true);
       setDragStart({ x: mouseX, y: mouseY });
-      setInitialField({ ...field });
+
+      // Resolve coordinates before storing - use normalized values if available
+      const resolvedX = field.xNorm != null ? field.xNorm * rect.width : field.x;
+      const resolvedY = field.yNormTop != null ? field.yNormTop * rect.height : field.y;
+      setInitialField({ ...field, x: resolvedX, y: resolvedY });
       return true;
     }
   }
@@ -132,11 +240,14 @@ export function handleFormFieldMouseMove(e, params) {
     isCreatingFormField,
     updateFormFieldCreation,
     isDraggingFormField,
+    isDraggingMultipleFormFields,
+    isDraggingMixedItems,
     isResizingFormField,
     selectedFormFieldIndex,
     formFields,
     dragStart,
     initialField,
+    initialMultiFields,
     resizeStart,
     resizeHandle,
     initialSize,
@@ -156,7 +267,33 @@ export function handleFormFieldMouseMove(e, params) {
     return true;
   }
 
-  // Priority 2: If dragging a form field, update position
+  // Priority 1.5: If dragging mixed items, defer to text handler
+  if (isDraggingMixedItems) {
+    return false; // Let useMouse.ts handle mixed-item dragging
+  }
+
+  // Priority 2: If dragging multiple form fields, update all positions
+  if (isDraggingMultipleFormFields && dragStart && initialMultiFields && initialMultiFields.length > 0) {
+    const dx = mouseX - dragStart.x;
+    const dy = mouseY - dragStart.y;
+
+    // Update all selected form fields
+    initialMultiFields.forEach(({ index, x, y }) => {
+      const newX = x + dx;
+      const newY = y + dy;
+
+      updateFormField(index, {
+        x: newX,
+        y: newY,
+        xNorm: newX / rect.width,
+        yNormTop: newY / rect.height,
+      });
+    });
+
+    return true;
+  }
+
+  // Priority 3: If dragging a single form field, update position
   if (isDraggingFormField && selectedFormFieldIndex !== null && dragStart && initialField) {
     const dx = mouseX - dragStart.x;
     const dy = mouseY - dragStart.y;
@@ -174,7 +311,7 @@ export function handleFormFieldMouseMove(e, params) {
     return true;
   }
 
-  // Priority 3: If resizing a form field, update size
+  // Priority 4: If resizing a form field, update size
   if (isResizingFormField && selectedFormFieldIndex !== null && resizeStart && initialSize && resizeHandle) {
     const dx = mouseX - resizeStart.x;
     const dy = mouseY - resizeStart.y;
@@ -251,8 +388,10 @@ export function handleFormFieldMouseUp(e, params) {
     isCreatingFormField,
     finishCreatingFormField,
     isDraggingFormField,
+    isDraggingMultipleFormFields,
     isResizingFormField,
     setIsDraggingFormField,
+    setIsDraggingMultipleFormFields,
     setIsResizingFormField,
     pushSnapshotToUndo,
   } = params;
@@ -270,10 +409,11 @@ export function handleFormFieldMouseUp(e, params) {
   }
 
   // Priority 2: If dragging/resizing, stop
-  if (isDraggingFormField || isResizingFormField) {
+  if (isDraggingFormField || isDraggingMultipleFormFields || isResizingFormField) {
     pushSnapshotToUndo(activePage);
-    setIsDraggingFormField(false);
-    setIsResizingFormField(false);
+    setIsDraggingFormField?.(false);
+    setIsDraggingMultipleFormFields?.(false);
+    setIsResizingFormField?.(false);
     return true;
   }
 

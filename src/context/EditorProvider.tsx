@@ -81,10 +81,13 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const isSyncingFormFieldsToPages = useRef(false);
   const isSyncingPagesToText = useRef(false);
   const isSyncingTextToPages = useRef(false);
+  const isSyncingPagesToImages = useRef(false);
+  const isSyncingImagesToPages = useRef(false);
   // Store last synced hashes to prevent ping-pong
   const lastShapesFromPages = useRef<string | null>(null);
   const lastFormFieldsFromPages = useRef<string | null>(null);
   const lastTextFromPages = useRef<string | null>(null);
+  const lastImagesFromPages = useRef<string | null>(null);
 
   useEffect(() => {
     textRef.current = text;
@@ -103,11 +106,17 @@ export function EditorProvider({ children }: PropsWithChildren) {
     if (isSyncingShapesToPages.current) return;
     if (isSyncingFormFieldsToPages.current) return;
     if (isSyncingTextToPages.current) return;
+    if (isSyncingImagesToPages.current) return;
 
-    // CRITICAL: Skip pages→shapes sync during mixed-item dragging
-    // Otherwise updatePageItems (for text) will trigger this effect, which rehydrates shapes
-    // from pages with OLD positions, overwriting the updateShape changes
+    // CRITICAL: Skip pages→items sync during active user interactions
+    // Otherwise updatePageItems will trigger this effect, which rehydrates items
+    // from pages with OLD positions, overwriting the current changes
     if (selection.isDraggingMixedItems) return;
+
+    // CRITICAL: Skip pages→items sync during image interactions to prevent flickering
+    // Also check draggedImageIndex - it's set on click but isImageDragging is only set on actual drag
+    const isImageInteracting = images.isImageDragging || images.resizingImageIndex !== null || images.draggedImageIndex !== null;
+    if (isImageInteracting) return;
 
     // CRITICAL: Skip pages→shapes sync in viewer mode
     // In viewer mode, shapes are synced directly via shapeItems broadcast, not through pages
@@ -121,6 +130,7 @@ export function EditorProvider({ children }: PropsWithChildren) {
     isSyncingPagesToShapes.current = true;
     isSyncingPagesToFormFields.current = true;
     isSyncingPagesToText.current = true;
+    isSyncingPagesToImages.current = true;
 
     // Extract all items from pages and add index property to each item
     const allText = pageList.flatMap((p, pageIndex) =>
@@ -148,6 +158,11 @@ export function EditorProvider({ children }: PropsWithChildren) {
     const textWithoutIndex = allText.map(({ index, ...item }) => item);
     lastTextFromPages.current = JSON.stringify(textWithoutIndex);
 
+    // Store hash of images we just loaded (without index and data properties for comparison)
+    // Exclude 'data' from hash as it's large and doesn't change during drag/resize
+    const imagesWithoutIndexAndData = allImages.map(({ index, data, ...img }) => img);
+    const newImagesHash = JSON.stringify(imagesWithoutIndexAndData);
+
     // Update item stores
     // Only sync text and shapes from pages if NOT in viewer mode
     // In viewer mode, both text and shapes come directly from the broadcast
@@ -157,14 +172,22 @@ export function EditorProvider({ children }: PropsWithChildren) {
       formFields.setFormFields?.(allFormFields);
     }
 
-    // Images always sync from pages (no real-time broadcast needed)
-    images.setImageItems?.(allImages);
+    // Images sync from pages - only update if hash differs to prevent unnecessary re-renders
+    // This prevents flickering when images→pages sync has already updated pages with current state
+    // Also skip if we already have images and we're not in viewer mode (images are source of truth)
+    const shouldUpdateImages = newImagesHash !== lastImagesFromPages.current &&
+                               (isViewer || images.imageItems.length === 0 || allImages.length !== images.imageItems.length);
+    if (shouldUpdateImages) {
+      images.setImageItems?.(allImages);
+      lastImagesFromPages.current = newImagesHash;
+    }
 
     // Release locks after state updates are queued
     setTimeout(() => {
       isSyncingPagesToShapes.current = false;
       isSyncingPagesToFormFields.current = false;
       isSyncingPagesToText.current = false;
+      isSyncingPagesToImages.current = false;
     }, 0);
   }, [pages.pages, text.setTextItems, images.setImageItems, shapes.setShapeItems, formFields.setFormFields, selection.isDraggingMixedItems, share.mode]);
 
@@ -251,8 +274,10 @@ export function EditorProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     // CRITICAL: Skip formFields→pages sync during active user interactions
     const isInteracting = formFields.isDraggingFormField ||
+                          formFields.isDraggingMultipleFormFields ||
                           formFields.isResizingFormField ||
-                          formFields.isCreatingFormField;
+                          formFields.isCreatingFormField ||
+                          selection.isDraggingMixedItems;
 
     if (isInteracting) {
       return;
@@ -316,9 +341,97 @@ export function EditorProvider({ children }: PropsWithChildren) {
     }, 0);
 
     // NOTE: Interaction flags MUST be in dependencies so effect runs when interaction ends
-  }, [formFields.formFields, formFields.isDraggingFormField,
-      formFields.isResizingFormField, formFields.isCreatingFormField,
+  }, [formFields.formFields, formFields.isDraggingFormField, formFields.isDraggingMultipleFormFields,
+      formFields.isResizingFormField, formFields.isCreatingFormField, selection.isDraggingMixedItems,
       pages.pages, pages.setPages]);
+
+  // Track if actual image modification occurred (drag or resize, not just click)
+  const wasImageModified = useRef(false);
+
+  /**
+   * 🔁 Sync imageItems back to pages whenever imageItems change (for persistence)
+   * Skip during active interactions but sync when interaction ends
+   */
+  useEffect(() => {
+    // Check for actual position-modifying interactions (not just click/selection)
+    const isModifying = images.isImageDragging || images.resizingImageIndex !== null;
+    // Check for any interaction (including click/selection)
+    const isInteracting = isModifying || images.draggedImageIndex !== null;
+
+    // Track if actual modification occurred
+    if (isModifying) {
+      wasImageModified.current = true;
+    }
+
+    // Skip sync during any interaction
+    if (isInteracting) {
+      return;
+    }
+
+    // If no actual modification occurred (just a click), skip sync
+    const modificationJustEnded = wasImageModified.current;
+    wasImageModified.current = false;
+
+    if (!modificationJustEnded) {
+      return; // Just a click, no need to sync
+    }
+
+    // Prevent circular updates: if we're currently syncing pages to images, skip this
+    if (isSyncingPagesToImages.current) return;
+
+    const pageList = pages.pages ?? [];
+    if (!Array.isArray(pageList) || pageList.length === 0) return;
+
+    if (!images.imageItems || images.imageItems.length === 0) {
+      // If no imageItems, check if this is different from what we loaded
+      if (lastImagesFromPages.current !== '[]') {
+        isSyncingImagesToPages.current = true;
+        pages.setPages(prevPages => prevPages.map(page => ({ ...page, imageItems: [] })));
+        lastImagesFromPages.current = '[]';
+        setTimeout(() => {
+          isSyncingImagesToPages.current = false;
+        }, 0);
+      }
+      return;
+    }
+
+    // Create current imageItems hash (without index and data properties)
+    const imagesWithoutIndexAndData = images.imageItems.map(({ index, data, ...img }: any) => img);
+    const currentImagesHash = JSON.stringify(imagesWithoutIndexAndData);
+
+    // If imageItems are the same as what we loaded from pages, skip update
+    if (currentImagesHash === lastImagesFromPages.current) {
+      return;
+    }
+
+    // Set lock to prevent the other effect from triggering
+    isSyncingImagesToPages.current = true;
+
+    // Group imageItems by page index
+    const imagesByPage: Record<number, any[]> = {};
+    images.imageItems.forEach((img: any) => {
+      const pageIdx = img.index ?? 0;
+      if (!imagesByPage[pageIdx]) imagesByPage[pageIdx] = [];
+      const { index, ...imgWithoutIndex } = img;
+      imagesByPage[pageIdx].push(imgWithoutIndex);
+    });
+
+    // Update pages with imageItems
+    pages.setPages(prevPages => {
+      return prevPages.map((page, pageIndex) => {
+        const pageImages = imagesByPage[pageIndex] || [];
+        return { ...page, imageItems: pageImages };
+      });
+    });
+    lastImagesFromPages.current = currentImagesHash;
+
+    // Also save to IndexedDB when sync happens
+    images.saveImageItemsToIndexedDB?.(images.imageItems);
+
+    setTimeout(() => {
+      isSyncingImagesToPages.current = false;
+    }, 0);
+  }, [images.imageItems, images.isImageDragging, images.resizingImageIndex, images.draggedImageIndex, pages.pages, pages.setPages]);
 
   /**
    * 🔁 Sync textItems back to pages whenever textItems change (for persistence)

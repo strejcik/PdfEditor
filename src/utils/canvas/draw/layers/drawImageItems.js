@@ -1,7 +1,24 @@
-const createImageElement = (data) => {
-      const img = new Image();
-      img.src = data;
-      return img;
+// Cache for Image elements to prevent recreating them on every draw
+const imageCache = new Map();
+
+/**
+ * Get or create a cached Image element for the given source
+ */
+function getCachedImage(src, onLoad) {
+  if (!src) return null;
+
+  // Check if we already have this image cached
+  if (imageCache.has(src)) {
+    return imageCache.get(src);
+  }
+
+  // Create new Image element and cache it
+  const img = new Image();
+  img.onload = onLoad;
+  img.src = src;
+  imageCache.set(src, img);
+
+  return img;
 }
 
 export function drawImageItems(ctx, rect, pageIndex, state) {
@@ -19,9 +36,15 @@ export function drawImageItems(ctx, rect, pageIndex, state) {
     const h    = hasNormSize ? Number(item.heightNorm) * rect.height : (Number(item.height) || 0);
 
     const src = item.data || item.src;
-    const imgEl = createImageElement(src); // keep your existing helper
+
+    // Use cached image - only trigger redraw once when image first loads
+    const imgEl = getCachedImage(src, () => {
+      // Only redraw once when image loads for the first time
+      requestAnimationFrame(() => state.redraw?.(pageIndex));
+    });
+
     if (!imgEl || !imgEl.complete || !imgEl.naturalWidth) {
-      if (imgEl) imgEl.onload = () => requestAnimationFrame(() => state.redraw?.(pageIndex));
+      // Image not ready yet - will redraw when onload fires
       return;
     }
 

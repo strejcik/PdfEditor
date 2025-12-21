@@ -10,6 +10,7 @@ export function handleShapeMouseDown(e, params) {
     activeShapeTool,
     shapeItems,
     textItems,
+    formFields,
     resolveTextLayoutForHit,
     startCreatingShape,
     selectedShapeIndex,
@@ -17,6 +18,7 @@ export function handleShapeMouseDown(e, params) {
     selectedShapeIndexes,
     setSelectedShapeIndexes,
     selectedTextIndexes,
+    selectedFormFieldIndexes,
     setIsDraggingShape,
     setIsDraggingMultipleShapes,
     setIsDraggingMixedItems,
@@ -122,8 +124,10 @@ export function handleShapeMouseDown(e, params) {
       // Check if clicking on a shape that's part of multi-selection
       const isPartOfMultiSelection = selectedShapeIndexes && selectedShapeIndexes.includes(clickedShapeIndex);
 
-      // Check if this is a mixed selection (both text and shapes selected)
-      const hasMixedSelection = selectedTextIndexes && selectedTextIndexes.length > 0 &&
+      // Check if this is a mixed selection (text, shapes, or form fields selected)
+      const hasTextSelection = selectedTextIndexes && selectedTextIndexes.length > 0;
+      const hasFormFieldSelection = selectedFormFieldIndexes && selectedFormFieldIndexes.length > 0;
+      const hasMixedSelection = (hasTextSelection || hasFormFieldSelection) &&
                                 selectedShapeIndexes && selectedShapeIndexes.length > 0;
 
       // CRITICAL FIX: Only trigger mixed dragging if the clicked shape is actually selected
@@ -135,8 +139,8 @@ export function handleShapeMouseDown(e, params) {
         // Use setSelectionDragStart for mixed-item dragging so useMouse.ts can read it
         setSelectionDragStart({ x: mouseX, y: mouseY });
 
-        // Store initial positions for both text items and shapes
-        const textPositions = selectedTextIndexes.map(i => {
+        // Store initial positions for all selected items
+        const textPositions = (selectedTextIndexes || []).map(i => {
           const textItem = textItems[i];
           const Li = resolveTextLayoutForHit(textItem, ctx, canvas);
           return {
@@ -164,7 +168,20 @@ export function handleShapeMouseDown(e, params) {
           };
         });
 
-        setInitialMixedItemPositions([...textPositions, ...shapePositions]);
+        const formFieldPositions = (selectedFormFieldIndexes || []).map(i => {
+          const formField = formFields[i];
+          const resolvedX = formField.xNorm != null ? formField.xNorm * rect.width : formField.x;
+          const resolvedY = formField.yNormTop != null ? formField.yNormTop * rect.height : formField.y;
+          return {
+            type: 'formField',
+            index: i,
+            x: resolvedX,
+            y: resolvedY,
+            activePage: formField.index
+          };
+        });
+
+        setInitialMixedItemPositions([...textPositions, ...shapePositions, ...formFieldPositions]);
         return true; // Handled
       }
 
