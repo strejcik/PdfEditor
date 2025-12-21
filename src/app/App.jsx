@@ -339,7 +339,7 @@ const requestCanvasDraw = (page) => {
   useEffect(() => {
     if (mode !== "host" || !broadcasterRef.current) return;
     broadcasterRef.current.notifyChange();
-  }, [mode, activePage, pageList, textItems, shapeItems, freehandPoints, isCreatingShape, cursorPosition]);
+  }, [mode, activePage, pageList, textItems, shapeItems, formFields, freehandPoints, isCreatingShape, cursorPosition]);
 
 
   // Keep latest state in refs for real-time broadcasting
@@ -348,6 +348,7 @@ const requestCanvasDraw = (page) => {
     pageList,
     textItems,
     shapeItems,
+    formFields,
     isCreatingShape,
     activeShapeTool,
     shapeCreationStart,
@@ -363,6 +364,7 @@ const requestCanvasDraw = (page) => {
       pageList,
       textItems,
       shapeItems,
+      formFields,
       isCreatingShape,
       activeShapeTool,
       shapeCreationStart,
@@ -383,6 +385,7 @@ const requestCanvasDraw = (page) => {
       pageList: latestStateRef.current.pageList,
       textItems: latestStateRef.current.textItems,
       shapeItems: latestStateRef.current.shapeItems,
+      formFields: latestStateRef.current.formFields,
       isCreatingShape: latestStateRef.current.isCreatingShape,
       activeShapeTool: latestStateRef.current.activeShapeTool,
       shapeCreationStart: latestStateRef.current.shapeCreationStart,
@@ -395,8 +398,9 @@ const requestCanvasDraw = (page) => {
       setPages,
       setActivePage,
       setShapeItems,
+      setFormFields,
     }
-  }, [activePage, pageList, textItems, shapeItems, isCreatingShape, activeShapeTool, shapeCreationStart, shapeCreationCurrent, freehandPoints, cursorPosition]);
+  }, [activePage, pageList, textItems, shapeItems, formFields, isCreatingShape, activeShapeTool, shapeCreationStart, shapeCreationCurrent, freehandPoints, cursorPosition]);
 
 
 
@@ -2441,17 +2445,25 @@ return (
               <div className="panel-section-label">Danger Zone</div>
               <button
                 className="panel-btn panel-btn-danger"
-                onClick={isViewer ? viewOnly : () => {
+                onClick={isViewer ? viewOnly : async () => {
                   if (window.confirm("Are you sure you want to clear all saved data?")) {
+                    // Clear IndexedDB first
+                    await clearAllEditorState();
+                    // Clear all state
                     setUndoStack({});
                     setRedoStack({});
                     setTextItems([]);
                     setImageItems([]);
-                    setPages([{ textItems: [], imageItems: [] }]);
+                    setShapeItems([]);
+                    setFormFields([]);
+                    setPages([{ textItems: [], imageItems: [], shapes: [], formFields: [] }]);
                     setActivePage(0);
                     setSelectedTextIndex?.(null);
                     setSelectedTextIndexes?.([]);
                     setSelectedImageIndex?.(null);
+                    setSelectedShapeIndex?.(null);
+                    setSelectedShapeIndexes?.([]);
+                    setSelectedFormFieldIndex?.(null);
                     setIsSelecting?.(false);
                     setIsDragging?.(false);
                     setIsImageDragging?.(false);
