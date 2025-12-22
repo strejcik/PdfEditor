@@ -7,6 +7,7 @@ import { drawFormFields, drawFormFieldCreationPreview } from "./drawFormFields";
 import { drawSelectionRect } from "./layers/drawSelectionRect";
 import { drawTextBoxEditor } from "./layers/drawTextBoxEditor";
 import { drawMultilinePage } from "./layers/drawMultilinePage";
+import { drawAnnotations, drawTextSelectionPreview } from "./drawAnnotations";
 
 
 export async function drawCanvas(pageIndex, opts = {}) {
@@ -37,6 +38,10 @@ export async function drawCanvas(pageIndex, opts = {}) {
     drawMultilinePage(ctx, rect, pageIndex, state, config);
     // return; // if you want multiline to replace normal layers
   }
+
+  // Draw annotations BEFORE text so highlights appear behind text
+  drawAnnotations(ctx, rect, pageIndex, state);
+  drawTextSelectionPreview(ctx, rect, state);
 
   drawTextItems(ctx, rect, pageIndex, state, config);
   drawImageItems(ctx, rect, pageIndex, state, config);

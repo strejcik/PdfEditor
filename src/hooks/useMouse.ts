@@ -473,7 +473,7 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
                 return {
                     type: 'text',
                     index: i,
-                    xTop: Li.x,
+                    xTop: Li.xOrigin,  // Use xOrigin (text origin), not x (visual left edge)
                     yTop: Li.topY,
                     activePage
                 };
@@ -532,9 +532,10 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         setDragStart({ x: cssX, y: cssY });
 
         // Store initial TOP-anchored positions for drag
+        // Use xOrigin (text origin) not x (visual left edge) since xNorm represents origin
         const init = newSelectedIndexes.map((i) => {
             const Li = resolveTextLayoutForHit(textItems[i], ctx, canvas);
-            return { index: i, xTop: Li.x, yTop: Li.topY, activePage };
+            return { index: i, xTop: Li.xOrigin, yTop: Li.topY, activePage };
         });
         setInitialPositions(init);
         setIsSelecting(false);
@@ -1009,24 +1010,26 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
   const init   = initialPositions[0];
   if (!item || item.index !== activePage) return;
 
-  // Proposed new top-anchored draw point before snapping
+  // Proposed new text origin before snapping
+  // init.xTop is xOrigin (text origin), not visual left edge
   let newX = init.xTop + dx;
   let newY = init.yTop + dy;
 
   // Get metrics for the dragged item at its *current* (pre-drag) state
-  // We'll derive constant offsets from draw point → box edges, then
+  // We'll derive constant offsets from text origin → box edges, then
   // reuse those offsets to compute the dragged box at (newX, newY).
   const Lself = resolveTextLayoutForHit(item, ctx, canvas);
-  const selfBox = Lself.box; // {x,y,w,h} – padded/tight box you use in hit & draw
+  const selfBox = Lself.box; // {x,y,w,h} – visual bounding box
 
-  // Offsets from draw point (x, topY) to the box's top-left corner
-  // These are stable for this item (given same font/text).
-  const offsetBx = selfBox.x - Lself.x;      // how far box-left is from drawX
-  const offsetBy = selfBox.y - Lself.topY;   // how far box-top  is from topY
+  // Offsets from text origin (xOrigin, topY) to the box's top-left corner
+  // selfBox.x is visual left edge, xOrigin is text origin
+  // For glyphs like "j", selfBox.x < xOrigin (offset is negative)
+  const offsetBx = selfBox.x - Lself.xOrigin;  // = -xOffset (visual left edge - origin)
+  const offsetBy = selfBox.y - Lself.topY;     // = 0 (box top = topY)
 
-  // Given a tentative (newX, newY), compute the dragged box edges
-  const computeDraggedBox = (X:any, Y:any) => {
-    const left   = X + offsetBx;
+  // Given a tentative (newXOrigin, newY), compute the dragged box edges
+  const computeDraggedBox = (XOrigin:any, Y:any) => {
+    const left   = XOrigin + offsetBx;  // visual left edge
     const top    = Y + offsetBy;
     const right  = left + selfBox.w;
     const bottom = top  + selfBox.h;
@@ -1336,7 +1339,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     
           if (intersects) {
             selectedIndexes.push(i);
-            updatedInitials.push({ index: i, xTop: L.x, yTop: L.topY, activePage });
+            updatedInitials.push({ index: i, xTop: L.xOrigin, yTop: L.topY, activePage });
           }
         }
     
@@ -1502,10 +1505,10 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
           }
         }
 
-        // Only select if we found something reasonably close
-        const NEAR_THRESHOLD = 6; // px
-        if (pickedIdx !== null && bestScore > 10000 + NEAR_THRESHOLD) {
-          // Too far away, don't select anything
+        // Only select if cursor is INSIDE the bounding box (score < 10000)
+        // This ensures hit detection matches the visual bounding box exactly
+        if (pickedIdx !== null && bestScore >= 10000) {
+          // Click was outside the visual bounding box, don't select
           pickedIdx = null;
         }
     
@@ -1520,7 +1523,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
           setIsTextSelected(true);
 
           const Lbest = resolveTextLayoutForHit(textItems[pickedIdx], ctx, canvas);
-          setInitialPositions([{ index: pickedIdx, xTop: Lbest.x, yTop: Lbest.topY, activePage }]);
+          setInitialPositions([{ index: pickedIdx, xTop: Lbest.xOrigin, yTop: Lbest.topY, activePage }]);
         } else {
           // Clicked empty space: clear selection
           setSelectedTextIndexes([]);
@@ -1864,8 +1867,13 @@ const handleDoubleClick = (e: MouseEvent, opts: any) => {
   if (!ctx) return;
 
   // Use distance-based selection to find the nearest text item
+  // Uses actual visual bounding box (no padding, actualBoundingBoxLeft/Right)
   let bestIndex: number | null = null;
   let bestScore = Infinity;
+
+  const rect = canvas.getBoundingClientRect();
+  const cssW = rect.width;
+  const cssH = rect.height;
 
   for (let index = 0; index < textItems.length; index++) {
     const item = textItems[index];
@@ -1873,56 +1881,51 @@ const handleDoubleClick = (e: MouseEvent, opts: any) => {
 
     const fontSize = Number(item.fontSize) || 16;
     const fontFamily = item.fontFamily || 'Lato';
-    const padding = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
 
-    // Use same settings as drawCanvas
+    ctx.save();
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
+    ctx.textBaseline = 'alphabetic';
     ctx.font = `${fontSize}px ${fontFamily}`;
 
-    // Resolve item position (prefer normalized)
-    const cssW = CANVAS_WIDTH;   // your logical canvas width
-    const cssH = CANVAS_HEIGHT;  // your logical canvas height
+    const m = ctx.measureText(item.text || '');
+    const ascent = (typeof m.actualBoundingBoxAscent === 'number') ? m.actualBoundingBoxAscent : fontSize * 0.83;
+    const descent = (typeof m.actualBoundingBoxDescent === 'number') ? m.actualBoundingBoxDescent : fontSize * 0.2;
+    const textHeight = ascent + descent;
 
+    // Use actual visual bounding box (handles "j", "g", etc.)
+    const bboxLeft = (typeof m.actualBoundingBoxLeft === 'number') ? m.actualBoundingBoxLeft : 0;
+    const bboxRight = (typeof m.actualBoundingBoxRight === 'number') ? m.actualBoundingBoxRight : m.width;
+    const textWidth = bboxLeft + bboxRight;
+
+    ctx.restore();
+
+    // Resolve position
     const hasNorm = item.xNorm != null && item.yNormTop != null;
+    const xOrigin = hasNorm ? Number(item.xNorm) * cssW : (Number(item.x) || 0);
 
-    const x = hasNorm ? (Math.min(Math.max(item.xNorm, 0), 1) * cssW)
-                      : (Number(item.x) || 0);
+    // Visual x position (shifted left for glyphs like "j")
+    const boxX = xOrigin - bboxLeft;
 
     let topY: number;
     if (hasNorm) {
-      topY = Math.min(Math.max(item.yNormTop, 0), 1) * cssH; // top-anchored
+      topY = Number(item.yNormTop) * cssH;
     } else {
-      // Legacy anchor conversion → top-anchored y
-      const m = ctx.measureText(item.text || '');
-      const ascent = (typeof m.actualBoundingBoxAscent === 'number') ? m.actualBoundingBoxAscent : fontSize * 0.83;
-      const descent = (typeof m.actualBoundingBoxDescent === 'number') ? m.actualBoundingBoxDescent : fontSize * 0.2;
-      const textHeight = ascent + descent;
-
-      const anchor = item.anchor || 'top'; // 'top' | 'baseline' | 'bottom'
       const rawY = Number(item.y) || 0;
+      const anchor = item.anchor || 'top';
       if (anchor === 'baseline') topY = rawY - ascent;
       else if (anchor === 'bottom') topY = rawY - textHeight;
       else topY = rawY;
     }
 
-    // Measure with the SAME font to get width/height
-    const m2 = ctx.measureText(item.text || '');
-    const ascent2 = (typeof m2.actualBoundingBoxAscent === 'number') ? m2.actualBoundingBoxAscent : fontSize * 0.83;
-    const descent2 = (typeof m2.actualBoundingBoxDescent === 'number') ? m2.actualBoundingBoxDescent : fontSize * 0.2;
-    const textWidth = m2.width;
-    const textHeight = ascent2 + descent2;
-
-    // Top-anchored bounding box
-    const boxX = x - padding;
-    const boxY = topY - padding;
-    const boxW = textWidth + padding * 2;
-    const boxH = textHeight + padding * 2;
+    // Bounding box is actual text content (NO padding)
+    const boxY = topY;
+    const boxW = textWidth;
+    const boxH = textHeight;
 
     // Hit-test in CSS units
     const isInside = (mx >= boxX && mx <= boxX + boxW && my >= boxY && my <= boxY + boxH);
 
-    // Calculate selection score (same logic as mouse handlers)
+    // Calculate selection score
     let score: number;
     if (isInside) {
       // Cursor is inside - score by distance to center

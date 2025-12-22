@@ -10,11 +10,24 @@ export function resolveTextLayout(item, ctx, rect) {
   const m = ctx.measureText(item.text || "");
   const ascent  = m.actualBoundingBoxAscent;
   const descent = m.actualBoundingBoxDescent;
-  const textWidth  = m.width;
   const textHeight = ascent + descent;
 
+  // Use actual visual bounding box, not advance width
+  // This correctly handles letters like "j" that extend left of origin
+  // actualBoundingBoxLeft: distance from origin to leftmost pixel (positive = extends left)
+  // actualBoundingBoxRight: distance from origin to rightmost pixel
+  const bboxLeft = m.actualBoundingBoxLeft || 0;
+  const bboxRight = m.actualBoundingBoxRight || m.width;
+  const textWidth = bboxLeft + bboxRight;
+
+  // X offset: shift left by bboxLeft to account for glyphs extending left of origin
+  const xOffset = bboxLeft;
+
   const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
-  const x = hasNorm ? Number(item.xNorm) * rect.width : (Number(item.x) || 0);
+  const xOrigin = hasNorm ? Number(item.xNorm) * rect.width : (Number(item.x) || 0);
+
+  // Actual visual x position (accounts for left-extending glyphs like "j")
+  const x = xOrigin - xOffset;
 
   let topY;
   if (hasNorm) {
@@ -29,6 +42,8 @@ export function resolveTextLayout(item, ctx, rect) {
 
   return {
     x,
+    xOrigin,    // Original x position (where text is drawn from)
+    xOffset,    // How much glyph extends left of origin
     topY,
     fontSize,
     fontFamily,

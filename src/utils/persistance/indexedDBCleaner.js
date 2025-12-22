@@ -3,7 +3,7 @@
  */
 
 const DB_NAME = "PdfEditorDB";
-const DB_VERSION = 7;
+const DB_VERSION = 8;
 
 /**
  * Open the PdfEditorDB database

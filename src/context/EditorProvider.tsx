@@ -23,6 +23,7 @@ import { useShare } from '../hooks/useShare';
 import { useShapes } from '../hooks/useShapes';
 import { useFormFields } from '../hooks/useFormFields';
 import { useClaudeAI } from '../hooks/useClaudeAI';
+import { useAnnotations } from '../hooks/useAnnotations';
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -40,6 +41,7 @@ type EditorContextValue = {
   shapes: ReturnType<typeof useShapes>;
   formFields: ReturnType<typeof useFormFields>;
   ai: ReturnType<typeof useClaudeAI>;
+  annotations: ReturnType<typeof useAnnotations>;
 };
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -66,6 +68,7 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const shapes = useShapes();
   const formFields = useFormFields();
   const ai = useClaudeAI();
+  const annotations = useAnnotations();
 
   // Keep latest slices in refs so history bindings always read current data
   const textRef = useRef(text);
@@ -73,6 +76,7 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const shareRef = useRef(share);
   const shapesRef = useRef(shapes);
   const formFieldsRef = useRef(formFields);
+  const annotationsRef = useRef(annotations);
 
   // Sync locks to prevent circular updates
   const isSyncingPagesToShapes = useRef(false);
@@ -83,11 +87,14 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const isSyncingTextToPages = useRef(false);
   const isSyncingPagesToImages = useRef(false);
   const isSyncingImagesToPages = useRef(false);
+  const isSyncingPagesToAnnotations = useRef(false);
+  const isSyncingAnnotationsToPages = useRef(false);
   // Store last synced hashes to prevent ping-pong
   const lastShapesFromPages = useRef<string | null>(null);
   const lastFormFieldsFromPages = useRef<string | null>(null);
   const lastTextFromPages = useRef<string | null>(null);
   const lastImagesFromPages = useRef<string | null>(null);
+  const lastAnnotationsFromPages = useRef<string | null>(null);
 
   useEffect(() => {
     textRef.current = text;
@@ -95,7 +102,8 @@ export function EditorProvider({ children }: PropsWithChildren) {
     shareRef.current = share;
     shapesRef.current = shapes;
     formFieldsRef.current = formFields;
-  }, [text, images, share, shapes, formFields]);
+    annotationsRef.current = annotations;
+  }, [text, images, share, shapes, formFields, annotations]);
 
   /**
    * 🔁 Re-hydrate text, image, and shape stores from pages (single source of truth)
@@ -107,6 +115,7 @@ export function EditorProvider({ children }: PropsWithChildren) {
     if (isSyncingFormFieldsToPages.current) return;
     if (isSyncingTextToPages.current) return;
     if (isSyncingImagesToPages.current) return;
+    if (isSyncingAnnotationsToPages.current) return;
 
     // CRITICAL: Skip pages→items sync during active user interactions
     // Otherwise updatePageItems will trigger this effect, which rehydrates items
@@ -131,6 +140,7 @@ export function EditorProvider({ children }: PropsWithChildren) {
     isSyncingPagesToFormFields.current = true;
     isSyncingPagesToText.current = true;
     isSyncingPagesToImages.current = true;
+    isSyncingPagesToAnnotations.current = true;
 
     // Extract all items from pages and add index property to each item
     const allText = pageList.flatMap((p, pageIndex) =>
@@ -144,6 +154,9 @@ export function EditorProvider({ children }: PropsWithChildren) {
     );
     const allFormFields = pageList.flatMap((p, pageIndex) =>
       (p?.formFields ?? []).map((item) => ({ ...item, index: pageIndex }))
+    );
+    const allAnnotations = pageList.flatMap((p, pageIndex) =>
+      (p?.annotations ?? []).map((item) => ({ ...item, index: pageIndex }))
     );
 
     // Store hash of shapes we just loaded (without index property for comparison)
@@ -163,6 +176,10 @@ export function EditorProvider({ children }: PropsWithChildren) {
     const imagesWithoutIndexAndData = allImages.map(({ index, data, ...img }) => img);
     const newImagesHash = JSON.stringify(imagesWithoutIndexAndData);
 
+    // Store hash of annotations we just loaded (without index property for comparison)
+    const annotationsWithoutIndex = allAnnotations.map(({ index, ...annotation }) => annotation);
+    lastAnnotationsFromPages.current = JSON.stringify(annotationsWithoutIndex);
+
     // Update item stores
     // Only sync text and shapes from pages if NOT in viewer mode
     // In viewer mode, both text and shapes come directly from the broadcast
@@ -170,6 +187,7 @@ export function EditorProvider({ children }: PropsWithChildren) {
       text.setTextItems?.(allText);
       shapes.setShapeItems?.(allShapes);
       formFields.setFormFields?.(allFormFields);
+      annotations.setAnnotationItems?.(allAnnotations);
     }
 
     // Images sync from pages - only update if hash differs to prevent unnecessary re-renders
@@ -188,8 +206,9 @@ export function EditorProvider({ children }: PropsWithChildren) {
       isSyncingPagesToFormFields.current = false;
       isSyncingPagesToText.current = false;
       isSyncingPagesToImages.current = false;
+      isSyncingPagesToAnnotations.current = false;
     }, 0);
-  }, [pages.pages, text.setTextItems, images.setImageItems, shapes.setShapeItems, formFields.setFormFields, selection.isDraggingMixedItems, share.mode]);
+  }, [pages.pages, text.setTextItems, images.setImageItems, shapes.setShapeItems, formFields.setFormFields, annotations.setAnnotationItems, selection.isDraggingMixedItems, share.mode]);
 
   /**
    * 🔁 Sync shapes back to pages whenever shapes change (for persistence)
@@ -497,6 +516,75 @@ export function EditorProvider({ children }: PropsWithChildren) {
   }, [text.textItems, pages.pages, pages.setPages]);
 
   /**
+   * 🔁 Sync annotations back to pages whenever annotations change (for persistence)
+   * Skip during active user interactions to prevent flickering
+   */
+  useEffect(() => {
+    // CRITICAL: Skip annotations→pages sync during active user interactions
+    const isInteracting = annotations.isSelectingText || selection.isDraggingMixedItems;
+
+    if (isInteracting) {
+      return;
+    }
+
+    // Prevent circular updates: if we're currently syncing pages to annotations, skip this
+    if (isSyncingPagesToAnnotations.current) return;
+
+    const pageList = pages.pages ?? [];
+    if (!Array.isArray(pageList) || pageList.length === 0) return;
+
+    if (!annotations.annotationItems || annotations.annotationItems.length === 0) {
+      // If no annotations, check if this is different from what we loaded
+      if (lastAnnotationsFromPages.current !== '[]') {
+        isSyncingAnnotationsToPages.current = true;
+        pages.setPages(prevPages => prevPages.map(page => ({ ...page, annotations: [] })));
+        lastAnnotationsFromPages.current = '[]';
+        setTimeout(() => {
+          isSyncingAnnotationsToPages.current = false;
+        }, 0);
+      }
+      return;
+    }
+
+    // Create current annotations hash (without index property)
+    const annotationsWithoutIndex = annotations.annotationItems.map(({ index, ...annotation }) => annotation);
+    const currentAnnotationsHash = JSON.stringify(annotationsWithoutIndex);
+
+    // If annotations are the same as what we loaded from pages, skip update to prevent ping-pong
+    if (currentAnnotationsHash === lastAnnotationsFromPages.current) {
+      return;
+    }
+
+    // Set lock to prevent the other effect from triggering
+    isSyncingAnnotationsToPages.current = true;
+
+    // Group annotations by page index
+    const annotationsByPage: Record<number, any[]> = {};
+    annotations.annotationItems.forEach((annotation) => {
+      const pageIdx = annotation.index ?? 0;
+      if (!annotationsByPage[pageIdx]) annotationsByPage[pageIdx] = [];
+
+      // Remove the 'index' property before storing back to pages
+      const { index, ...annotationWithoutIndex } = annotation;
+      annotationsByPage[pageIdx].push(annotationWithoutIndex);
+    });
+
+    // Update pages with annotations using functional update
+    pages.setPages(prevPages => {
+      return prevPages.map((page, pageIndex) => {
+        const pageAnnotations = annotationsByPage[pageIndex] || [];
+        return { ...page, annotations: pageAnnotations };
+      });
+    });
+    lastAnnotationsFromPages.current = currentAnnotationsHash;
+
+    // Release lock after state updates are queued
+    setTimeout(() => {
+      isSyncingAnnotationsToPages.current = false;
+    }, 0);
+  }, [annotations.annotationItems, annotations.isSelectingText, selection.isDraggingMixedItems, pages.pages, pages.setPages]);
+
+  /**
    * Bind history sources once; the getters pull from refs so they see fresh arrays.
    */
   useLayoutEffect(() => {
@@ -530,8 +618,9 @@ useLayoutEffect(() => {
       shapes,
       formFields,
       ai,
+      annotations,
     }),
-    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes, formFields, ai]
+    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes, formFields, ai, annotations]
   );
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;

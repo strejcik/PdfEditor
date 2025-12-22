@@ -2,7 +2,7 @@
 import type { Page } from "../../types/editor";
 
 const DB_NAME = "PdfEditorDB";
-const DB_VERSION = 7;               // bump if you add more stores later
+const DB_VERSION = 8;               // bump if you add more stores later
 const STORE_PAGES = "pages";
 
 function openDB() {
@@ -31,6 +31,12 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains("credentials")) {
         db.createObjectStore("credentials", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("annotations")) {
+        db.createObjectStore("annotations", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("pdfTextSpans")) {
+        db.createObjectStore("pdfTextSpans", { keyPath: "id" });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -97,7 +103,14 @@ export async function savePages(pages:any) {
 }
 
 
-const emptyPage = (): Page => ({ textItems: [], imageItems: [], shapes: [], formFields: [] } as Page);
+const emptyPage = (): Page => ({
+  textItems: [],
+  imageItems: [],
+  shapes: [],
+  formFields: [],
+  annotations: [],
+  pdfTextSpans: [],
+} as Page);
 
 /** Ensure the stored data fits your Page[] shape (no id). */
 export function normalizePages(input: unknown): Page[] {
@@ -110,5 +123,7 @@ export function normalizePages(input: unknown): Page[] {
     imageItems: Array.isArray(p?.imageItems) ? p.imageItems : [],
     shapes: Array.isArray(p?.shapes) ? p.shapes : [],
     formFields: Array.isArray(p?.formFields) ? p.formFields : [],
+    annotations: Array.isArray(p?.annotations) ? p.annotations : [],
+    pdfTextSpans: Array.isArray(p?.pdfTextSpans) ? p.pdfTextSpans : [],
   })) as Page[];
 }

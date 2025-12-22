@@ -12,7 +12,7 @@ export function openEditorDB() {
     if (!("indexedDB" in window)) {
       return reject(new Error("IndexedDB not supported"));
     }
-    const req = indexedDB.open("PdfEditorDB", 7); // must match your DB_VERSION
+    const req = indexedDB.open("PdfEditorDB", 8); // must match your DB_VERSION
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -188,6 +188,146 @@ export async function loadFormFieldsFromIndexedDB() {
     return record && record.data ? record.data : [];
   } catch (error) {
     console.error("Error loading formFields from IndexedDB:", error);
+    return [];
+  } finally {
+    db.close && db.close();
+  }
+}
+
+/**
+ * Save annotations to IndexedDB
+ * @param {Array} annotations - Array of annotation items to save
+ * @returns {Promise<void>}
+ */
+export async function saveAnnotationsToIndexedDB(annotations) {
+  let db;
+  try {
+    db = await openEditorDB();
+  } catch (e) {
+    console.error("Error opening IndexedDB for annotations:", e);
+    return;
+  }
+
+  try {
+    const tx = db.transaction("annotations", "readwrite");
+    const store = tx.objectStore("annotations");
+
+    store.put({ id: "main", data: Array.isArray(annotations) ? annotations : [] });
+
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
+    });
+  } catch (error) {
+    console.error("Error saving annotations to IndexedDB:", error);
+  } finally {
+    db.close && db.close();
+  }
+}
+
+/**
+ * Load annotations from IndexedDB
+ * @returns {Promise<Array>} Array of annotation items or empty array
+ */
+export async function loadAnnotationsFromIndexedDB() {
+  let db;
+  try {
+    db = await openEditorDB();
+  } catch (e) {
+    console.error("Error opening IndexedDB for annotations:", e);
+    return [];
+  }
+
+  try {
+    const tx = db.transaction("annotations", "readonly");
+    const store = tx.objectStore("annotations");
+
+    const record = await new Promise((resolve, reject) => {
+      const r = store.get("main");
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
+    });
+
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
+    });
+
+    return record && record.data ? record.data : [];
+  } catch (error) {
+    console.error("Error loading annotations from IndexedDB:", error);
+    return [];
+  } finally {
+    db.close && db.close();
+  }
+}
+
+/**
+ * Save PDF text spans to IndexedDB
+ * @param {Array} pdfTextSpans - Array of text spans extracted from PDF
+ * @returns {Promise<void>}
+ */
+export async function savePdfTextSpansToIndexedDB(pdfTextSpans) {
+  let db;
+  try {
+    db = await openEditorDB();
+  } catch (e) {
+    console.error("Error opening IndexedDB for pdfTextSpans:", e);
+    return;
+  }
+
+  try {
+    const tx = db.transaction("pdfTextSpans", "readwrite");
+    const store = tx.objectStore("pdfTextSpans");
+
+    store.put({ id: "main", data: Array.isArray(pdfTextSpans) ? pdfTextSpans : [] });
+
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
+    });
+  } catch (error) {
+    console.error("Error saving pdfTextSpans to IndexedDB:", error);
+  } finally {
+    db.close && db.close();
+  }
+}
+
+/**
+ * Load PDF text spans from IndexedDB
+ * @returns {Promise<Array>} Array of text spans or empty array
+ */
+export async function loadPdfTextSpansFromIndexedDB() {
+  let db;
+  try {
+    db = await openEditorDB();
+  } catch (e) {
+    console.error("Error opening IndexedDB for pdfTextSpans:", e);
+    return [];
+  }
+
+  try {
+    const tx = db.transaction("pdfTextSpans", "readonly");
+    const store = tx.objectStore("pdfTextSpans");
+
+    const record = await new Promise((resolve, reject) => {
+      const r = store.get("main");
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
+    });
+
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Transaction aborted"));
+    });
+
+    return record && record.data ? record.data : [];
+  } catch (error) {
+    console.error("Error loading pdfTextSpans from IndexedDB:", error);
     return [];
   } finally {
     db.close && db.close();

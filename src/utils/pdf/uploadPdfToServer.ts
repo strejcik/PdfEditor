@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { TextSpan } from '../../types/annotations';
 
 /**
  * Upload PDF file to server for processing
@@ -16,6 +17,7 @@ export const uploadPdfToServer = async ({
   setPages,
   saveImageItemsToIndexedDB,
   drawCanvas,
+  setPdfTextSpans,
 }: {
   selectedFile: File | null;
   setIsPdfDownloaded: (value: boolean) => void;
@@ -28,6 +30,7 @@ export const uploadPdfToServer = async ({
   setPages: (pages: any[]) => void;
   saveImageItemsToIndexedDB: (items: any[]) => void;
   drawCanvas: (pageIndex: number) => void;
+  setPdfTextSpans?: (spans: TextSpan[]) => void;
 }) => {
   if (!selectedFile) {
     alert("No file selected. Please select a PDF file to upload.");
@@ -61,10 +64,38 @@ export const uploadPdfToServer = async ({
       return;
     }
 
+    // Separate textSpan items from regular items
+    // textSpan items are used for annotation text selection
+    const textSpans: TextSpan[] = [];
+    const regularItems: any[] = [];
+
+    for (const item of payload) {
+      if (item?.type === "textSpan") {
+        // Extract text span for annotation selection
+        textSpans.push({
+          text: item.text || "",
+          xNorm: item.xNorm ?? 0,
+          yNormTop: item.yNormTop ?? 0,
+          widthNorm: item.widthNorm ?? 0,
+          heightNorm: item.heightNorm ?? 0,
+          fontSize: item.fontSize ?? 12,
+          index: item.index ?? 0,
+        });
+      } else {
+        // Regular items (text lines, images)
+        regularItems.push(item);
+      }
+    }
+
+    // Store text spans for annotation selection
+    if (setPdfTextSpans && textSpans.length > 0) {
+      setPdfTextSpans(textSpans);
+    }
+
     // Basic sanity: ensure images carry the base64 `ref` if present
     // (Your updated backend embeds data URIs into `ref`.)
     // No changes needed here—this is just a guard.
-    const normalized = payload.map(item => {
+    const normalized = regularItems.map(item => {
       if (item?.type === "image" && typeof item.ref !== "string") {
         // keep as-is; your draw code can still place a placeholder rect if needed
         // (or you can decide to filter images without ref)

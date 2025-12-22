@@ -6,12 +6,14 @@ type ImportOpts = {
   setImageItems?: (next: any[]) => void;
   setShapeItems?: (next: any[]) => void;
   setFormFields?: (next: any[]) => void;
+  setAnnotationItems?: (next: any[]) => void;
 
   // IndexedDB save functions
   saveTextItemsToIndexedDB?: (items: any[]) => Promise<void>;
   saveImageItemsToIndexedDB?: (items: any[]) => Promise<void>;
   saveShapeItemsToIndexedDB?: (items: any[]) => Promise<void>;
   saveFormFieldsToIndexedDB?: (items: any[]) => Promise<void>;
+  saveAnnotationsToIndexedDB?: (items: any[]) => Promise<void>;
   savePagesToIndexedDB?: (pages: any[]) => Promise<void>;
 };
 
@@ -32,11 +34,12 @@ const isPageShape = (p: any) =>
 export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   if (!file) throw new Error("No file provided");
   const {
-    setPages, setTextItems, setImageItems, setShapeItems, setFormFields,
+    setPages, setTextItems, setImageItems, setShapeItems, setFormFields, setAnnotationItems,
     saveTextItemsToIndexedDB,
     saveImageItemsToIndexedDB,
     saveShapeItemsToIndexedDB,
     saveFormFieldsToIndexedDB,
+    saveAnnotationsToIndexedDB,
     savePagesToIndexedDB,
   } = opts;
 
@@ -47,6 +50,7 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
     imageItems?: any[];
     shapeItems?: any[];
     formFields?: any[];
+    annotationItems?: any[];
   }>(text);
 
   // 1) Extract arrays (tolerate missing fields)
@@ -55,6 +59,7 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   const imageItems = Array.isArray(payload.imageItems) ? payload.imageItems : [];
   const shapeItems = Array.isArray(payload.shapeItems) ? payload.shapeItems : [];
   const formFields = Array.isArray(payload.formFields) ? payload.formFields : [];
+  const annotationItems = Array.isArray(payload.annotationItems) ? payload.annotationItems : [];
 
   // 2) If pages malformed/missing, rebuild from flat arrays
   if (!pages || !pages.every(isPageShape)) {
@@ -63,29 +68,35 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
       ...textItems.map((t) => Number.isFinite(t?.index) ? Number(t.index) : -1),
       ...imageItems.map((i) => Number.isFinite(i?.index) ? Number(i.index) : -1),
       ...shapeItems.map((s) => Number.isFinite(s?.index) ? Number(s.index) : -1),
-      ...formFields.map((f) => Number.isFinite(f?.index) ? Number(f.index) : -1)
+      ...formFields.map((f) => Number.isFinite(f?.index) ? Number(f.index) : -1),
+      ...annotationItems.map((a) => Number.isFinite(a?.index) ? Number(a.index) : -1)
     );
     const count = Math.max(0, maxIndex + 1);
-    const grouped:any[] = Array.from({ length: count }, () => ({ textItems: [], imageItems: [], shapes: [], formFields: [] }));
+    const grouped:any[] = Array.from({ length: count }, () => ({ textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] }));
     textItems.forEach((t) => {
       const idx = Number.isFinite(t?.index) ? Number(t.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [] };
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] };
       grouped[idx].textItems.push(t);
     });
     imageItems.forEach((img) => {
       const idx = Number.isFinite(img?.index) ? Number(img.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [] };
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] };
       grouped[idx].imageItems.push(img);
     });
     shapeItems.forEach((shape) => {
       const idx = Number.isFinite(shape?.index) ? Number(shape.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [] };
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] };
       grouped[idx].shapes.push(shape);
     });
     formFields.forEach((field) => {
       const idx = Number.isFinite(field?.index) ? Number(field.index) : 0;
-      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [] };
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] };
       grouped[idx].formFields.push(field);
+    });
+    annotationItems.forEach((annotation) => {
+      const idx = Number.isFinite(annotation?.index) ? Number(annotation.index) : 0;
+      if (!grouped[idx]) grouped[idx] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] };
+      grouped[idx].annotations.push(annotation);
     });
     pages = grouped;
   }
@@ -103,6 +114,9 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   if (saveFormFieldsToIndexedDB) {
     await saveFormFieldsToIndexedDB(formFields);
   }
+  if (saveAnnotationsToIndexedDB) {
+    await saveAnnotationsToIndexedDB(annotationItems);
+  }
   if (savePagesToIndexedDB) {
     await savePagesToIndexedDB(pages);
   }
@@ -113,6 +127,7 @@ export async function importStateFromJson(file: File, opts: ImportOpts = {}) {
   setImageItems?.(imageItems);
   setShapeItems?.(shapeItems);
   setFormFields?.(formFields);
+  setAnnotationItems?.(annotationItems);
 
-  return { pages, textItems, imageItems, shapeItems, formFields };
+  return { pages, textItems, imageItems, shapeItems, formFields, annotationItems };
 }

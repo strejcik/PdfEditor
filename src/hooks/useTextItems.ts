@@ -115,8 +115,28 @@ export function useTextItems() {
     });
   
     // Build items (top-anchored). We store 'anchor: "top"' for clarity/compat.
+    // Measure text dimensions for accurate annotation positioning
     const itemsToAdd = lines.map((ln:any) => {
         const { xNorm, yNormTop } = resolveTopLeft(ln.text, PDF_WIDTH, PDF_HEIGHT);
+
+        // Measure actual text dimensions using canvas
+        // Use actual visual bounding box for accurate measurements (handles "j", "g", etc.)
+        ctx.font = `${fontSizeToUse}px ${fontFamily}`;
+        const metrics = ctx.measureText(ln.text || "");
+        const ascent = metrics.actualBoundingBoxAscent || (fontSizeToUse * 0.8);
+        const descent = metrics.actualBoundingBoxDescent || (fontSizeToUse * 0.2);
+        const bboxLeft = metrics.actualBoundingBoxLeft || 0;
+        const bboxRight = metrics.actualBoundingBoxRight || metrics.width;
+        const textWidth = bboxLeft + bboxRight;
+        const textHeight = ascent + descent;
+
+        // Compute normalized dimensions and font metrics
+        const rect = canvas.getBoundingClientRect();
+        const widthNorm = textWidth / rect.width;
+        const heightNorm = textHeight / rect.height;
+        const ascentRatio = textHeight > 0 ? ascent / textHeight : 0.8;
+        const descentRatio = textHeight > 0 ? descent / textHeight : 0.2;
+
       return {
         text: ln.text,
         fontSize: newFontSize,
@@ -128,6 +148,11 @@ export function useTextItems() {
         yNormTop: +yNormTop.toFixed(6),
         fontFamily,
         color: textColor,
+        // Bounding box dimensions for annotation positioning
+        widthNorm: +widthNorm.toFixed(6),
+        heightNorm: +heightNorm.toFixed(6),
+        ascentRatio: +ascentRatio.toFixed(4),
+        descentRatio: +descentRatio.toFixed(4),
       }
     });
   
@@ -171,7 +196,7 @@ export function useTextItems() {
 
 const openTextItemsDB = () => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("PdfEditorDB", 7);
+    const request = indexedDB.open("PdfEditorDB", 8);
     request.onupgradeneeded = (event:any) => {
       const db = event.target.result;
       if (!db.objectStoreNames.contains("textItems")) {
@@ -533,16 +558,26 @@ function resolveTextLayoutForHit(item:any, ctx:any, canvas:any) {
   const m = ctx.measureText(item.text || "");
   const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
   const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.20;
-  const textWidth  = m.width;
   const textHeight = ascent + descent;
+
+  // Use actual visual bounding box, not advance width
+  // This correctly handles letters like "j" that extend left of origin
+  const bboxLeft = (typeof m.actualBoundingBoxLeft === "number") ? m.actualBoundingBoxLeft : 0;
+  const bboxRight = (typeof m.actualBoundingBoxRight === "number") ? m.actualBoundingBoxRight : m.width;
+  const textWidth = bboxLeft + bboxRight;
+  const xOffset = bboxLeft;
+
   ctx.restore();
 
   const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
 
   // ❌ no clamping — allow negative / > canvas values
-  const x = hasNorm
+  const xOrigin = hasNorm
     ? Number(item.xNorm) * cssW
     : (Number(item.x) || 0);
+
+  // Actual visual x position (accounts for left-extending glyphs like "j")
+  const x = xOrigin - xOffset;
 
   let topY;
   if (hasNorm) {
@@ -559,6 +594,8 @@ function resolveTextLayoutForHit(item:any, ctx:any, canvas:any) {
 
   return {
     x,
+    xOrigin,    // Original x position (where text is drawn from)
+    xOffset,    // How much glyph extends left of origin
     topY,
     fontSize,
     fontFamily,
@@ -567,11 +604,13 @@ function resolveTextLayoutForHit(item:any, ctx:any, canvas:any) {
     textHeight,
     ascent,
     descent,
+    // Bounding box is the actual text content area (NO padding)
+    // This matches how annotation spans work
     box: {
-      x: x - padding,
-      y: topY - padding,
-      w: textWidth + padding * 2,
-      h: textHeight + padding * 2,
+      x: x,
+      y: topY,
+      w: textWidth,
+      h: textHeight,
     },
   };
 }
@@ -845,11 +884,20 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
   const m = ctx.measureText(item.text || "");
   const ascent  = m.actualBoundingBoxAscent;
   const descent = m.actualBoundingBoxDescent;
-  const textWidth  = m.width;
   const textHeight = ascent + descent;
 
+  // Use actual visual bounding box, not advance width
+  // This correctly handles letters like "j" that extend left of origin
+  const bboxLeft = (typeof m.actualBoundingBoxLeft === "number") ? m.actualBoundingBoxLeft : 0;
+  const bboxRight = (typeof m.actualBoundingBoxRight === "number") ? m.actualBoundingBoxRight : m.width;
+  const textWidth = bboxLeft + bboxRight;
+  const xOffset = bboxLeft;
+
   const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
-  const x = hasNorm ? Number(item.xNorm) * rect.width : (Number(item.x) || 0);
+  const xOrigin = hasNorm ? Number(item.xNorm) * rect.width : (Number(item.x) || 0);
+
+  // Visual left edge (accounts for left-extending glyphs like "j")
+  const x = xOrigin - xOffset;
 
   let topY;
   if (hasNorm) {
@@ -863,12 +911,14 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
   }
 
   return {
-    x,
+    x,           // Visual left edge of bounding box
+    xOrigin,     // Original x position (where text is drawn from)
+    xOffset,     // How much glyph extends left of origin
     topY,
     fontSize,
     fontFamily,
     padding,
-    textWidth,
+    textWidth,   // Visual width (not advance width)
     textHeight,
     ascent,
     descent,
@@ -1002,6 +1052,8 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
         } else {
           // TEXT
           const size = toNum(src?.fontSize, fallbackSize);
+          const textContent = String(src?.text ?? "");
+          const fontFamily = String(src?.fontFamily || fontFamilyDefault);
 
           const xNorm    = (src?.xNorm    != null) ? toNum(src.xNorm)    : (src?.x != null ? toNum(src.x) / cssW : 0);
           const yNormTop = (src?.yNormTop != null) ? toNum(src.yNormTop) : (src?.y != null ? toNum(src.y) / cssH : 0);
@@ -1013,16 +1065,48 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
             ? toNum(src.boxPadding)
             : Math.round(size * 0.2);
 
+          // Use source dimensions if available (from PDF extraction), otherwise measure
+          let widthNorm = src?.widthNorm != null ? toNum(src.widthNorm) : null;
+          let heightNorm = src?.heightNorm != null ? toNum(src.heightNorm) : null;
+          let ascentRatio = src?.ascentRatio != null ? toNum(src.ascentRatio) : null;
+          let descentRatio = src?.descentRatio != null ? toNum(src.descentRatio) : null;
+
+          // If dimensions not provided, measure using canvas
+          // Use actual visual bounding box for accurate measurements (handles "j", "g", etc.)
+          if (widthNorm === null || heightNorm === null) {
+            const ctx = canvas?.getContext?.("2d");
+            if (ctx && textContent) {
+              ctx.font = `${size}px ${fontFamily}`;
+              const metrics = ctx.measureText(textContent);
+              const ascent = metrics.actualBoundingBoxAscent || (size * 0.8);
+              const descent = metrics.actualBoundingBoxDescent || (size * 0.2);
+              const bboxLeft = metrics.actualBoundingBoxLeft || 0;
+              const bboxRight = metrics.actualBoundingBoxRight || metrics.width;
+              const textWidth = bboxLeft + bboxRight;
+              const textHeight = ascent + descent;
+
+              widthNorm = textWidth / cssW;
+              heightNorm = textHeight / cssH;
+              ascentRatio = textHeight > 0 ? ascent / textHeight : 0.8;
+              descentRatio = textHeight > 0 ? descent / textHeight : 0.2;
+            }
+          }
+
           newTextItems.push({
             type: "text",
-            text: String(src?.text ?? ""),
+            text: textContent,
             x, y,
             xNorm, yNormTop,
             fontSize: size,
             boxPadding: padding,
             index: pageIndex,
             anchor: "top",
-            fontFamily: String(src?.fontFamily || fontFamilyDefault),
+            fontFamily,
+            // Bounding box dimensions for annotation positioning
+            ...(widthNorm !== null && { widthNorm: +widthNorm.toFixed(6) }),
+            ...(heightNorm !== null && { heightNorm: +heightNorm.toFixed(6) }),
+            ...(ascentRatio !== null && { ascentRatio: +ascentRatio.toFixed(4) }),
+            ...(descentRatio !== null && { descentRatio: +descentRatio.toFixed(4) }),
           });
         }
       }
@@ -1031,6 +1115,30 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
       const size = fallbackSize;
       const padding = Math.round(size * 0.2);
       const x = 50, y = 50;
+
+      // Measure text dimensions for accurate annotation positioning
+      // Use actual visual bounding box for accurate measurements (handles "j", "g", etc.)
+      let widthNorm: number | null = null;
+      let heightNorm: number | null = null;
+      let ascentRatio: number | null = null;
+      let descentRatio: number | null = null;
+
+      const ctx = canvas?.getContext?.("2d");
+      if (ctx && newText) {
+        ctx.font = `${size}px ${fontFamilyDefault}`;
+        const metrics = ctx.measureText(newText);
+        const ascent = metrics.actualBoundingBoxAscent || (size * 0.8);
+        const descent = metrics.actualBoundingBoxDescent || (size * 0.2);
+        const bboxLeft = metrics.actualBoundingBoxLeft || 0;
+        const bboxRight = metrics.actualBoundingBoxRight || metrics.width;
+        const textWidth = bboxLeft + bboxRight;
+        const textHeight = ascent + descent;
+
+        widthNorm = textWidth / cssW;
+        heightNorm = textHeight / cssH;
+        ascentRatio = textHeight > 0 ? ascent / textHeight : 0.8;
+        descentRatio = textHeight > 0 ? descent / textHeight : 0.2;
+      }
 
       newTextItems.push({
         type: "text",
@@ -1043,6 +1151,11 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
         index: activePage,
         anchor: "top",
         fontFamily: fontFamilyDefault,
+        // Bounding box dimensions for annotation positioning
+        ...(widthNorm !== null && { widthNorm: +widthNorm.toFixed(6) }),
+        ...(heightNorm !== null && { heightNorm: +heightNorm.toFixed(6) }),
+        ...(ascentRatio !== null && { ascentRatio: +ascentRatio.toFixed(4) }),
+        ...(descentRatio !== null && { descentRatio: +descentRatio.toFixed(4) }),
       });
     }
 
@@ -1250,19 +1363,42 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
       4
     );
 
-    const textItemsToAdd = layout.lines.map((line, i) => ({
-      text: line,
-      fontSize: layout.fontSize,
-      boxPadding: padding,
-      x: (textBox.x || 0) + padding,
-      y: (textBox.y || 0) + padding + i * layout.lineHeight,
-      index: activePage,
-      xNorm: ((textBox.x || 0) + padding) / CANVAS_WIDTH,
-      yNormTop: ((textBox.y || 0) + padding + i * layout.lineHeight) / CANVAS_HEIGHT,
-      anchor: "top",
-      fontFamily: family,
-      color: textColor || "#000000",
-    }));
+    const textItemsToAdd = layout.lines.map((line, i) => {
+      // Measure text dimensions for accurate annotation positioning
+      // Use actual visual bounding box for accurate measurements (handles "j", "g", etc.)
+      ctx.font = `${layout.fontSize}px ${family}`;
+      const metrics = ctx.measureText(line);
+      const ascent = metrics.actualBoundingBoxAscent || (layout.fontSize * 0.8);
+      const descent = metrics.actualBoundingBoxDescent || (layout.fontSize * 0.2);
+      const bboxLeft = metrics.actualBoundingBoxLeft || 0;
+      const bboxRight = metrics.actualBoundingBoxRight || metrics.width;
+      const textWidth = bboxLeft + bboxRight;
+      const textHeight = ascent + descent;
+
+      const widthNorm = textWidth / CANVAS_WIDTH;
+      const heightNorm = textHeight / CANVAS_HEIGHT;
+      const ascentRatio = textHeight > 0 ? ascent / textHeight : 0.8;
+      const descentRatio = textHeight > 0 ? descent / textHeight : 0.2;
+
+      return {
+        text: line,
+        fontSize: layout.fontSize,
+        boxPadding: padding,
+        x: (textBox.x || 0) + padding,
+        y: (textBox.y || 0) + padding + i * layout.lineHeight,
+        index: activePage,
+        xNorm: ((textBox.x || 0) + padding) / CANVAS_WIDTH,
+        yNormTop: ((textBox.y || 0) + padding + i * layout.lineHeight) / CANVAS_HEIGHT,
+        anchor: "top",
+        fontFamily: family,
+        color: textColor || "#000000",
+        // Bounding box dimensions for annotation positioning
+        widthNorm: +widthNorm.toFixed(6),
+        heightNorm: +heightNorm.toFixed(6),
+        ascentRatio: +ascentRatio.toFixed(4),
+        descentRatio: +descentRatio.toFixed(4),
+      };
+    });
 
     setTextItems((prev) => {
       const prevArr = Array.isArray(prev) ? prev : [];

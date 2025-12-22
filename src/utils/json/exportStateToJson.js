@@ -74,14 +74,16 @@ export async function exportStateToJson(
   let imageItems = [];
   let shapeItems = [];
   let formFields = [];
+  let annotationItems = [];
 
   try {
-    const [pagesRec, textItemsRec, imageItemsRec, shapesRec, formFieldsRec] = await Promise.all([
+    const [pagesRec, textItemsRec, imageItemsRec, shapesRec, formFieldsRec, annotationsRec] = await Promise.all([
       loadStoreRecord("pages"),
       loadStoreRecord("textItems"),
       loadStoreRecord("imageItems"),
       loadStoreRecord("shapes"),
       loadStoreRecord("formFields"),
+      loadStoreRecord("annotations"),
     ]);
 
     if (pagesRec && Array.isArray(pagesRec.data)) {
@@ -98,6 +100,9 @@ export async function exportStateToJson(
     }
     if (formFieldsRec && Array.isArray(formFieldsRec.data)) {
       formFields = formFieldsRec.data;
+    }
+    if (annotationsRec && Array.isArray(annotationsRec.data)) {
+      annotationItems = annotationsRec.data;
     }
 
     // If individual stores are empty but pages has items, extract from pages
@@ -121,6 +126,11 @@ export async function exportStateToJson(
       if (formFields.length === 0) {
         formFields = pages.flatMap((p, pageIndex) =>
           (p?.formFields ?? []).map((item) => ({ ...item, index: pageIndex }))
+        );
+      }
+      if (annotationItems.length === 0) {
+        annotationItems = pages.flatMap((p, pageIndex) =>
+          (p?.annotations ?? []).map((item) => ({ ...item, index: pageIndex }))
         );
       }
     }
@@ -152,6 +162,9 @@ export async function exportStateToJson(
       ),
       ...formFields.map((f) =>
         Number.isFinite(f?.index) ? +f.index : -1
+      ),
+      ...annotationItems.map((a) =>
+        Number.isFinite(a?.index) ? +a.index : -1
       )
     );
 
@@ -161,30 +174,37 @@ export async function exportStateToJson(
       imageItems: [],
       shapes: [],
       formFields: [],
+      annotations: [],
     }));
 
     textItems.forEach((t) => {
       const i = Number.isFinite(t?.index) ? +t.index : 0;
-      (grouped[i] ?? (grouped[i] = { textItems: [], imageItems: [], shapes: [], formFields: [] }))
+      (grouped[i] ?? (grouped[i] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] }))
         .textItems.push(t);
     });
 
     imageItems.forEach((img) => {
       const p = Number.isFinite(img?.index) ? +img.index : 0;
-      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [] }))
+      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] }))
         .imageItems.push(img);
     });
 
     shapeItems.forEach((shape) => {
       const p = Number.isFinite(shape?.index) ? +shape.index : 0;
-      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [] }))
+      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] }))
         .shapes.push(shape);
     });
 
     formFields.forEach((field) => {
       const p = Number.isFinite(field?.index) ? +field.index : 0;
-      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [] }))
+      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] }))
         .formFields.push(field);
+    });
+
+    annotationItems.forEach((annotation) => {
+      const p = Number.isFinite(annotation?.index) ? +annotation.index : 0;
+      (grouped[p] ?? (grouped[p] = { textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] }))
+        .annotations.push(annotation);
     });
 
     pages = grouped;
@@ -192,9 +212,9 @@ export async function exportStateToJson(
 
   // 3) Ensure we have at least one page
   if (!Array.isArray(pages) || pages.length === 0) {
-    pages = [{ textItems: [], imageItems: [], shapes: [], formFields: [] }];
+    pages = [{ textItems: [], imageItems: [], shapes: [], formFields: [], annotations: [] }];
   }
-  console.log(pages, textItems, imageItems, shapeItems, formFields);
+  console.log(pages, textItems, imageItems, shapeItems, formFields, annotationItems);
 
   // 4) Base payload (no checksums)
   const base = {
@@ -205,6 +225,7 @@ export async function exportStateToJson(
     imageItems,
     shapeItems,
     formFields,
+    annotationItems,
   };
 
   // 5) Canonical checksum (object-based)

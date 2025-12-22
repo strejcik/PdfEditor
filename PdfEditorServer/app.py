@@ -280,16 +280,20 @@ def flatten_manifest_to_payload(manifest):
     out = []
     for i, page in enumerate(pages):
         # TEXT
+        text_span_counter = 0
         for t in (page.get("texts") or []):
             x_norm = t.get("xNorm")
             y_norm_top = t.get("yNormTop")
             if x_norm is None or y_norm_top is None:
                 continue
+            text_content = t.get("text", "")
+            font_size = float(t.get("fontSize")) if t.get("fontSize") is not None else None
+
             item = {
-                "text": t.get("text", ""),
+                "text": text_content,
                 "xNorm": float(x_norm),
                 "yNormTop": float(y_norm_top),
-                "fontSize": float(t.get("fontSize")) if t.get("fontSize") is not None else None,
+                "fontSize": font_size,
                 "index": i,
                 "anchor": "top",
                 # Manifest text typically on top:
@@ -303,6 +307,49 @@ def flatten_manifest_to_payload(manifest):
             if "fontFamily" in t and t["fontFamily"]:
                 item["fontFamily"] = str(t["fontFamily"])
             out.append(item)
+
+            # Also generate textSpan for annotation selection
+            # Use actual dimensions from manifest if available (measured on canvas)
+            # Otherwise fall back to rough estimates
+            if text_content and font_size:
+                # Try to get accurate dimensions from manifest
+                width_norm = t.get("widthNorm")
+                height_norm = t.get("heightNorm")
+                ascent_ratio = t.get("ascentRatio")  # baseline position from top
+                descent_ratio = t.get("descentRatio")
+
+                # Fall back to estimates if not available
+                if width_norm is None:
+                    # Rough character width estimate (0.5 * fontSize for average char)
+                    # Assume A4 page width of 595 points (standard PDF)
+                    char_width_estimate = font_size * 0.5
+                    text_width_points = len(text_content) * char_width_estimate
+                    width_norm = text_width_points / 595.0
+                if height_norm is None:
+                    # Estimate: textHeight ≈ fontSize (ascent + descent)
+                    # A4 height is 842 points
+                    height_norm = font_size / 842.0
+
+                text_span_item = {
+                    "type": "textSpan",
+                    "text": text_content,
+                    "xNorm": float(x_norm),
+                    "yNormTop": float(y_norm_top),
+                    "widthNorm": float(width_norm),
+                    "heightNorm": float(height_norm),
+                    "fontSize": font_size,
+                    "index": i,
+                    "zOrder": 2_500_000 + text_span_counter,
+                }
+
+                # Include font metrics if available for accurate annotation positioning
+                if ascent_ratio is not None:
+                    text_span_item["ascentRatio"] = float(ascent_ratio)
+                if descent_ratio is not None:
+                    text_span_item["descentRatio"] = float(descent_ratio)
+
+                out.append(text_span_item)
+                text_span_counter += 1
 
         # IMAGES
         for im in (page.get("images") or []):
@@ -401,6 +448,8 @@ def _extract_with_pymupdf(path):
 
         # ---------- TEXT ----------
         d = page.get_text("dict")
+        z_counter_text_span = 0  # Separate counter for text spans
+
         for blk in d.get("blocks", []):
             if blk.get("type", 0) != 0:
                 continue  # only text blocks
@@ -436,6 +485,23 @@ def _extract_with_pymupdf(path):
                     "zOrder": int(Z_BASE_TEXT + z_counter_text),
                 })
                 z_counter_text += 1
+
+                # ---------- TEXT SPANS (for annotation selection) ----------
+                # Use LINE bbox for positioning to match text item rendering
+                # This ensures annotations align with rendered text
+                # We use line bbox (x0, y0, x1, y1) for consistent positioning
+                out.append({
+                    "type": "textSpan",
+                    "text": line_text,
+                    "xNorm": float(x0 / page_w if page_w else 0.0),
+                    "yNormTop": float(y0 / page_h if page_h else 0.0),
+                    "widthNorm": float((x1 - x0) / page_w if page_w else 0.0),
+                    "heightNorm": float((y1 - y0) / page_h if page_h else 0.0),
+                    "fontSize": float(font_size) if font_size is not None else None,
+                    "index": page_index,
+                    "zOrder": int(Z_BASE_TEXT + 500000 + z_counter_text_span),
+                })
+                z_counter_text_span += 1
 
         # ---------- IMAGES ----------
         img_list = page.get_images(full=True)

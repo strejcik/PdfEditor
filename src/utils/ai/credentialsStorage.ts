@@ -15,7 +15,7 @@ import type { AICredentials } from '../../types/ai';
 // ============================================================================
 
 const DB_NAME = 'PdfEditorDB';
-const DB_VERSION = 7; // Increment to add credentials store
+const DB_VERSION = 8; // Increment to add credentials store
 const STORE_CREDENTIALS = 'credentials';
 const CREDENTIALS_KEY = 'ai_credentials';
 const PBKDF2_ITERATIONS = 100000;

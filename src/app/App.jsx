@@ -28,8 +28,10 @@ import { ShapeToolbar } from "../components/ShapeToolbar";
 import { isPointInShape, getResizeHandle } from "../utils/shapes/shapeHitDetection";
 import { handleShapeMouseDown, handleShapeMouseMove, handleShapeMouseUp } from "../utils/shapes/shapeMouseHandlers";
 import { handleFormFieldMouseDown, handleFormFieldMouseMove, handleFormFieldMouseUp } from "../utils/formFields/formFieldMouseHandlers";
+import { handleAnnotationMouseDown, handleAnnotationMouseMove, handleAnnotationMouseUp, handleAnnotationKeyDown } from "../utils/annotations/annotationMouseHandlers";
 import FontSelector from "../components/FontSelector";
 import ColorPicker from "../components/ColorPicker";
+import { ANNOTATION_PRESET_COLORS } from "../types/annotations";
 import { useCursorPosition } from "../hooks/useCursorPosition";
 import { HostCursor } from "../components/HostCursor";
 
@@ -294,6 +296,33 @@ useEffect(() => {
       generateContent,
       clearError: clearAiError,
     },
+    annotations: {
+      annotationItems, setAnnotationItems,
+      selectedAnnotationIndex, setSelectedAnnotationIndex,
+      activeAnnotationTool, setActiveAnnotationTool,
+      annotationColor, setAnnotationColor,
+      annotationOpacity, setAnnotationOpacity,
+      isSelectingText, setIsSelectingText,
+      textSelectionStart, setTextSelectionStart,
+      textSelectionEnd, setTextSelectionEnd,
+      selectedTextSpans, setSelectedTextSpans,
+      pdfTextSpans, setPdfTextSpans,
+      addAnnotation,
+      updateAnnotation,
+      deleteAnnotation,
+      startTextSelection,
+      updateTextSelection,
+      finishTextSelection,
+      hydrateFromPages: hydrateAnnotationsFromPages,
+      // Linking annotations to text items
+      linkToTextItem, setLinkToTextItem,
+      linkAnnotationToTextItem,
+      unlinkAnnotation,
+      isAnnotationLinked,
+      generateTextItemId,
+      // Selection management
+      clearSelection: clearAnnotationSelection,
+    },
   } = useEditor(); // ✅ correct
   useClipboard(useEditor());
 
@@ -519,6 +548,18 @@ useEffect(() => {
         mlCaretBlink: isActive ? mlCaretBlink : false,
         isMlDragging: isActive ? isMlDragging : false,
 
+        // Annotation state
+        annotationItems,
+        selectedAnnotationIndex,
+        activeAnnotationTool,
+        isSelectingText,
+        textSelectionStart,
+        textSelectionEnd,
+        selectedTextSpans,
+        pdfTextSpans,
+        annotationColor,
+        annotationOpacity,
+
         fontSize,
         wrapTextPreservingNewlinesResponsive,
         resolveTextLayout,
@@ -565,6 +606,17 @@ useEffect(() => {
               mlText: idx === activePage ? mlText : "",
               mlCaretBlink: idx === activePage ? mlCaretBlink : false,
               isMlDragging: idx === activePage ? isMlDragging : false,
+              // Annotation state
+              annotationItems,
+              selectedAnnotationIndex,
+              activeAnnotationTool,
+              isSelectingText,
+              textSelectionStart,
+              textSelectionEnd,
+              selectedTextSpans,
+              pdfTextSpans,
+              annotationColor,
+              annotationOpacity,
               fontSize,
               wrapTextPreservingNewlinesResponsive,
               resolveTextLayout,
@@ -594,6 +646,17 @@ useEffect(() => {
   selectedFormFieldIndex,
   selectedFormFieldIndexes,
   isCreatingFormField,
+  // Annotation dependencies
+  annotationItems,
+  selectedAnnotationIndex,
+  activeAnnotationTool,
+  isSelectingText,
+  textSelectionStart,
+  textSelectionEnd,
+  selectedTextSpans,
+  pdfTextSpans,
+  annotationColor,
+  annotationOpacity,
   formFieldCreationStart,
   formFieldCreationCurrent,
   activeFormFieldTool,
@@ -730,9 +793,29 @@ const handleRedo = () => {
   fnRedoStack(activePage);
 };
 
-// Wrapper mouse handlers that check form fields, then shapes, then fall through to existing handlers
+// Wrapper mouse handlers that check annotations, then form fields, then shapes, then fall through to existing handlers
 const wrappedMouseDown = (e) => {
-  // First, try form field handler
+  // First, try annotation handler (if an annotation tool is active)
+  const annotationHandled = handleAnnotationMouseDown(e, {
+    canvasRefs,
+    activePage,
+    activeAnnotationTool,
+    annotationItems,
+    pdfTextSpans,
+    annotationColor,
+    annotationOpacity,
+    startTextSelection,
+    selectedAnnotationIndex,
+    setSelectedAnnotationIndex,
+    // For pass-through when textItems are under annotations
+    clearAnnotationSelection,
+    textItems,
+    resolveTextLayoutForHit,
+  });
+
+  if (annotationHandled) return; // Annotation handled it, don't propagate
+
+  // Next, try form field handler
   const formFieldHandled = handleFormFieldMouseDown(e, {
     canvasRefs,
     activePage,
@@ -917,7 +1000,18 @@ const wrappedMouseDown = (e) => {
 };
 
 const wrappedMouseMove = (e) => {
-  // First, try form field handler
+  // First, try annotation handler
+  const annotationHandled = handleAnnotationMouseMove(e, {
+    canvasRefs,
+    activePage,
+    isSelectingText,
+    pdfTextSpans,
+    updateTextSelection,
+  });
+
+  if (annotationHandled) return; // Annotation handled it, don't propagate
+
+  // Next, try form field handler
   const formFieldHandled = handleFormFieldMouseMove(e, {
     canvasRefs,
     activePage,
@@ -1030,7 +1124,38 @@ const wrappedMouseMove = (e) => {
 };
 
 const wrappedMouseUp = (e) => {
-  // First, try form field handler
+  // Helper to ensure a text item has an ID (for annotation linking)
+  const ensureTextItemId = (textItem) => {
+    if (!textItem.id) {
+      textItem.id = generateTextItemId();
+      // Update the text item in state to persist the ID
+      setTextItems(prev => prev.map(item =>
+        item === textItem ? { ...item, id: textItem.id } : item
+      ));
+    }
+    return textItem.id;
+  };
+
+  // First, try annotation handler
+  const annotationHandled = handleAnnotationMouseUp(e, {
+    canvasRefs,
+    activePage,
+    isSelectingText,
+    selectedTextSpans,
+    activeAnnotationTool,
+    annotationColor,
+    annotationOpacity,
+    finishTextSelection,
+    addAnnotation,
+    pushSnapshotToUndo,
+    // For linking annotations to text items
+    textItems,
+    ensureTextItemId,
+  });
+
+  if (annotationHandled) return; // Annotation handled it, don't propagate
+
+  // Next, try form field handler
   const formFieldHandled = handleFormFieldMouseUp(e, {
     canvasRefs,
     activePage,
@@ -1388,6 +1513,13 @@ return (
       >
         📝
       </button>
+      <button
+        className={`rail-btn ${activePanel === 'annotations' ? 'active' : ''}`}
+        title="Annotations"
+        onClick={() => togglePanel('annotations')}
+      >
+        🖍️
+      </button>
 
       <div className="rail-divider" />
 
@@ -1461,7 +1593,7 @@ return (
                 onClick={isViewer ? viewOnly : () => uploadPdfToServer({
                   selectedFile, setIsPdfDownloaded, addTextToCanvas3, pushSnapshotToUndo,
                   activePage, canvasRefs, fontSize, setImageItems, setPages,
-                  saveImageItemsToIndexedDB, drawCanvas,
+                  saveImageItemsToIndexedDB, drawCanvas, setPdfTextSpans,
                 })}
                 disabled={isViewer}
               >
@@ -2292,6 +2424,328 @@ return (
                 Delete Selected
               </button>
             </div>
+          </div>
+        </>
+      )}
+
+      {/* Annotations Panel */}
+      {activePanel === 'annotations' && (
+        <>
+          <div className="panel-header">
+            <div className="panel-title">
+              <span className="panel-title-icon">🖍️</span>
+              Annotations
+            </div>
+            <button className="panel-close-btn" onClick={() => setActivePanel(null)}>✕</button>
+          </div>
+          <div className="panel-content">
+            {/* Annotation Tools */}
+            <div className="panel-section">
+              <div className="panel-section-label">Annotation Tools</div>
+              <div className="tool-grid-shapes">
+                <button
+                  className={`tool-grid-btn-lg ${activeAnnotationTool === null ? 'active' : ''}`}
+                  title="Select"
+                  onClick={isViewer ? viewOnly : () => setActiveAnnotationTool(null)}
+                  disabled={isViewer}
+                >
+                  <span>👆</span>
+                  <span className="tool-btn-label">Select</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeAnnotationTool === 'highlight' ? 'active' : ''}`}
+                  title="Highlight"
+                  onClick={isViewer ? viewOnly : () => setActiveAnnotationTool('highlight')}
+                  disabled={isViewer}
+                >
+                  <span>🟡</span>
+                  <span className="tool-btn-label">Highlight</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeAnnotationTool === 'underline' ? 'active' : ''}`}
+                  title="Underline"
+                  onClick={isViewer ? viewOnly : () => setActiveAnnotationTool('underline')}
+                  disabled={isViewer}
+                >
+                  <span style={{textDecoration: 'underline'}}>U</span>
+                  <span className="tool-btn-label">Underline</span>
+                </button>
+                <button
+                  className={`tool-grid-btn-lg ${activeAnnotationTool === 'strikethrough' ? 'active' : ''}`}
+                  title="Strikethrough"
+                  onClick={isViewer ? viewOnly : () => setActiveAnnotationTool('strikethrough')}
+                  disabled={isViewer}
+                >
+                  <span style={{textDecoration: 'line-through'}}>S</span>
+                  <span className="tool-btn-label">Strike</span>
+                </button>
+              </div>
+
+              {/* Active tool indicator */}
+              {activeAnnotationTool && (
+                <div className="shape-tool-active-indicator">
+                  <span>✓</span>
+                  <strong>{activeAnnotationTool.charAt(0).toUpperCase() + activeAnnotationTool.slice(1)}</strong>
+                  <span>— Click and drag to select text</span>
+                </div>
+              )}
+
+              {/* PDF text spans info */}
+              {pdfTextSpans.length === 0 && (
+                <div className="panel-info" style={{ marginTop: '12px', padding: '8px', backgroundColor: '#fef3c7', borderRadius: '4px', fontSize: '12px', color: '#92400e' }}>
+                  ⚠️ No text spans available. Upload a PDF to enable text annotation.
+                </div>
+              )}
+            </div>
+
+            <div className="panel-divider" />
+
+            {/* Color Section */}
+            <div className="panel-section shape-color-section">
+              <div className="shape-color-header">
+                <div className="panel-section-label" style={{ marginBottom: 0 }}>Annotation Color</div>
+                <div className="shape-color-current">
+                  <div
+                    className="shape-color-preview"
+                    style={{ backgroundColor: annotationColor }}
+                  />
+                  <span className="shape-color-hex">{annotationColor.toUpperCase()}</span>
+                </div>
+              </div>
+
+              {/* Color swatches */}
+              <div className="shape-color-swatches">
+                {ANNOTATION_PRESET_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    className={`shape-color-swatch ${annotationColor === color ? 'active' : ''}`}
+                    style={{ backgroundColor: color }}
+                    onClick={isViewer ? viewOnly : () => setAnnotationColor(color)}
+                    title={color}
+                    disabled={isViewer}
+                  />
+                ))}
+              </div>
+
+              {/* Custom color picker */}
+              <div className="shape-custom-color-row">
+                <input
+                  type="color"
+                  className="shape-custom-color-input"
+                  value={annotationColor}
+                  onChange={isViewer ? viewOnly : (e) => setAnnotationColor(e.target.value)}
+                  disabled={isViewer}
+                />
+                <span className="shape-custom-color-label">Custom color</span>
+              </div>
+            </div>
+
+            {/* Opacity - for highlights */}
+            {activeAnnotationTool === 'highlight' && (
+              <>
+                <div className="panel-divider" />
+                <div className="panel-section stroke-width-section">
+                  <div className="stroke-width-header">
+                    <div className="panel-section-label" style={{ marginBottom: 0 }}>Opacity</div>
+                    <span className="stroke-width-value">{Math.round(annotationOpacity * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    className="stroke-slider"
+                    min="10"
+                    max="80"
+                    value={annotationOpacity * 100}
+                    onChange={isViewer ? viewOnly : (e) => setAnnotationOpacity(parseInt(e.target.value, 10) / 100)}
+                    disabled={isViewer}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Link to Text Item checkbox - shown when annotation tool is active */}
+            {activeAnnotationTool && (
+              <>
+                <div className="panel-divider" />
+                <div className="panel-section">
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: isViewer ? 'not-allowed' : 'pointer',
+                      fontSize: '13px',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={linkToTextItem || false}
+                      onChange={(e) => !isViewer && setLinkToTextItem(e.target.checked)}
+                      disabled={isViewer}
+                      style={{ cursor: isViewer ? 'not-allowed' : 'pointer' }}
+                    />
+                    <span>Link to text item</span>
+                  </label>
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px', marginLeft: '24px' }}>
+                    Linked annotations move with text
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="panel-divider" />
+
+            {/* Actions */}
+            <div className="panel-section">
+              <div className="panel-section-label">Actions</div>
+
+              {/* Link/Unlink button - shown when annotation is selected */}
+              {selectedAnnotationIndex !== null && (
+                <button
+                  className="panel-btn"
+                  onClick={isViewer ? viewOnly : () => {
+                    if (isAnnotationLinked(selectedAnnotationIndex)) {
+                      // Pass textItems so unlinkAnnotation can calculate current absolute position
+                      unlinkAnnotation(selectedAnnotationIndex, textItems);
+                    } else {
+                      // Find text item to link to
+                      const annotation = annotationItems[selectedAnnotationIndex];
+                      if (annotation && annotation.spans && annotation.spans.length > 0) {
+                        const pageTextItems = textItems.filter(t => t.index === annotation.index);
+
+                        if (pageTextItems.length === 0) {
+                          alert('No text items found on this page to link to.');
+                          return;
+                        }
+
+                        let targetTextItem = null;
+
+                        // First priority: Try to find the original textItem by lastLinkedTextItemId
+                        if (annotation.lastLinkedTextItemId) {
+                          targetTextItem = textItems.find(t => t.id === annotation.lastLinkedTextItemId);
+                        }
+
+                        // If original textItem not found (deleted), fall back to overlap/nearest
+                        if (!targetTextItem) {
+                          const span = annotation.spans[0];
+
+                          // Try to find an overlapping text item
+                          for (const textItem of pageTextItems) {
+                            const overlaps = (
+                              textItem.xNorm < span.xNorm + span.widthNorm &&
+                              textItem.xNorm + (textItem.widthNorm || 0.1) > span.xNorm &&
+                              textItem.yNormTop < span.yNormTop + span.heightNorm &&
+                              textItem.yNormTop + (textItem.heightNorm || 0.05) > span.yNormTop
+                            );
+                            if (overlaps) {
+                              targetTextItem = textItem;
+                              break;
+                            }
+                          }
+
+                          // If no overlap found, find the nearest text item
+                          if (!targetTextItem) {
+                            let minDistance = Infinity;
+                            const annotationCenterX = span.xNorm + (span.widthNorm || 0) / 2;
+                            const annotationCenterY = span.yNormTop + (span.heightNorm || 0) / 2;
+
+                            for (const textItem of pageTextItems) {
+                              const textCenterX = textItem.xNorm + (textItem.widthNorm || 0.1) / 2;
+                              const textCenterY = textItem.yNormTop + (textItem.heightNorm || 0.05) / 2;
+                              const distance = Math.sqrt(
+                                Math.pow(textCenterX - annotationCenterX, 2) +
+                                Math.pow(textCenterY - annotationCenterY, 2)
+                              );
+                              if (distance < minDistance) {
+                                minDistance = distance;
+                                targetTextItem = textItem;
+                              }
+                            }
+                          }
+                        }
+
+                        if (targetTextItem) {
+                          // Ensure text item has ID
+                          if (!targetTextItem.id) {
+                            targetTextItem.id = generateTextItemId();
+                            setTextItems(prev => prev.map(item =>
+                              item === targetTextItem ? { ...item, id: targetTextItem.id } : item
+                            ));
+                          }
+                          linkAnnotationToTextItem(selectedAnnotationIndex, targetTextItem);
+                        }
+                      }
+                    }
+                  }}
+                  disabled={isViewer}
+                  style={{
+                    backgroundColor: isAnnotationLinked(selectedAnnotationIndex) ? '#6b7280' : '#3b82f6',
+                    color: 'white',
+                    marginBottom: '8px',
+                  }}
+                >
+                  <span className="panel-btn-icon">{isAnnotationLinked(selectedAnnotationIndex) ? '🔓' : '🔗'}</span>
+                  {isAnnotationLinked(selectedAnnotationIndex) ? 'Unlink from Text' : 'Link to Text'}
+                </button>
+              )}
+
+              <button
+                className="panel-btn panel-btn-danger"
+                onClick={isViewer ? viewOnly : () => {
+                  if (selectedAnnotationIndex !== null) {
+                    deleteAnnotation(selectedAnnotationIndex);
+                    setSelectedAnnotationIndex(null);
+                  }
+                }}
+                disabled={isViewer || selectedAnnotationIndex === null}
+              >
+                <span className="panel-btn-icon">🗑️</span>
+                Delete Selected
+              </button>
+            </div>
+
+            {/* Annotation list */}
+            {annotationItems.length > 0 && (
+              <>
+                <div className="panel-divider" />
+                <div className="panel-section">
+                  <div className="panel-section-label">Annotations ({annotationItems.length})</div>
+                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    {annotationItems.map((ann, idx) => (
+                      <div
+                        key={ann.id}
+                        onClick={() => setSelectedAnnotationIndex(idx)}
+                        style={{
+                          padding: '6px 8px',
+                          marginBottom: '4px',
+                          backgroundColor: selectedAnnotationIndex === idx ? '#e0e7ff' : '#f3f4f6',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                        }}
+                      >
+                        <span style={{
+                          display: 'inline-block',
+                          width: '12px',
+                          height: '12px',
+                          backgroundColor: ann.color,
+                          borderRadius: '2px',
+                          opacity: ann.opacity,
+                        }} />
+                        <span>{ann.type}</span>
+                        {/* Link indicator */}
+                        {ann.linkedTextItemId && (
+                          <span title="Linked to text item" style={{ fontSize: '10px' }}>🔗</span>
+                        )}
+                        <span style={{ color: '#6b7280', marginLeft: 'auto' }}>Page {ann.index + 1}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}

@@ -50,15 +50,22 @@ export async function saveAllPagesAsPDF({
     const m = ctx.measureText(item.text || "");
     const ascent = m.actualBoundingBoxAscent;
     const descent = m.actualBoundingBoxDescent;
-    const textWidth = m.width;
     const textHeight = ascent + descent;
+
+    // Use actual visual bounding box for accurate measurements (handles "j", "g", etc.)
+    const bboxLeft = m.actualBoundingBoxLeft || 0;
+    const bboxRight = m.actualBoundingBoxRight || m.width;
+    const textWidth = bboxLeft + bboxRight;
 
     // Prefer normalized; DO NOT CLAMP so we can go off-canvas (negative or >1)
     const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
 
-    const x = hasNorm
+    const xOrigin = hasNorm
       ? Number(item.xNorm) * rect.width
       : (Number(item.x) || 0);
+
+    // Actual visual x position (accounts for left-extending glyphs like "j")
+    const x = xOrigin - bboxLeft;
 
     let topY: number;
     if (hasNorm) {
@@ -74,6 +81,7 @@ export async function saveAllPagesAsPDF({
 
     return {
       x,
+      xOrigin,   // Original x position (where text is drawn from)
       topY,
       fontSize,
       fontFamily,
@@ -115,7 +123,7 @@ export async function saveAllPagesAsPDF({
     const shapes = Array.isArray(page.shapes) ? page.shapes : [];
     const formFieldsData = Array.isArray(page.formFields) ? page.formFields : [];
 
-    const pageManifest = { texts: [] as any[], images: [] as any[], shapes: [] as any[], formFields: [] as any[] };
+    const pageManifest = { texts: [] as any[], images: [] as any[], shapes: [] as any[], formFields: [] as any[], annotations: [] as any[] };
 
     // **Clip to the page rectangle** so overflow matches canvas behavior
     clipToPage(pdfPage, W, H);
@@ -140,10 +148,17 @@ export async function saveAllPagesAsPDF({
         color: hexToRgb(item.color),
       });
 
+      // Store actual measured text dimensions for accurate annotation positioning
+      // These values come from canvas measureText() and represent the true glyph bounds
       pageManifest.texts.push({
         text,
         xNorm: +xNorm.toFixed(6),
         yNormTop: +yNormTop.toFixed(6),
+        widthNorm: +(L.textWidth / W).toFixed(6),
+        heightNorm: +(L.textHeight / H).toFixed(6),
+        // Font metrics for typographic annotation positioning
+        ascentRatio: +(L.ascent / L.textHeight).toFixed(4),  // baseline position from top
+        descentRatio: +(L.descent / L.textHeight).toFixed(4),
         fontSize: size,
         anchor: "top",
         index: item.index,
@@ -390,6 +405,126 @@ export async function saveAllPagesAsPDF({
         strokeWidth: borderWidth,
         fillColor: item.fillColor || null,
         index: item.index,
+      });
+    }
+
+    // ---- ANNOTATIONS (highlight, strikethrough, underline) ----
+    // Typographic constants for professional annotation positioning
+    // Must match values in drawAnnotations.js for consistency
+    const TYPO = {
+      // Highlight: covers the main text body with insets
+      HIGHLIGHT_TOP_INSET: 0.08,      // Start 8% from top
+      HIGHLIGHT_BOTTOM_INSET: 0.12,   // End 12% from bottom
+      HIGHLIGHT_HORIZONTAL_PAD: 0.02, // 2% horizontal padding
+
+      // Underline: positioned just below the baseline
+      DEFAULT_BASELINE_POSITION: 0.80, // Default baseline at ~80% from top
+      UNDERLINE_OFFSET: 0.04,         // 4% below baseline
+      UNDERLINE_THICKNESS: 0.055,     // Line thickness as ratio of height
+
+      // Strikethrough: positioned at x-height center
+      DEFAULT_XHEIGHT_CENTER: 0.45,   // Default x-height center at ~45% from top
+      STRIKETHROUGH_THICKNESS: 0.055, // Line thickness as ratio of height
+    };
+
+    // Helper to get baseline position (uses ascentRatio if available)
+    const getBaselinePosition = (span: any) => {
+      if (span.ascentRatio !== undefined && span.ascentRatio > 0) {
+        return span.ascentRatio;
+      }
+      return TYPO.DEFAULT_BASELINE_POSITION;
+    };
+
+    // Helper to get x-height center (derived from baseline)
+    const getXHeightCenter = (span: any) => {
+      const baseline = getBaselinePosition(span);
+      return baseline * 0.55;
+    };
+
+    const annotations = Array.isArray(page.annotations) ? page.annotations : [];
+
+    for (const annotation of annotations) {
+      if (!annotation.spans || annotation.spans.length === 0) continue;
+
+      const annotationColor = hexToRgb(annotation.color || "#FFFF00");
+      const opacity = annotation.opacity ?? 0.4;
+
+      for (const span of annotation.spans) {
+        const x = (span.xNorm ?? 0) * W;
+        const y = (span.yNormTop ?? 0) * H;
+        const w = (span.widthNorm ?? 0) * W;
+        const h = (span.heightNorm ?? 0) * H;
+
+        if (annotation.type === "highlight") {
+          // Professional highlight: covers main text body with slight insets
+          // Apply horizontal padding
+          const hlX = x - (w * TYPO.HIGHLIGHT_HORIZONTAL_PAD);
+          const hlW = w + (w * TYPO.HIGHLIGHT_HORIZONTAL_PAD * 2);
+
+          // Calculate inset heights (in canvas coords, then convert to PDF)
+          const hlTopInset = h * TYPO.HIGHLIGHT_TOP_INSET;
+          const hlH = h * (1 - TYPO.HIGHLIGHT_TOP_INSET - TYPO.HIGHLIGHT_BOTTOM_INSET);
+
+          // PDF Y is bottom-up: convert from canvas top-down coords
+          // Canvas: y + hlTopInset is top of highlight
+          // PDF: H - (y + hlTopInset) - hlH is bottom of highlight
+          const pdfHlY = H - (y + hlTopInset) - hlH;
+
+          pdfPage.drawRectangle({
+            x: hlX,
+            y: pdfHlY,
+            width: hlW,
+            height: hlH,
+            color: annotationColor,
+            opacity: opacity,
+          });
+        } else if (annotation.type === "strikethrough") {
+          // Strikethrough at x-height center (middle of lowercase letters)
+          // Uses font metrics if available for accurate positioning
+          const xHeightCenter = getXHeightCenter(span);
+          const strikeCanvasY = y + (h * xHeightCenter);
+          const pdfStrikeY = H - strikeCanvasY;
+          const lineThickness = Math.max(1, h * TYPO.STRIKETHROUGH_THICKNESS);
+
+          pdfPage.drawLine({
+            start: { x: x, y: pdfStrikeY },
+            end: { x: x + w, y: pdfStrikeY },
+            color: annotationColor,
+            thickness: lineThickness,
+            opacity: opacity,
+          });
+        } else if (annotation.type === "underline") {
+          // Underline positioned just below the baseline
+          // Uses font metrics (ascentRatio) if available for accurate positioning
+          const baselinePos = getBaselinePosition(span);
+          const underlineCanvasY = y + (h * (baselinePos + TYPO.UNDERLINE_OFFSET));
+          const pdfUnderlineY = H - underlineCanvasY;
+          const lineThickness = Math.max(1, h * TYPO.UNDERLINE_THICKNESS);
+
+          pdfPage.drawLine({
+            start: { x: x, y: pdfUnderlineY },
+            end: { x: x + w, y: pdfUnderlineY },
+            color: annotationColor,
+            thickness: lineThickness,
+            opacity: opacity,
+          });
+        }
+      }
+
+      // Add to manifest
+      pageManifest.annotations.push({
+        id: annotation.id,
+        type: annotation.type,
+        spans: annotation.spans.map((s: any) => ({
+          xNorm: +(s.xNorm ?? 0).toFixed(6),
+          yNormTop: +(s.yNormTop ?? 0).toFixed(6),
+          widthNorm: +(s.widthNorm ?? 0).toFixed(6),
+          heightNorm: +(s.heightNorm ?? 0).toFixed(6),
+        })),
+        color: annotation.color || "#FFFF00",
+        opacity: opacity,
+        index: i,
+        annotatedText: annotation.annotatedText,
       });
     }
 
