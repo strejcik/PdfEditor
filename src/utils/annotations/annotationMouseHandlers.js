@@ -73,8 +73,9 @@ export function handleAnnotationMouseDown(e, params) {
   const mouseY = e.clientY - rect.top;
   const ctx = canvas.getContext('2d');
 
-  // Priority 1: If annotation tool is active and we have text spans, start text selection
-  if (activeAnnotationTool && pdfTextSpans && pdfTextSpans.length > 0) {
+  // Priority 1: If annotation tool is active and we have text (either pdfTextSpans or textItems), start text selection
+  const hasAnnotatableText = (pdfTextSpans && pdfTextSpans.length > 0) || (textItems && textItems.length > 0);
+  if (activeAnnotationTool && hasAnnotatableText) {
     startTextSelection(mouseX, mouseY);
     return true;
   }
@@ -150,6 +151,7 @@ export function handleAnnotationMouseMove(e, params) {
     isSelectingText,
     updateTextSelection,
     pdfTextSpans,
+    textItems,
   } = params;
 
   if (!isSelectingText) return false;
@@ -160,16 +162,20 @@ export function handleAnnotationMouseMove(e, params) {
   const rect = canvas.getBoundingClientRect();
   const mouseX = e.clientX - rect.left;
   const mouseY = e.clientY - rect.top;
+  const ctx = canvas.getContext('2d');
 
   // Update text selection with current mouse position
-  if (updateTextSelection && pdfTextSpans) {
+  // Pass both pdfTextSpans and textItems - the hook will use whichever is available
+  if (updateTextSelection) {
     updateTextSelection(
       mouseX,
       mouseY,
-      pdfTextSpans,
+      pdfTextSpans || [],
       rect.width,
       rect.height,
-      activePage
+      activePage,
+      textItems || [],
+      ctx
     );
   }
 

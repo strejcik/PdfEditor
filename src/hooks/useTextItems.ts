@@ -1102,6 +1102,8 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
             index: pageIndex,
             anchor: "top",
             fontFamily,
+            // Preserve ID for annotation linking (from manifest)
+            ...(src?.id && { id: src.id }),
             // Bounding box dimensions for annotation positioning
             ...(widthNorm !== null && { widthNorm: +widthNorm.toFixed(6) }),
             ...(heightNorm !== null && { heightNorm: +heightNorm.toFixed(6) }),

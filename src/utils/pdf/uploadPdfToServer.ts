@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { TextSpan } from '../../types/annotations';
+import type { TextSpan, AnnotationItem } from '../../types/annotations';
 
 /**
  * Upload PDF file to server for processing
@@ -18,6 +18,9 @@ export const uploadPdfToServer = async ({
   saveImageItemsToIndexedDB,
   drawCanvas,
   setPdfTextSpans,
+  setAnnotationItems,
+  saveAnnotationsToIndexedDB,
+  savePagesToIndexedDB,
 }: {
   selectedFile: File | null;
   setIsPdfDownloaded: (value: boolean) => void;
@@ -27,10 +30,13 @@ export const uploadPdfToServer = async ({
   canvasRefs: React.MutableRefObject<(HTMLCanvasElement | null)[]>;
   fontSize: number;
   setImageItems: (items: any[]) => void;
-  setPages: (pages: any[]) => void;
+  setPages: (pages: any[] | ((prev: any[]) => any[])) => void;
   saveImageItemsToIndexedDB: (items: any[]) => void;
   drawCanvas: (pageIndex: number) => void;
   setPdfTextSpans?: (spans: TextSpan[]) => void;
+  setAnnotationItems?: (items: AnnotationItem[]) => void;
+  saveAnnotationsToIndexedDB?: (items: AnnotationItem[]) => Promise<void>;
+  savePagesToIndexedDB?: (pages: any[]) => Promise<void>;
 }) => {
   if (!selectedFile) {
     alert("No file selected. Please select a PDF file to upload.");
@@ -64,9 +70,10 @@ export const uploadPdfToServer = async ({
       return;
     }
 
-    // Separate textSpan items from regular items
+    // Separate textSpan items, annotations from regular items
     // textSpan items are used for annotation text selection
     const textSpans: TextSpan[] = [];
+    const annotations: AnnotationItem[] = [];
     const regularItems: any[] = [];
 
     for (const item of payload) {
@@ -81,6 +88,30 @@ export const uploadPdfToServer = async ({
           fontSize: item.fontSize ?? 12,
           index: item.index ?? 0,
         });
+      } else if (item?.type === "annotation") {
+        // Extract annotation items from manifest
+        const annotationItem: AnnotationItem = {
+          id: item.id || `ann-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          type: item.annotationType || "highlight",
+          spans: (item.spans || []).map((s: any) => ({
+            xNorm: s.xNorm ?? 0,
+            yNormTop: s.yNormTop ?? 0,
+            widthNorm: s.widthNorm ?? 0,
+            heightNorm: s.heightNorm ?? 0,
+            text: s.text,
+            fontSize: s.fontSize,
+            relativeXNorm: s.relativeXNorm,
+            relativeYNorm: s.relativeYNorm,
+            ascentRatio: s.ascentRatio,
+            descentRatio: s.descentRatio,
+          })),
+          color: item.color || "#FFFF00",
+          opacity: item.opacity ?? 0.4,
+          index: item.index ?? 0,
+          annotatedText: item.annotatedText,
+          linkedTextItemId: item.linkedTextItemId,
+        };
+        annotations.push(annotationItem);
       } else {
         // Regular items (text lines, images)
         regularItems.push(item);
@@ -115,6 +146,52 @@ export const uploadPdfToServer = async ({
       saveImageItemsToIndexedDB,
       drawCanvas,
     });
+
+    // Store annotations AFTER addTextToCanvas3 so pages already have text items
+    // IMPORTANT: We must also update pages with annotations to prevent EditorProvider sync from overwriting
+    if (annotations.length > 0) {
+      // Use setTimeout to ensure React has processed text/image state updates first
+      setTimeout(() => {
+        // Group annotations by page index (remove 'index' for page storage)
+        const annotationsByPage: Record<number, any[]> = {};
+        annotations.forEach((ann) => {
+          const pageIdx = ann.index ?? 0;
+          if (!annotationsByPage[pageIdx]) annotationsByPage[pageIdx] = [];
+          const { index, ...annWithoutIndex } = ann;
+          annotationsByPage[pageIdx].push(annWithoutIndex);
+        });
+
+        // Update pages with annotations
+        // This ensures EditorProvider syncs annotations correctly
+        setPages((prevPages: any[]) => {
+          const nextPages = Array.isArray(prevPages) ? [...prevPages] : [];
+          // Ensure we have enough pages
+          const maxPageIndex = Math.max(...Object.keys(annotationsByPage).map(Number), 0);
+          while (nextPages.length <= maxPageIndex) {
+            nextPages.push({ textItems: [], imageItems: [], annotations: [] });
+          }
+          // Add annotations to each page
+          Object.entries(annotationsByPage).forEach(([pageIdxStr, pageAnnotations]) => {
+            const pageIdx = parseInt(pageIdxStr, 10);
+            nextPages[pageIdx] = {
+              ...nextPages[pageIdx],
+              annotations: pageAnnotations,
+            };
+          });
+          return nextPages;
+        });
+
+        // Also set annotation items state directly
+        if (setAnnotationItems) {
+          setAnnotationItems(annotations);
+        }
+
+        // Save to IndexedDB for persistence
+        if (saveAnnotationsToIndexedDB) {
+          saveAnnotationsToIndexedDB(annotations);
+        }
+      }, 200);
+    }
   } catch (error) {
     console.error("Error uploading PDF:", error);
     alert("Failed to upload PDF. Please try again.");

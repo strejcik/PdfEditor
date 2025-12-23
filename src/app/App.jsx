@@ -15,7 +15,7 @@ import { ConfirmationModal } from "../components/ConfirmationModal";
 import { handleJSONImport } from "../utils/json/jsonImportHandler";
 import { clearAllEditorState } from "../utils/persistance/indexedDBCleaner";
 import { savePages } from "../utils/persistance/pagesStorage";
-import { saveShapeItemsToIndexedDB } from "../utils/persistance/indexedDBHelpers";
+import { saveShapeItemsToIndexedDB, saveAnnotationsToIndexedDB } from "../utils/persistance/indexedDBHelpers";
 import { exportStateToJson } from "../utils/json/exportStateToJson";
 import { deleteSelectedImage } from "../utils/images/deleteSelectedImage";
 import { resolveTopLeft } from "../utils/canvas/resolveTopLeft";
@@ -299,6 +299,7 @@ useEffect(() => {
     annotations: {
       annotationItems, setAnnotationItems,
       selectedAnnotationIndex, setSelectedAnnotationIndex,
+      selectedAnnotationIndexes, setSelectedAnnotationIndexes,
       activeAnnotationTool, setActiveAnnotationTool,
       annotationColor, setAnnotationColor,
       annotationOpacity, setAnnotationOpacity,
@@ -463,7 +464,7 @@ const requestCanvasDraw = (page) => {
         drawCanvas(i);
       });
     });
-  }, [pageList, textItems, imageItems, shapeItems, mlText, mlAnchor,
+  }, [pageList, textItems, imageItems, shapeItems, annotationItems, mlText, mlAnchor,
 mlPreferredX, viewerCreationState /* + any other draw deps */]);
 
 
@@ -807,6 +808,7 @@ const wrappedMouseDown = (e) => {
     startTextSelection,
     selectedAnnotationIndex,
     setSelectedAnnotationIndex,
+    setSelectedAnnotationIndexes,
     // For pass-through when textItems are under annotations
     clearAnnotationSelection,
     textItems,
@@ -1006,6 +1008,7 @@ const wrappedMouseMove = (e) => {
     activePage,
     isSelectingText,
     pdfTextSpans,
+    textItems,
     updateTextSelection,
   });
 
@@ -1593,7 +1596,8 @@ return (
                 onClick={isViewer ? viewOnly : () => uploadPdfToServer({
                   selectedFile, setIsPdfDownloaded, addTextToCanvas3, pushSnapshotToUndo,
                   activePage, canvasRefs, fontSize, setImageItems, setPages,
-                  saveImageItemsToIndexedDB, drawCanvas, setPdfTextSpans,
+                  saveImageItemsToIndexedDB, drawCanvas, setPdfTextSpans, setAnnotationItems,
+                  saveAnnotationsToIndexedDB,
                 })}
                 disabled={isViewer}
               >
@@ -1609,6 +1613,7 @@ return (
                 onClick={isViewer ? viewOnly : () => saveAllPagesAsPDF({
                   canvasRefs, activePage, pageList,
                   CANVAS_WIDTH: canvasWidth, CANVAS_HEIGHT: canvasHeight,
+                  textItems, annotationItems,
                 })}
                 disabled={isViewer}
               >
@@ -2490,10 +2495,10 @@ return (
                 </div>
               )}
 
-              {/* PDF text spans info */}
-              {pdfTextSpans.length === 0 && (
+              {/* PDF text spans info - only show warning if no text is available at all */}
+              {pdfTextSpans.length === 0 && textItems.length === 0 && (
                 <div className="panel-info" style={{ marginTop: '12px', padding: '8px', backgroundColor: '#fef3c7', borderRadius: '4px', fontSize: '12px', color: '#92400e' }}>
-                  ⚠️ No text spans available. Upload a PDF to enable text annotation.
+                  ⚠️ No text available. Add text or upload a PDF to enable text annotation.
                 </div>
               )}
             </div>

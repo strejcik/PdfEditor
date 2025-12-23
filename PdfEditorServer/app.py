@@ -306,50 +306,92 @@ def flatten_manifest_to_payload(manifest):
                     pass
             if "fontFamily" in t and t["fontFamily"]:
                 item["fontFamily"] = str(t["fontFamily"])
+            # Include text item ID for annotation linking if available
+            if "id" in t and t["id"]:
+                item["id"] = str(t["id"])
             out.append(item)
 
-            # Also generate textSpan for annotation selection
-            # Use actual dimensions from manifest if available (measured on canvas)
-            # Otherwise fall back to rough estimates
-            if text_content and font_size:
-                # Try to get accurate dimensions from manifest
-                width_norm = t.get("widthNorm")
-                height_norm = t.get("heightNorm")
-                ascent_ratio = t.get("ascentRatio")  # baseline position from top
-                descent_ratio = t.get("descentRatio")
-
-                # Fall back to estimates if not available
-                if width_norm is None:
-                    # Rough character width estimate (0.5 * fontSize for average char)
-                    # Assume A4 page width of 595 points (standard PDF)
-                    char_width_estimate = font_size * 0.5
-                    text_width_points = len(text_content) * char_width_estimate
-                    width_norm = text_width_points / 595.0
-                if height_norm is None:
-                    # Estimate: textHeight ≈ fontSize (ascent + descent)
-                    # A4 height is 842 points
-                    height_norm = font_size / 842.0
+        # TEXT SPANS - prefer pre-computed textSpans from manifest if available
+        # Otherwise generate from texts array
+        manifest_text_spans = page.get("textSpans") or []
+        if manifest_text_spans:
+            # Use pre-computed textSpans from manifest (accurate measurements from client)
+            for ts in manifest_text_spans:
+                x_norm = ts.get("xNorm")
+                y_norm_top = ts.get("yNormTop")
+                if x_norm is None or y_norm_top is None:
+                    continue
 
                 text_span_item = {
                     "type": "textSpan",
-                    "text": text_content,
+                    "text": ts.get("text", ""),
                     "xNorm": float(x_norm),
                     "yNormTop": float(y_norm_top),
-                    "widthNorm": float(width_norm),
-                    "heightNorm": float(height_norm),
-                    "fontSize": font_size,
+                    "widthNorm": float(ts.get("widthNorm", 0)),
+                    "heightNorm": float(ts.get("heightNorm", 0)),
+                    "fontSize": float(ts.get("fontSize")) if ts.get("fontSize") is not None else None,
                     "index": i,
                     "zOrder": 2_500_000 + text_span_counter,
                 }
 
-                # Include font metrics if available for accurate annotation positioning
-                if ascent_ratio is not None:
-                    text_span_item["ascentRatio"] = float(ascent_ratio)
-                if descent_ratio is not None:
-                    text_span_item["descentRatio"] = float(descent_ratio)
+                # Include font metrics if available
+                if ts.get("ascentRatio") is not None:
+                    text_span_item["ascentRatio"] = float(ts["ascentRatio"])
+                if ts.get("descentRatio") is not None:
+                    text_span_item["descentRatio"] = float(ts["descentRatio"])
 
                 out.append(text_span_item)
                 text_span_counter += 1
+        else:
+            # Fallback: generate textSpans from texts array
+            for t in (page.get("texts") or []):
+                x_norm = t.get("xNorm")
+                y_norm_top = t.get("yNormTop")
+                if x_norm is None or y_norm_top is None:
+                    continue
+                text_content = t.get("text", "")
+                font_size = float(t.get("fontSize")) if t.get("fontSize") is not None else None
+
+                # Only generate textSpan if we have text content and font size
+                if text_content and font_size:
+                    # Try to get accurate dimensions from manifest
+                    width_norm = t.get("widthNorm")
+                    height_norm = t.get("heightNorm")
+                    ascent_ratio = t.get("ascentRatio")  # baseline position from top
+                    descent_ratio = t.get("descentRatio")
+
+                    # Fall back to estimates if not available
+                    if width_norm is None:
+                        # Rough character width estimate (0.5 * fontSize for average char)
+                        # Assume A4 page width of 595 points (standard PDF)
+                        char_width_estimate = font_size * 0.5
+                        text_width_points = len(text_content) * char_width_estimate
+                        width_norm = text_width_points / 595.0
+                    if height_norm is None:
+                        # Estimate: textHeight ≈ fontSize (ascent + descent)
+                        # A4 height is 842 points
+                        height_norm = font_size / 842.0
+
+                    text_span_item = {
+                        "type": "textSpan",
+                        "text": text_content,
+                        "xNorm": float(x_norm),
+                        "yNormTop": float(y_norm_top),
+                        "widthNorm": float(width_norm),
+                        "heightNorm": float(height_norm),
+                        "fontSize": font_size,
+                        "index": i,
+                        "zOrder": 2_500_000 + text_span_counter,
+                    }
+
+                    # Include font metrics if available for accurate annotation positioning
+                    if ascent_ratio is not None:
+                        text_span_item["ascentRatio"] = float(ascent_ratio)
+                    if descent_ratio is not None:
+                        text_span_item["descentRatio"] = float(descent_ratio)
+
+                    out.append(text_span_item)
+                    text_span_counter += 1
 
         # IMAGES
         for im in (page.get("images") or []):
@@ -391,6 +433,69 @@ def flatten_manifest_to_payload(manifest):
                     img_item["ref"] = im.get("ref")
 
             out.append(img_item)
+
+        # ANNOTATIONS (highlight, strikethrough, underline)
+        annotation_counter = 0
+        for ann in (page.get("annotations") or []):
+            ann_id = ann.get("id")
+            ann_type = ann.get("type")
+            if not ann_type:
+                continue
+
+            spans = ann.get("spans") or []
+            if not spans:
+                continue
+
+            # Build span objects with all necessary fields for linked annotations
+            span_items = []
+            for s in spans:
+                span_item = {
+                    "xNorm": float(s.get("xNorm", 0)),
+                    "yNormTop": float(s.get("yNormTop", 0)),
+                    "widthNorm": float(s.get("widthNorm", 0)),
+                    "heightNorm": float(s.get("heightNorm", 0)),
+                }
+                # Include text and fontSize for accurate visual rendering
+                if s.get("text"):
+                    span_item["text"] = str(s["text"])
+                if s.get("fontSize") is not None:
+                    span_item["fontSize"] = float(s["fontSize"])
+                # Include relative offsets for linked annotations
+                if s.get("relativeXNorm") is not None:
+                    span_item["relativeXNorm"] = float(s["relativeXNorm"])
+                if s.get("relativeYNorm") is not None:
+                    span_item["relativeYNorm"] = float(s["relativeYNorm"])
+                # Include font metrics if available
+                if s.get("ascentRatio") is not None:
+                    span_item["ascentRatio"] = float(s["ascentRatio"])
+                if s.get("descentRatio") is not None:
+                    span_item["descentRatio"] = float(s["descentRatio"])
+                span_items.append(span_item)
+
+            annotation_item = {
+                "type": "annotation",
+                "annotationType": str(ann_type),
+                "spans": span_items,
+                "color": str(ann.get("color", "#FFFF00")),
+                "opacity": float(ann.get("opacity", 0.4)),
+                "index": i,
+                "zOrder": 3_000_000 + annotation_counter,
+            }
+
+            # Include annotation ID
+            if ann_id:
+                annotation_item["id"] = str(ann_id)
+
+            # Include linked text item ID for annotations linked to text items
+            if ann.get("linkedTextItemId"):
+                annotation_item["linkedTextItemId"] = str(ann["linkedTextItemId"])
+
+            # Include annotated text for reference
+            if ann.get("annotatedText"):
+                annotation_item["annotatedText"] = str(ann["annotatedText"])
+
+            out.append(annotation_item)
+            annotation_counter += 1
 
     return out
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AnnotationItem, AnnotationType, TextSpan } from "../types/annotations";
 import { ANNOTATION_DEFAULTS } from "../types/annotations";
 import type { TextItem } from "../types/editor";
+import { getAnnotatableTextSpans } from "../utils/annotations/textItemsToSpans";
 
 export function useAnnotations() {
   // Core state
@@ -255,17 +256,31 @@ export function useAnnotations() {
   };
 
   // Update text selection - find intersecting text spans
+  // Now supports both pdfTextSpans (from backend) and textItems (client-side)
+  // If pdfTextSpans is empty, generates spans from textItems automatically
   const updateTextSelection = (
     x: number,
     y: number,
     pdfTextSpans: TextSpan[],
     canvasWidth: number,
     canvasHeight: number,
-    pageIndex: number
+    pageIndex: number,
+    textItems?: TextItem[],
+    ctx?: CanvasRenderingContext2D | null
   ) => {
     setTextSelectionEnd({ x, y });
 
     if (!textSelectionStart) return;
+
+    // Get annotatable text spans - uses pdfTextSpans if available, otherwise generates from textItems
+    const availableSpans = getAnnotatableTextSpans(
+      pdfTextSpans,
+      textItems || [],
+      pageIndex,
+      canvasWidth,
+      canvasHeight,
+      ctx
+    );
 
     // Build selection rectangle (normalize to handle any drag direction)
     const selRect = {
@@ -276,7 +291,7 @@ export function useAnnotations() {
     };
 
     // Find text spans that intersect with selection rectangle
-    const selected = pdfTextSpans.filter(span => {
+    const selected = availableSpans.filter(span => {
       if (span.index !== pageIndex) return false;
 
       // Convert normalized coords to pixel coords
