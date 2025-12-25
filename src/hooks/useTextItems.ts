@@ -872,6 +872,37 @@ const wrapTextResponsive = (text: string, maxWidth: number, ctx: CanvasRendering
 
 
 
+/**
+ * Wrap text into lines that fit within maxWidth
+ */
+function wrapTextIntoLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  if (!text || !maxWidth || maxWidth <= 0) {
+    return [text || ""];
+  }
+
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const metrics = ctx.measureText(testLine);
+
+    if (metrics.width > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines.length > 0 ? lines : [""];
+}
+
 const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => {
   const fontSize   = Number(item.fontSize) || 16;
   const fontFamily = item.fontFamily || "Lato";
@@ -881,16 +912,42 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
   ctx.textBaseline = "alphabetic";
   ctx.font = `${fontSize}px ${fontFamily}`;
 
-  const m = ctx.measureText(item.text || "");
+  // Check if text needs to be wrapped using item.maxWidth
+  const maxWidth = item.maxWidth;
+  const lines = maxWidth && maxWidth > 0 ? wrapTextIntoLines(ctx, item.text, maxWidth) : [item.text || ""];
+
+  // Calculate line height (1.2x font size for comfortable reading)
+  const lineHeight = fontSize * 1.2;
+
+  // Measure the first line for baseline metrics
+  const firstLineText = lines[0] || "";
+  const m = ctx.measureText(firstLineText);
   const ascent  = m.actualBoundingBoxAscent;
   const descent = m.actualBoundingBoxDescent;
-  const textHeight = ascent + descent;
+  const singleLineHeight = ascent + descent;
+
+  // Total height for all lines
+  const totalTextHeight = lines.length > 1
+    ? singleLineHeight + (lines.length - 1) * lineHeight
+    : singleLineHeight;
+
+  // Calculate max width across all lines
+  let maxLineWidth = 0;
+  for (const line of lines) {
+    const lineMetrics = ctx.measureText(line);
+    const bboxLeft = lineMetrics.actualBoundingBoxLeft || 0;
+    const bboxRight = lineMetrics.actualBoundingBoxRight || lineMetrics.width;
+    const lineWidth = bboxLeft + bboxRight;
+    if (lineWidth > maxLineWidth) {
+      maxLineWidth = lineWidth;
+    }
+  }
 
   // Use actual visual bounding box, not advance width
   // This correctly handles letters like "j" that extend left of origin
   const bboxLeft = (typeof m.actualBoundingBoxLeft === "number") ? m.actualBoundingBoxLeft : 0;
   const bboxRight = (typeof m.actualBoundingBoxRight === "number") ? m.actualBoundingBoxRight : m.width;
-  const textWidth = bboxLeft + bboxRight;
+  const textWidth = maxLineWidth;
   const xOffset = bboxLeft;
 
   const hasNorm = (item.xNorm != null) && (item.yNormTop != null);
@@ -906,7 +963,7 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     const rawY = Number(item.y) || 0;
     const anchor = item.anchor || "baseline";
     if (anchor === "baseline")      topY = rawY - ascent;
-    else if (anchor === "bottom")   topY = rawY - textHeight;
+    else if (anchor === "bottom")   topY = rawY - totalTextHeight;
     else                            topY = rawY; // already top
   }
 
@@ -919,9 +976,13 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     fontFamily,
     padding,
     textWidth,   // Visual width (not advance width)
-    textHeight,
+    textHeight: totalTextHeight,
     ascent,
     descent,
+    // Multi-line support
+    lines,
+    lineHeight,
+    isMultiLine: lines.length > 1,
   };
 }
 
@@ -1427,6 +1488,43 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     setTextBox(null);
   }, [setupCanvasA4, computeScaledTargetFont, wrapTextPreservingNewlinesResponsive, setTextItems, saveTextItemsToIndexedDB, textColor, CANVAS_WIDTH, CANVAS_HEIGHT]);
 
+  // Z-index actions for layering
+  // Bring text item one layer forward (increment z-index)
+  const bringTextForward = useCallback((index: number) => {
+    setTextItems((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? 0;
+      return prev.map((t, i) => i === index ? { ...t, zIndex: currentZ + 1 } : t);
+    });
+  }, [setTextItems]);
+
+  // Send text item one layer backward (decrement z-index)
+  const sendTextBackward = useCallback((index: number) => {
+    setTextItems((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? 0;
+      return prev.map((t, i) => i === index ? { ...t, zIndex: currentZ - 1 } : t);
+    });
+  }, [setTextItems]);
+
+  // Bring text item to front (set z-index to max + 1)
+  const bringTextToFront = useCallback((index: number) => {
+    setTextItems((prev) => {
+      const maxZ = Math.max(...prev.map(t => t.zIndex ?? 0), 0);
+      return prev.map((t, i) => i === index ? { ...t, zIndex: maxZ + 1 } : t);
+    });
+  }, [setTextItems]);
+
+  // Send text item to back (set z-index to min - 1)
+  const sendTextToBack = useCallback((index: number) => {
+    setTextItems((prev) => {
+      const minZ = Math.min(...prev.map(t => t.zIndex ?? 0), 0);
+      return prev.map((t, i) => i === index ? { ...t, zIndex: minZ - 1 } : t);
+    });
+  }, [setTextItems]);
+
   return {
     // items
     textItems: textItemsState,
@@ -1462,5 +1560,11 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     setupCanvasA4,
     computeScaledTargetFont,
     addTextToCanvas2,
+
+    // Z-index layering
+    bringTextForward,
+    sendTextBackward,
+    bringTextToFront,
+    sendTextToBack,
   };
 }

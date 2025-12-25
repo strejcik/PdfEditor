@@ -29,148 +29,176 @@ function drawArrowhead(ctx, x1, y1, x2, y2, arrowSize = 10) {
 }
 
 /**
- * Draw all shapes for a specific page
+ * Draw the shape body (without selection highlight)
+ */
+function drawShapeBody(ctx, rect, item) {
+  // Resolve coordinates
+  const x = resolveCoord(item.xNorm, item.x, rect.width);
+  const y = resolveCoord(item.yNormTop, item.y, rect.height);
+  const w = resolveCoord(item.widthNorm, item.width, rect.width);
+  const h = resolveCoord(item.heightNorm, item.height, rect.height);
+
+  // Set style
+  ctx.strokeStyle = item.strokeColor || "#000000";
+  ctx.lineWidth = item.strokeWidth || 2;
+  const hasFill = item.fillColor && item.fillColor !== 'transparent' && item.fillColor !== null;
+  if (hasFill) {
+    ctx.fillStyle = item.fillColor;
+  }
+
+  // Draw based on type
+  switch (item.type) {
+    case "rectangle":
+      if (hasFill) {
+        ctx.fillRect(x, y, w, h);
+      }
+      ctx.strokeRect(x, y, w, h);
+      break;
+
+    case "circle":
+      const radiusX = w / 2;
+      const radiusY = h / 2;
+      const centerX = x + radiusX;
+      const centerY = y + radiusY;
+
+      ctx.beginPath();
+      ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
+      if (hasFill) {
+        ctx.fill();
+      }
+      ctx.stroke();
+      break;
+
+    case "line":
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + w, y + h);
+      ctx.stroke();
+      break;
+
+    case "arrow":
+      // Draw the line
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + w, y + h);
+      ctx.stroke();
+      // Draw the arrowhead at the end
+      drawArrowhead(ctx, x, y, x + w, y + h, 15);
+      break;
+
+    case "triangle":
+      // Draw an equilateral-ish triangle with base at bottom
+      ctx.beginPath();
+      ctx.moveTo(x + w / 2, y); // Top center
+      ctx.lineTo(x, y + h); // Bottom left
+      ctx.lineTo(x + w, y + h); // Bottom right
+      ctx.closePath();
+      if (hasFill) {
+        ctx.fill();
+      }
+      ctx.stroke();
+      break;
+
+    case "diamond":
+      // Draw a diamond (rhombus) with points at midpoints
+      ctx.beginPath();
+      ctx.moveTo(x + w / 2, y); // Top
+      ctx.lineTo(x + w, y + h / 2); // Right
+      ctx.lineTo(x + w / 2, y + h); // Bottom
+      ctx.lineTo(x, y + h / 2); // Left
+      ctx.closePath();
+      if (hasFill) {
+        ctx.fill();
+      }
+      ctx.stroke();
+      break;
+
+    case "freehand":
+      // Draw freehand path from stored points
+      if (item.points && item.points.length > 1) {
+        ctx.beginPath();
+        const firstPoint = item.points[0];
+        ctx.moveTo(firstPoint.x * rect.width, firstPoint.y * rect.height);
+
+        for (let i = 1; i < item.points.length; i++) {
+          const point = item.points[i];
+          ctx.lineTo(point.x * rect.width, point.y * rect.height);
+        }
+        ctx.stroke();
+      }
+      break;
+
+    default:
+      console.warn("Unknown shape type:", item.type);
+  }
+
+  return { x, y, w, h };
+}
+
+/**
+ * Draw selection highlight for a shape
+ */
+function drawShapeSelectionHighlight(ctx, item, x, y, w, h) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(30, 144, 255, 0.8)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]);
+  ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+
+  // Draw resize handles (small squares at corners) - but not for freehand
+  if (item.type !== "freehand") {
+    const handleSize = 8;
+    ctx.fillStyle = "rgba(30, 144, 255, 0.8)";
+    ctx.setLineDash([]);
+
+    // Top-left
+    ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
+    // Top-right
+    ctx.fillRect(x + w - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
+    // Bottom-left
+    ctx.fillRect(x - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+    // Bottom-right
+    ctx.fillRect(x + w - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Draw a single shape (used for z-index ordering)
+ */
+export function drawSingleShape(ctx, rect, item, globalIndex, state) {
+  const { selectedShapeIndex, selectedShapeIndexes } = state;
+
+  // Draw the shape body
+  const { x, y, w, h } = drawShapeBody(ctx, rect, item);
+
+  // Draw selection highlight
+  const isSelected =
+    globalIndex === selectedShapeIndex ||
+    (selectedShapeIndexes && selectedShapeIndexes.includes(globalIndex));
+
+  if (isSelected) {
+    drawShapeSelectionHighlight(ctx, item, x, y, w, h);
+  }
+}
+
+/**
+ * Draw all shapes for a specific page (legacy function, still used for non-z-index cases)
  */
 export function drawShapeItems(ctx, rect, pageIndex, state) {
   const { shapeItems, selectedShapeIndex, selectedShapeIndexes } = state;
 
   if (!shapeItems || shapeItems.length === 0) return;
 
-  shapeItems.forEach((item, globalIndex) => {
-    // Only draw shapes for this page
-    if (item.index !== pageIndex) return;
+  // Sort by z-index for proper layering
+  const sortedItems = shapeItems
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.index === pageIndex)
+    .sort((a, b) => (a.item.zIndex ?? 0) - (b.item.zIndex ?? 0));
 
-    // Resolve coordinates
-    const x = resolveCoord(item.xNorm, item.x, rect.width);
-    const y = resolveCoord(item.yNormTop, item.y, rect.height);
-    const w = resolveCoord(item.widthNorm, item.width, rect.width);
-    const h = resolveCoord(item.heightNorm, item.height, rect.height);
-
-    // Set style
-    ctx.strokeStyle = item.strokeColor || "#000000";
-    ctx.lineWidth = item.strokeWidth || 2;
-    const hasFill = item.fillColor && item.fillColor !== 'transparent' && item.fillColor !== null;
-    if (hasFill) {
-      ctx.fillStyle = item.fillColor;
-    }
-
-    // Draw based on type
-    switch (item.type) {
-      case "rectangle":
-        if (hasFill) {
-          ctx.fillRect(x, y, w, h);
-        }
-        ctx.strokeRect(x, y, w, h);
-        break;
-
-      case "circle":
-        const radiusX = w / 2;
-        const radiusY = h / 2;
-        const centerX = x + radiusX;
-        const centerY = y + radiusY;
-
-        ctx.beginPath();
-        ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2);
-        if (hasFill) {
-          ctx.fill();
-        }
-        ctx.stroke();
-        break;
-
-      case "line":
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x + w, y + h);
-        ctx.stroke();
-        break;
-
-      case "arrow":
-        // Draw the line
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x + w, y + h);
-        ctx.stroke();
-        // Draw the arrowhead at the end
-        drawArrowhead(ctx, x, y, x + w, y + h, 15);
-        break;
-
-      case "triangle":
-        // Draw an equilateral-ish triangle with base at bottom
-        ctx.beginPath();
-        ctx.moveTo(x + w / 2, y); // Top center
-        ctx.lineTo(x, y + h); // Bottom left
-        ctx.lineTo(x + w, y + h); // Bottom right
-        ctx.closePath();
-        if (hasFill) {
-          ctx.fill();
-        }
-        ctx.stroke();
-        break;
-
-      case "diamond":
-        // Draw a diamond (rhombus) with points at midpoints
-        ctx.beginPath();
-        ctx.moveTo(x + w / 2, y); // Top
-        ctx.lineTo(x + w, y + h / 2); // Right
-        ctx.lineTo(x + w / 2, y + h); // Bottom
-        ctx.lineTo(x, y + h / 2); // Left
-        ctx.closePath();
-        if (hasFill) {
-          ctx.fill();
-        }
-        ctx.stroke();
-        break;
-
-      case "freehand":
-        // Draw freehand path from stored points
-        if (item.points && item.points.length > 1) {
-          ctx.beginPath();
-          const firstPoint = item.points[0];
-          ctx.moveTo(firstPoint.x * rect.width, firstPoint.y * rect.height);
-
-          for (let i = 1; i < item.points.length; i++) {
-            const point = item.points[i];
-            ctx.lineTo(point.x * rect.width, point.y * rect.height);
-          }
-          ctx.stroke();
-        }
-        break;
-
-      default:
-        console.warn("Unknown shape type:", item.type);
-    }
-
-    // Draw selection highlight
-    // Check both single selection and multi-selection
-    const isSelected =
-      globalIndex === selectedShapeIndex ||
-      (selectedShapeIndexes && selectedShapeIndexes.includes(globalIndex));
-
-    if (isSelected) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(30, 144, 255, 0.8)";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
-      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
-
-      // Draw resize handles (small squares at corners) - but not for freehand
-      if (item.type !== "freehand") {
-        const handleSize = 8;
-        ctx.fillStyle = "rgba(30, 144, 255, 0.8)";
-        ctx.setLineDash([]);
-
-        // Top-left
-        ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
-        // Top-right
-        ctx.fillRect(x + w - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
-        // Bottom-left
-        ctx.fillRect(x - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
-        // Bottom-right
-        ctx.fillRect(x + w - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
-      }
-
-      ctx.restore();
-    }
+  sortedItems.forEach(({ item, index: globalIndex }) => {
+    drawSingleShape(ctx, rect, item, globalIndex, state);
   });
 }
 

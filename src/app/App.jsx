@@ -15,7 +15,7 @@ import { ConfirmationModal } from "../components/ConfirmationModal";
 import { handleJSONImport } from "../utils/json/jsonImportHandler";
 import { clearAllEditorState } from "../utils/persistance/indexedDBCleaner";
 import { savePages } from "../utils/persistance/pagesStorage";
-import { saveShapeItemsToIndexedDB, saveAnnotationsToIndexedDB } from "../utils/persistance/indexedDBHelpers";
+import { saveShapeItemsToIndexedDB, saveAnnotationsToIndexedDB, saveFormFieldsToIndexedDB } from "../utils/persistance/indexedDBHelpers";
 import { exportStateToJson } from "../utils/json/exportStateToJson";
 import { deleteSelectedImage } from "../utils/images/deleteSelectedImage";
 import { resolveTopLeft } from "../utils/canvas/resolveTopLeft";
@@ -26,7 +26,8 @@ import { uploadPdfToServer } from "../utils/pdf/uploadPdfToServer";
 import { handleFileChange } from "../utils/files/handleFileChange";
 import { ShapeToolbar } from "../components/ShapeToolbar";
 import { isPointInShape, getResizeHandle } from "../utils/shapes/shapeHitDetection";
-import { handleShapeMouseDown, handleShapeMouseMove, handleShapeMouseUp } from "../utils/shapes/shapeMouseHandlers";
+import { handleShapeMouseDown, handleShapeMouseMove, handleShapeMouseUp, findTopmostShapeAtPoint } from "../utils/shapes/shapeMouseHandlers";
+import { findTopmostTextAtPoint } from "../hooks/useMouse";
 import { handleFormFieldMouseDown, handleFormFieldMouseMove, handleFormFieldMouseUp } from "../utils/formFields/formFieldMouseHandlers";
 import { handleAnnotationMouseDown, handleAnnotationMouseMove, handleAnnotationMouseUp, handleAnnotationKeyDown } from "../utils/annotations/annotationMouseHandlers";
 import FontSelector from "../components/FontSelector";
@@ -34,6 +35,10 @@ import ColorPicker from "../components/ColorPicker";
 import { ANNOTATION_PRESET_COLORS } from "../types/annotations";
 import { useCursorPosition } from "../hooks/useCursorPosition";
 import { HostCursor } from "../components/HostCursor";
+import { TemplatesPanel } from "../components/TemplatesPanel";
+import { TemplatePreviewModal } from "../components/TemplatePreviewModal";
+import { PlaceholderEditorModal } from "../components/PlaceholderEditorModal";
+import { loadTemplate } from "../utils/templates/templateLoader";
 
 
 const App = () => {
@@ -50,6 +55,13 @@ const App = () => {
   const jsonRef = useRef(null);
   const [showLoadJsonModal, setShowLoadJsonModal] = useState(false);
   const pendingFileRef = useRef(null);
+
+  // Template loading state
+  const [showLoadTemplateModal, setShowLoadTemplateModal] = useState(false);
+  const pendingTemplateRef = useRef(null);
+
+  // Ref to store latest inputData to avoid stale closure issues
+  const inputDataRef = useRef(null);
 
   // Active panel state for icon rail navigation
   const [activePanel, setActivePanel] = useState(null);
@@ -93,6 +105,79 @@ const App = () => {
 
   const handleLoadJsonCancel = () => {
     setShowLoadJsonModal(false);
+  };
+
+  // Template loading handlers
+  const handleLoadTemplate = (template) => {
+    pendingTemplateRef.current = template;
+    setShowLoadTemplateModal(true);
+  };
+
+  const handleLoadTemplateConfirm = async () => {
+    setShowLoadTemplateModal(false);
+    const template = pendingTemplateRef.current;
+    if (!template) return;
+
+    // Clear existing state
+    await clearAllEditorState();
+
+    // Load the template
+    await loadTemplate(template, {
+      setPages,
+      setTextItems,
+      setImageItems,
+      setShapeItems,
+      setFormFields,
+      setAnnotationItems,
+      saveTextItemsToIndexedDB,
+      saveImageItemsToIndexedDB,
+      saveShapeItemsToIndexedDB,
+      saveFormFieldsToIndexedDB,
+      saveAnnotationsToIndexedDB,
+      savePagesToIndexedDB: savePages,
+    });
+
+    pendingTemplateRef.current = null;
+  };
+
+  const handleLoadTemplateCancel = () => {
+    setShowLoadTemplateModal(false);
+    pendingTemplateRef.current = null;
+  };
+
+  // Called from TemplatesPanel when user clicks "Use" on a template
+  const handleUseTemplate = (template) => {
+    // If template has placeholders, the hook will open the placeholder modal
+    // Otherwise, proceed directly to confirmation
+    if (template.metadata.placeholders.length > 0) {
+      initiateTemplateLoad(template);
+    } else {
+      handleLoadTemplate(template);
+    }
+  };
+
+  // Called after placeholders are filled in (static or AI templates)
+  const handleApplyPlaceholders = async () => {
+    if (isPendingAITemplate) {
+      // AI-generated template - call Claude API
+      if (!apiKey) {
+        // API key not unlocked - show error
+        console.warn('API key not unlocked for AI template generation');
+        return;
+      }
+      // Use inputDataRef.current to always get the latest state (avoids stale closure)
+      const currentInputData = inputDataRef.current;
+      const resolvedTemplate = await generateAndApplyTemplate(apiKey, currentInputData);
+      if (resolvedTemplate) {
+        handleLoadTemplate(resolvedTemplate);
+      }
+    } else {
+      // Static template with placeholders
+      const resolvedTemplate = applyPlaceholders();
+      if (resolvedTemplate) {
+        handleLoadTemplate(resolvedTemplate);
+      }
+    }
   };
 
 useEffect(() => {
@@ -154,7 +239,12 @@ useEffect(() => {
       wrapTextPreservingNewlinesResponsive, wrapTextResponsive,
       resolveTextLayout,
       resolveTextLayoutForHit, addTextToCanvas, addTextToCanvas3,
-      setupCanvasA4, computeScaledTargetFont, addTextToCanvas2
+      setupCanvasA4, computeScaledTargetFont, addTextToCanvas2,
+      // Z-index actions
+      bringTextForward,
+      sendTextBackward,
+      bringTextToFront,
+      sendTextToBack,
     },
 
     images: { 
@@ -261,6 +351,11 @@ useEffect(() => {
       deleteSelectedShape,
       deleteSelectedShapes,
       updateShape,
+      // Z-index actions
+      bringShapeForward,
+      sendShapeBackward,
+      bringShapeToFront,
+      sendShapeToBack,
     },
     formFields: {
       formFields, setFormFields,
@@ -285,6 +380,7 @@ useEffect(() => {
       updateFormField,
     },
     ai: {
+      apiKey,
       connectionStatus,
       isGenerating,
       error: aiError,
@@ -324,8 +420,48 @@ useEffect(() => {
       // Selection management
       clearSelection: clearAnnotationSelection,
     },
+    templates: {
+      templates: filteredTemplates,
+      previewTemplate,
+      isPlaceholderModalOpen,
+      pendingTemplate,
+      placeholderValues,
+      openPreview: openTemplatePreview,
+      closePreview: closeTemplatePreview,
+      initiateTemplateLoad,
+      updatePlaceholderValue,
+      applyPlaceholders,
+      cancelPlaceholderEdit,
+      // AI Template state - Generic (for all template types)
+      inputData,
+      inputSchema,
+      isGenerating: isTemplateGenerating,
+      generationError,
+      isPendingAITemplate,
+      // AI Template actions - Generic
+      updateInputField,
+      generateAndApplyTemplate,
+      clearGenerationError,
+      // Legacy resume-specific (for backwards compatibility)
+      resumeInputData,
+      updateResumeField,
+    },
+    alignmentGuides: {
+      alignmentGuides,
+      snapEnabled,
+      updateGuides,
+      clearGuides,
+      toggleSnap,
+      setSnapEnabled,
+      getOtherItemBounds,
+    },
   } = useEditor(); // ✅ correct
   useClipboard(useEditor());
+
+  // Keep inputDataRef in sync with latest inputData to avoid stale closure issues
+  useEffect(() => {
+    inputDataRef.current = inputData;
+  }, [inputData]);
 
   // Track cursor position for cursor mirroring in shared workspaces
   const cursorPosition = useCursorPosition();
@@ -560,6 +696,9 @@ useEffect(() => {
         pdfTextSpans,
         annotationColor,
         annotationOpacity,
+
+        // Alignment guides
+        alignmentGuides,
 
         fontSize,
         wrapTextPreservingNewlinesResponsive,
@@ -912,8 +1051,47 @@ const wrappedMouseDown = (e) => {
     }
   }
 
-  // Next, try shape handler
-  const shapeHandled = handleShapeMouseDown(e, {
+  // Z-INDEX PRIORITY: Determine which item type should handle this click
+  // If a shape tool is active, always let shape handler run (for creating shapes)
+  // Otherwise, compare z-indexes of topmost text and shape items at click point
+  let shapeHasPriority = true; // Default: let shape handler try first
+
+  if (!activeShapeTool && canvas && ctx && rect) {
+    // Find topmost text and shape at click point
+    const topmostText = findTopmostTextAtPoint(
+      textItems,
+      cssX,
+      cssY,
+      activePage,
+      resolveTextLayoutForHit,
+      ctx,
+      canvas
+    );
+
+    const topmostShape = findTopmostShapeAtPoint(
+      shapeItems,
+      cssX,
+      cssY,
+      rect.width,
+      rect.height,
+      activePage
+    );
+
+    // Compare z-indexes: higher z-index wins
+    if (topmostText && topmostShape) {
+      // Both text and shape under cursor - compare z-indexes
+      shapeHasPriority = topmostShape.zIndex >= topmostText.zIndex;
+    } else if (topmostText && !topmostShape) {
+      // Only text under cursor
+      shapeHasPriority = false;
+    }
+    // If only shape or neither, shapeHasPriority remains true (let shape handler try)
+  }
+
+  // Next, try shape handler (only if shape has priority)
+  let shapeHandled = false;
+  if (shapeHasPriority) {
+    shapeHandled = handleShapeMouseDown(e, {
     canvasRefs,
     activePage,
     activeShapeTool,
@@ -945,6 +1123,7 @@ const wrappedMouseDown = (e) => {
     setResizeHandle,
     setInitialSize,
   });
+  }
 
   if (shapeHandled) return; // Shape handled it, don't propagate
 
@@ -1002,6 +1181,11 @@ const wrappedMouseDown = (e) => {
 };
 
 const wrappedMouseMove = (e) => {
+  // Check if we're dragging anything (for alignment guides)
+  const isDraggingAnything = isDraggingShape || isDraggingMultipleShapes ||
+    isDraggingFormField || isDraggingMultipleFormFields ||
+    isDragging || isDraggingMixedItems || isImageDragging;
+
   // First, try annotation handler
   const annotationHandled = handleAnnotationMouseMove(e, {
     canvasRefs,
@@ -1035,7 +1219,42 @@ const wrappedMouseMove = (e) => {
     updateFormField,
   });
 
-  if (formFieldHandled) return; // Form field handled it, don't propagate
+  if (formFieldHandled) {
+    // Update alignment guides for form field dragging
+    if (isDraggingFormField && selectedFormFieldIndex !== null && snapEnabled) {
+      const canvas = canvasRefs.current[activePage];
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const field = formFields[selectedFormFieldIndex];
+        if (field) {
+          const draggingBounds = {
+            left: field.xNorm ?? 0,
+            right: (field.xNorm ?? 0) + (field.widthNorm ?? 0.1),
+            top: field.yNormTop ?? 0,
+            bottom: (field.yNormTop ?? 0) + (field.heightNorm ?? 0.05),
+            centerX: (field.xNorm ?? 0) + (field.widthNorm ?? 0.1) / 2,
+            centerY: (field.yNormTop ?? 0) + (field.heightNorm ?? 0.05) / 2,
+          };
+          const otherBounds = getOtherItemBounds(
+            textItems, shapeItems, imageItems, activePage,
+            null, null, null, rect.width, rect.height
+          ).concat(
+            formFields.filter((_, i) => i !== selectedFormFieldIndex && formFields[i]?.index === activePage)
+              .map(f => ({
+                left: f.xNorm ?? 0,
+                right: (f.xNorm ?? 0) + (f.widthNorm ?? 0.1),
+                top: f.yNormTop ?? 0,
+                bottom: (f.yNormTop ?? 0) + (f.heightNorm ?? 0.05),
+                centerX: (f.xNorm ?? 0) + (f.widthNorm ?? 0.1) / 2,
+                centerY: (f.yNormTop ?? 0) + (f.heightNorm ?? 0.05) / 2,
+              }))
+          );
+          updateGuides(draggingBounds, otherBounds, rect.width, rect.height);
+        }
+      }
+    }
+    return; // Form field handled it, don't propagate
+  }
 
   // Next, try shape handler
   const shapeHandled = handleShapeMouseMove(e, {
@@ -1058,7 +1277,41 @@ const wrappedMouseMove = (e) => {
     updateShape,
   });
 
-  if (shapeHandled) return; // Shape handled it, don't propagate
+  if (shapeHandled) {
+    // Update alignment guides for shape dragging
+    if (isDraggingShape && selectedShapeIndex !== null && snapEnabled) {
+      const canvas = canvasRefs.current[activePage];
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const shape = shapeItems[selectedShapeIndex];
+        if (shape) {
+          const draggingBounds = {
+            left: shape.xNorm ?? 0,
+            right: (shape.xNorm ?? 0) + (shape.widthNorm ?? 0.1),
+            top: shape.yNormTop ?? 0,
+            bottom: (shape.yNormTop ?? 0) + (shape.heightNorm ?? 0.05),
+            centerX: (shape.xNorm ?? 0) + (shape.widthNorm ?? 0.1) / 2,
+            centerY: (shape.yNormTop ?? 0) + (shape.heightNorm ?? 0.05) / 2,
+          };
+          const otherBounds = getOtherItemBounds(
+            textItems, shapeItems, imageItems, activePage,
+            null, selectedShapeIndex, null, rect.width, rect.height
+          ).concat(
+            formFields.filter(f => f?.index === activePage).map(f => ({
+              left: f.xNorm ?? 0,
+              right: (f.xNorm ?? 0) + (f.widthNorm ?? 0.1),
+              top: f.yNormTop ?? 0,
+              bottom: (f.yNormTop ?? 0) + (f.heightNorm ?? 0.05),
+              centerX: (f.xNorm ?? 0) + (f.widthNorm ?? 0.1) / 2,
+              centerY: (f.yNormTop ?? 0) + (f.heightNorm ?? 0.05) / 2,
+            }))
+          );
+          updateGuides(draggingBounds, otherBounds, rect.width, rect.height);
+        }
+      }
+    }
+    return; // Shape handled it, don't propagate
+  }
 
   // If multiline mode, handle that
   if (handleCanvasMouseMoveMl(e, {
@@ -1124,9 +1377,87 @@ const wrappedMouseMove = (e) => {
     updateFormField,
     requestCanvasDraw: () => drawCanvas(activePage),
   });
+
+  // Update alignment guides for text dragging (single item)
+  if (isDragging && selectedTextIndexes.length === 1 && snapEnabled) {
+    const canvas = canvasRefs.current[activePage];
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const textIndex = selectedTextIndexes[0];
+      const textItem = textItems[textIndex];
+      if (textItem) {
+        const ctx = canvas.getContext('2d');
+        const layout = resolveTextLayoutForHit(textItem, ctx, canvas);
+        const box = layout.box;
+        // Convert CSS pixels to normalized coordinates
+        const draggingBounds = {
+          left: box.x / rect.width,
+          right: (box.x + box.w) / rect.width,
+          top: box.y / rect.height,
+          bottom: (box.y + box.h) / rect.height,
+          centerX: (box.x + box.w / 2) / rect.width,
+          centerY: (box.y + box.h / 2) / rect.height,
+        };
+        const otherBounds = getOtherItemBounds(
+          textItems, shapeItems, imageItems, activePage,
+          textIndex, null, null, rect.width, rect.height,
+          (item) => {
+            const L = resolveTextLayoutForHit(item, ctx, canvas);
+            return { width: L.box.w, height: L.box.h };
+          }
+        ).concat(
+          formFields.filter(f => f?.index === activePage).map(f => ({
+            left: f.xNorm ?? 0,
+            right: (f.xNorm ?? 0) + (f.widthNorm ?? 0.1),
+            top: f.yNormTop ?? 0,
+            bottom: (f.yNormTop ?? 0) + (f.heightNorm ?? 0.05),
+            centerX: (f.xNorm ?? 0) + (f.widthNorm ?? 0.1) / 2,
+            centerY: (f.yNormTop ?? 0) + (f.heightNorm ?? 0.05) / 2,
+          }))
+        );
+        updateGuides(draggingBounds, otherBounds, rect.width, rect.height);
+      }
+    }
+  }
+
+  // Update alignment guides for image dragging
+  if (isImageDragging && draggedImageIndex !== null && snapEnabled) {
+    const canvas = canvasRefs.current[activePage];
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const img = imageItems[draggedImageIndex];
+      if (img) {
+        const draggingBounds = {
+          left: img.xNorm ?? 0,
+          right: (img.xNorm ?? 0) + (img.widthNorm ?? 0.1),
+          top: img.yNormTop ?? 0,
+          bottom: (img.yNormTop ?? 0) + (img.heightNorm ?? 0.1),
+          centerX: (img.xNorm ?? 0) + (img.widthNorm ?? 0.1) / 2,
+          centerY: (img.yNormTop ?? 0) + (img.heightNorm ?? 0.1) / 2,
+        };
+        const otherBounds = getOtherItemBounds(
+          textItems, shapeItems, imageItems, activePage,
+          null, null, draggedImageIndex, rect.width, rect.height
+        ).concat(
+          formFields.filter(f => f?.index === activePage).map(f => ({
+            left: f.xNorm ?? 0,
+            right: (f.xNorm ?? 0) + (f.widthNorm ?? 0.1),
+            top: f.yNormTop ?? 0,
+            bottom: (f.yNormTop ?? 0) + (f.heightNorm ?? 0.05),
+            centerX: (f.xNorm ?? 0) + (f.widthNorm ?? 0.1) / 2,
+            centerY: (f.yNormTop ?? 0) + (f.heightNorm ?? 0.05) / 2,
+          }))
+        );
+        updateGuides(draggingBounds, otherBounds, rect.width, rect.height);
+      }
+    }
+  }
 };
 
 const wrappedMouseUp = (e) => {
+  // Clear alignment guides when any drag operation ends
+  clearGuides();
+
   // Helper to ensure a text item has an ID (for annotation linking)
   const ensureTextItemId = (textItem) => {
     if (!textItem.id) {
@@ -1523,6 +1854,13 @@ return (
       >
         🖍️
       </button>
+      <button
+        className={`rail-btn ${activePanel === 'templates' ? 'active' : ''}`}
+        title="Templates"
+        onClick={() => togglePanel('templates')}
+      >
+        📄
+      </button>
 
       <div className="rail-divider" />
 
@@ -1727,6 +2065,51 @@ return (
                 <span className="panel-btn-icon">🗑️</span>
                 Remove Selected
               </button>
+
+              {/* Z-index / Layer Order Controls for Text */}
+              {selectedTextIndex !== null && (
+                <div className="layer-order-section" style={{ marginTop: 12 }}>
+                  <div className="panel-section-label" style={{ marginBottom: 8 }}>Layer Order</div>
+                  <div className="layer-order-grid">
+                    <button
+                      className="panel-btn panel-btn-secondary layer-btn"
+                      onClick={isViewer ? viewOnly : () => bringTextToFront(selectedTextIndex)}
+                      disabled={isViewer}
+                      title="Bring to Front"
+                    >
+                      <span className="panel-btn-icon">⬆⬆</span>
+                      Front
+                    </button>
+                    <button
+                      className="panel-btn panel-btn-secondary layer-btn"
+                      onClick={isViewer ? viewOnly : () => bringTextForward(selectedTextIndex)}
+                      disabled={isViewer}
+                      title="Bring Forward"
+                    >
+                      <span className="panel-btn-icon">⬆</span>
+                      Up
+                    </button>
+                    <button
+                      className="panel-btn panel-btn-secondary layer-btn"
+                      onClick={isViewer ? viewOnly : () => sendTextBackward(selectedTextIndex)}
+                      disabled={isViewer}
+                      title="Send Backward"
+                    >
+                      <span className="panel-btn-icon">⬇</span>
+                      Down
+                    </button>
+                    <button
+                      className="panel-btn panel-btn-secondary layer-btn"
+                      onClick={isViewer ? viewOnly : () => sendTextToBack(selectedTextIndex)}
+                      disabled={isViewer}
+                      title="Send to Back"
+                    >
+                      <span className="panel-btn-icon">⬇⬇</span>
+                      Back
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="panel-section">
@@ -1779,6 +2162,15 @@ return (
                   type="checkbox"
                   checked={showGrid}
                   onChange={isViewer ? viewOnly : toggleGrid}
+                  disabled={isViewer}
+                />
+              </div>
+              <div className="panel-toggle">
+                <span className="panel-toggle-label">Snap to Guides</span>
+                <input
+                  type="checkbox"
+                  checked={snapEnabled}
+                  onChange={isViewer ? viewOnly : toggleSnap}
                   disabled={isViewer}
                 />
               </div>
@@ -2038,6 +2430,51 @@ return (
                 <span className="panel-btn-icon">🗑️</span>
                 Delete Selected
               </button>
+
+              {/* Z-index / Layer Order Controls */}
+              {selectedShapeIndex !== null && (
+                <div className="layer-order-section" style={{ marginTop: 12 }}>
+                  <div className="panel-section-label" style={{ marginBottom: 8 }}>Layer Order</div>
+                  <div className="layer-order-grid">
+                    <button
+                      className="panel-btn panel-btn-secondary layer-btn"
+                      onClick={isViewer ? viewOnly : () => bringShapeToFront(selectedShapeIndex)}
+                      disabled={isViewer}
+                      title="Bring to Front"
+                    >
+                      <span className="panel-btn-icon">⬆⬆</span>
+                      Front
+                    </button>
+                    <button
+                      className="panel-btn panel-btn-secondary layer-btn"
+                      onClick={isViewer ? viewOnly : () => bringShapeForward(selectedShapeIndex)}
+                      disabled={isViewer}
+                      title="Bring Forward"
+                    >
+                      <span className="panel-btn-icon">⬆</span>
+                      Up
+                    </button>
+                    <button
+                      className="panel-btn panel-btn-secondary layer-btn"
+                      onClick={isViewer ? viewOnly : () => sendShapeBackward(selectedShapeIndex)}
+                      disabled={isViewer}
+                      title="Send Backward"
+                    >
+                      <span className="panel-btn-icon">⬇</span>
+                      Down
+                    </button>
+                    <button
+                      className="panel-btn panel-btn-secondary layer-btn"
+                      onClick={isViewer ? viewOnly : () => sendShapeToBack(selectedShapeIndex)}
+                      disabled={isViewer}
+                      title="Send to Back"
+                    >
+                      <span className="panel-btn-icon">⬇⬇</span>
+                      Back
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </>
@@ -2755,6 +3192,16 @@ return (
         </>
       )}
 
+      {/* Templates Panel */}
+      {activePanel === 'templates' && (
+        <TemplatesPanel
+          onLoadTemplate={handleUseTemplate}
+          onPreview={openTemplatePreview}
+          onClose={() => setActivePanel(null)}
+          isViewer={isViewer}
+        />
+      )}
+
       {/* Share Panel */}
       {activePanel === 'share' && (
         <>
@@ -2988,6 +3435,15 @@ return (
                   type="checkbox"
                   checked={showGrid}
                   onChange={isViewer ? viewOnly : toggleGrid}
+                  disabled={isViewer}
+                />
+              </div>
+              <div className="panel-toggle">
+                <span className="panel-toggle-label">Snap to Guides</span>
+                <input
+                  type="checkbox"
+                  checked={snapEnabled}
+                  onChange={isViewer ? viewOnly : toggleSnap}
                   disabled={isViewer}
                 />
               </div>
@@ -3408,6 +3864,47 @@ return (
       danger={true}
       onConfirm={handleLoadJsonConfirm}
       onCancel={handleLoadJsonCancel}
+    />
+
+    {/* Load Template Confirmation Modal */}
+    <ConfirmationModal
+      open={showLoadTemplateModal}
+      title="Load Template"
+      message="Loading a template will clear your current state (all pages, text items, and images). This action cannot be undone. Do you want to proceed?"
+      confirmText="Proceed"
+      cancelText="Cancel"
+      danger={true}
+      onConfirm={handleLoadTemplateConfirm}
+      onCancel={handleLoadTemplateCancel}
+    />
+
+    {/* Template Preview Modal */}
+    <TemplatePreviewModal
+      template={previewTemplate}
+      onUse={() => {
+        closeTemplatePreview();
+        handleUseTemplate(previewTemplate);
+      }}
+      onClose={closeTemplatePreview}
+    />
+
+    {/* Placeholder Editor Modal */}
+    <PlaceholderEditorModal
+      isOpen={isPlaceholderModalOpen}
+      template={pendingTemplate}
+      placeholderValues={placeholderValues}
+      inputData={inputData}
+      inputSchema={inputSchema}
+      isPendingAITemplate={isPendingAITemplate}
+      isGenerating={isTemplateGenerating}
+      generationError={generationError}
+      onUpdateValue={updatePlaceholderValue}
+      onUpdateInputField={updateInputField}
+      onConfirm={handleApplyPlaceholders}
+      onCancel={cancelPlaceholderEdit}
+      // Legacy props for backwards compatibility
+      resumeInputData={resumeInputData}
+      onUpdateResumeField={updateResumeField}
     />
 
     {/* Host Cursor Mirroring - Show host's cursor to viewers */}

@@ -32,6 +32,8 @@ export function useClipboard(opts:any) {
     images,             // { imageItems, setImageItems }
     selection,          // { selectedTextIndexes, setSelectedTextIndexes, selectedImageIndexes?, setSelectedImageIndexes? ... }
     history,            // { pushSnapshotToUndo }
+    templates,          // { isPlaceholderModalOpen, ... }
+    ui,                 // { openSections, ... } for modal states
   } = opts;
 
 
@@ -221,6 +223,26 @@ const cutSelection = useCallback(() => {
   // Register global key handlers
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Skip keyboard handling when any modal is open
+      // This prevents Ctrl+C/V/Z from affecting canvas when user is in a modal
+      const isTemplateModalOpen = templates?.isPlaceholderModalOpen ||
+                                  templates?.previewTemplate !== null;
+
+      // Also check for any modal backdrop in the DOM (covers all modals including confirmation dialogs)
+      const hasModalBackdrop = document.querySelector('.modal-backdrop') !== null;
+      const hasOpenModal = document.querySelector('.modal[open], dialog[open]') !== null;
+
+      if (isTemplateModalOpen || hasModalBackdrop || hasOpenModal) return;
+
+      // Also skip if focus is on an input/textarea (user is typing in a form field)
+      const target = e.target as HTMLElement;
+      const tagName = target?.tagName?.toLowerCase() || "";
+      const isTypingInField = tagName === "input" || tagName === "textarea" || target?.isContentEditable;
+      if (isTypingInField) return;
+
+      // Skip if the event target is inside a modal
+      if (target?.closest('.modal, .modal-backdrop, dialog')) return;
+
       const isCmd = navigator.platform.includes("Mac");
       const mod = isCmd ? e.metaKey : e.ctrlKey;
       if (!mod) return;
@@ -254,7 +276,7 @@ const cutSelection = useCallback(() => {
 
     window.addEventListener("keydown", onKeyDown, { passive: false });
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copySelection, cutSelection, pasteClipboard]);
+  }, [copySelection, cutSelection, pasteClipboard, templates?.isPlaceholderModalOpen, templates?.previewTemplate]);
 
   return {
     copySelection,

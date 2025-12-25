@@ -1,4 +1,16 @@
-export function ShapeToolbar({ activeShapeTool, setActiveShapeTool, selectedShapeIndex, deleteSelectedShape, isViewer, viewOnly }) {
+export function ShapeToolbar({
+  activeShapeTool,
+  setActiveShapeTool,
+  selectedShapeIndex,
+  deleteSelectedShape,
+  isViewer,
+  viewOnly,
+  // Z-index actions
+  bringShapeForward,
+  sendShapeBackward,
+  bringShapeToFront,
+  sendShapeToBack,
+}) {
   const handleToolClick = (toolType) => {
     // Toggle: if clicking the active tool, deactivate it
     setActiveShapeTool(activeShapeTool === toolType ? null : toolType);
@@ -6,6 +18,8 @@ export function ShapeToolbar({ activeShapeTool, setActiveShapeTool, selectedShap
 
   const buttonClass = (toolType) =>
     activeShapeTool === toolType ? "btn btn-primary" : "btn btn-secondary";
+
+  const hasSelection = selectedShapeIndex !== null;
 
   return (
     <>
@@ -30,7 +44,7 @@ export function ShapeToolbar({ activeShapeTool, setActiveShapeTool, selectedShap
           className={buttonClass("line")}
           onClick={isViewer ? viewOnly : () => handleToolClick("line")}
           disabled={isViewer}
-          title="Draw line - Click and drag on canvas"
+          title="Draw line - Hold Shift for straight horizontal/vertical"
         >
           ╱ Line
         </button>
@@ -38,7 +52,7 @@ export function ShapeToolbar({ activeShapeTool, setActiveShapeTool, selectedShap
           className={buttonClass("arrow")}
           onClick={isViewer ? viewOnly : () => handleToolClick("arrow")}
           disabled={isViewer}
-          title="Draw arrow - Click and drag on canvas"
+          title="Draw arrow - Hold Shift for straight horizontal/vertical"
         >
           → Arrow
         </button>
@@ -68,6 +82,47 @@ export function ShapeToolbar({ activeShapeTool, setActiveShapeTool, selectedShap
         </button>
       </div>
 
+      {/* Z-index controls for selected shape */}
+      {hasSelection && (
+        <div className="z-index-controls" style={{ marginTop: 12 }}>
+          <div className="panel-input-label" style={{ marginBottom: 6 }}>Layer Order</div>
+          <div className="btn-row">
+            <button
+              className="btn btn-small btn-secondary"
+              onClick={isViewer ? viewOnly : () => bringShapeToFront?.(selectedShapeIndex)}
+              disabled={isViewer}
+              title="Bring to Front"
+            >
+              ⬆⬆
+            </button>
+            <button
+              className="btn btn-small btn-secondary"
+              onClick={isViewer ? viewOnly : () => bringShapeForward?.(selectedShapeIndex)}
+              disabled={isViewer}
+              title="Bring Forward"
+            >
+              ⬆
+            </button>
+            <button
+              className="btn btn-small btn-secondary"
+              onClick={isViewer ? viewOnly : () => sendShapeBackward?.(selectedShapeIndex)}
+              disabled={isViewer}
+              title="Send Backward"
+            >
+              ⬇
+            </button>
+            <button
+              className="btn btn-small btn-secondary"
+              onClick={isViewer ? viewOnly : () => sendShapeToBack?.(selectedShapeIndex)}
+              disabled={isViewer}
+              title="Send to Back"
+            >
+              ⬇⬇
+            </button>
+          </div>
+        </div>
+      )}
+
       {deleteSelectedShape && (
         <button
           className="btn btn-secondary"
@@ -95,7 +150,9 @@ export function ShapeToolbar({ activeShapeTool, setActiveShapeTool, selectedShap
         }}>
           <strong style={{ color: "#60a5fa" }}>✓ {activeShapeTool.charAt(0).toUpperCase() + activeShapeTool.slice(1)} tool active</strong>
           <br />
-          Click and drag on the canvas to draw
+          {(activeShapeTool === 'line' || activeShapeTool === 'arrow')
+            ? 'Hold Shift for straight lines'
+            : 'Click and drag on the canvas to draw'}
         </div>
       )}
     </>

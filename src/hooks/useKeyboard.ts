@@ -48,9 +48,9 @@ export function useKeyboard() {
         textItems,
         isMultilineMode,
         mlText,
-        mlCaret, 
-        mlAnchor, 
-        mlPreferredX, 
+        mlCaret,
+        mlAnchor,
+        mlPreferredX,
         mlConfig,
         setSelectedTextIndexes,
         setIsTextSelected,
@@ -58,6 +58,13 @@ export function useKeyboard() {
         setTextItems,
         setMlText,
       })
+
+      // Skip keyboard handling when any modal is open
+      const hasModalBackdrop = document.querySelector('.modal-backdrop') !== null;
+      const hasOpenModal = document.querySelector('.modal[open], dialog[open]') !== null;
+      const targetInModal = e.target?.closest?.('.modal, .modal-backdrop, dialog');
+      if (hasModalBackdrop || hasOpenModal || targetInModal) return;
+
       const tag = (e.target?.tagName || "").toLowerCase();
       const typingInDOMField =
         tag === "input" || tag === "textarea" || e.target?.isContentEditable;

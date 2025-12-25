@@ -18,6 +18,8 @@ export type TextItem = {
   yNormTop: number;
   color: string;
   fontFamily?: string;
+  // Maximum width for text wrapping (in pixels)
+  maxWidth?: number;
   // Bounding box dimensions (normalized 0-1)
   // These represent the actual text content area, not including padding
   widthNorm?: number;
@@ -27,6 +29,8 @@ export type TextItem = {
   // descentRatio = descent / textHeight (typically ~0.2)
   ascentRatio?: number;
   descentRatio?: number;
+  // Z-index for layering (higher = in front)
+  zIndex?: number;
 };
 
 export type ImageItem = {

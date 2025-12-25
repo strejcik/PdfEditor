@@ -26,6 +26,9 @@ export interface ShapeItem {
 
   // Page association
   index: number;            // which page (0-based)
+
+  // Z-index for layering (higher = in front)
+  zIndex?: number;          // default: 0
 }
 
 export interface ShapeState {

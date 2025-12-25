@@ -24,6 +24,8 @@ import { useShapes } from '../hooks/useShapes';
 import { useFormFields } from '../hooks/useFormFields';
 import { useClaudeAI } from '../hooks/useClaudeAI';
 import { useAnnotations } from '../hooks/useAnnotations';
+import { useTemplates } from '../hooks/useTemplates';
+import { useAlignmentGuides } from '../hooks/useAlignmentGuides';
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -42,6 +44,8 @@ type EditorContextValue = {
   formFields: ReturnType<typeof useFormFields>;
   ai: ReturnType<typeof useClaudeAI>;
   annotations: ReturnType<typeof useAnnotations>;
+  templates: ReturnType<typeof useTemplates>;
+  alignmentGuides: ReturnType<typeof useAlignmentGuides>;
 };
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -69,6 +73,8 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const formFields = useFormFields();
   const ai = useClaudeAI();
   const annotations = useAnnotations();
+  const templates = useTemplates();
+  const alignmentGuides = useAlignmentGuides();
 
   // Keep latest slices in refs so history bindings always read current data
   const textRef = useRef(text);
@@ -619,8 +625,10 @@ useLayoutEffect(() => {
       formFields,
       ai,
       annotations,
+      templates,
+      alignmentGuides,
     }),
-    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes, formFields, ai, annotations]
+    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes, formFields, ai, annotations, templates, alignmentGuides]
   );
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;

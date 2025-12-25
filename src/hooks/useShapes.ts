@@ -107,24 +107,42 @@ export function useShapes() {
   };
 
   // Update shape creation
-  const updateShapeCreation = (x: number, y: number) => {
-    setShapeCreationCurrent({ x, y });
+  // shiftKey parameter enables straight line snapping for line/arrow tools
+  const updateShapeCreation = (x: number, y: number, shiftKey: boolean = false) => {
+    let finalX = x;
+    let finalY = y;
+
+    // For line/arrow with Shift key, snap to horizontal or vertical
+    if ((activeShapeTool === "line" || activeShapeTool === "arrow") && shiftKey && shapeCreationStart) {
+      const dx = Math.abs(x - shapeCreationStart.x);
+      const dy = Math.abs(y - shapeCreationStart.y);
+
+      if (dx > dy) {
+        // Snap to horizontal line
+        finalY = shapeCreationStart.y;
+      } else {
+        // Snap to vertical line
+        finalX = shapeCreationStart.x;
+      }
+    }
+
+    setShapeCreationCurrent({ x: finalX, y: finalY });
 
     // For freehand, add point to the path (with distance threshold to avoid too many points)
     if (activeShapeTool === "freehand") {
       setFreehandPoints((prev) => {
         if (prev.length === 0) {
-          return [{ x, y }];
+          return [{ x: finalX, y: finalY }];
         }
 
         // Only add point if it's far enough from the last point (minimum 2px distance)
         const lastPoint = prev[prev.length - 1];
-        const dx = x - lastPoint.x;
-        const dy = y - lastPoint.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
+        const pdx = finalX - lastPoint.x;
+        const pdy = finalY - lastPoint.y;
+        const distance = Math.sqrt(pdx * pdx + pdy * pdy);
 
         if (distance >= 2) {
-          return [...prev, { x, y }];
+          return [...prev, { x: finalX, y: finalY }];
         }
 
         return prev;
@@ -213,13 +231,33 @@ export function useShapes() {
     const width = x2 - x1;
     const height = y2 - y1;
 
-    // Minimum size check (10px)
-    if (width < 10 || height < 10) {
-      setIsCreatingShape(false);
-      setShapeCreationStart(null);
-      setShapeCreationCurrent(null);
-      setFreehandPoints([]);
-      return null;
+    // Minimum size check
+    // For lines/arrows: need at least 10px in one dimension (allows straight horizontal/vertical lines)
+    // For other shapes: need at least 10px in both dimensions
+    const isLineOrArrow = activeShapeTool === "line" || activeShapeTool === "arrow";
+    const lineLength = Math.sqrt(
+      Math.pow(shapeCreationCurrent.x - shapeCreationStart.x, 2) +
+      Math.pow(shapeCreationCurrent.y - shapeCreationStart.y, 2)
+    );
+
+    if (isLineOrArrow) {
+      // Lines need minimum length of 10px (diagonal distance)
+      if (lineLength < 10) {
+        setIsCreatingShape(false);
+        setShapeCreationStart(null);
+        setShapeCreationCurrent(null);
+        setFreehandPoints([]);
+        return null;
+      }
+    } else {
+      // Other shapes need minimum 10px in both dimensions
+      if (width < 10 || height < 10) {
+        setIsCreatingShape(false);
+        setShapeCreationStart(null);
+        setShapeCreationCurrent(null);
+        setFreehandPoints([]);
+        return null;
+      }
     }
 
     const newShape: ShapeItem = {
@@ -255,6 +293,43 @@ export function useShapes() {
     setShapeCreationCurrent(null);
     setFreehandPoints([]);
     setActiveShapeTool(null);
+  };
+
+  // Z-index actions for layering
+  // Bring shape one layer forward (increment z-index)
+  const bringShapeForward = (index: number) => {
+    setShapeItems((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? 0;
+      return prev.map((s, i) => i === index ? { ...s, zIndex: currentZ + 1 } : s);
+    });
+  };
+
+  // Send shape one layer backward (decrement z-index)
+  const sendShapeBackward = (index: number) => {
+    setShapeItems((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? 0;
+      return prev.map((s, i) => i === index ? { ...s, zIndex: currentZ - 1 } : s);
+    });
+  };
+
+  // Bring shape to front (set z-index to max + 1)
+  const bringShapeToFront = (index: number) => {
+    setShapeItems((prev) => {
+      const maxZ = Math.max(...prev.map(s => s.zIndex ?? 0), 0);
+      return prev.map((s, i) => i === index ? { ...s, zIndex: maxZ + 1 } : s);
+    });
+  };
+
+  // Send shape to back (set z-index to min - 1)
+  const sendShapeToBack = (index: number) => {
+    setShapeItems((prev) => {
+      const minZ = Math.min(...prev.map(s => s.zIndex ?? 0), 0);
+      return prev.map((s, i) => i === index ? { ...s, zIndex: minZ - 1 } : s);
+    });
   };
 
   return {
@@ -306,5 +381,11 @@ export function useShapes() {
     updateShapeCreation,
     finishCreatingShape,
     cancelShapeCreation,
+
+    // Z-index layering
+    bringShapeForward,
+    sendShapeBackward,
+    bringShapeToFront,
+    sendShapeToBack,
   };
 }

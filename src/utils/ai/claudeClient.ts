@@ -11,7 +11,7 @@ import type { ClaudeResponse } from '../../types/ai';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-sonnet-4-20250514';
-const MAX_TOKENS = 4096;
+const MAX_TOKENS = 8192;
 
 // ============================================================================
 // Types
@@ -82,11 +82,16 @@ export async function sendPromptToClaude(
 
   const data = await response.json();
 
-  // Extract text content from response
+  // Extract text content from response (skip thinking blocks)
   if (data.content && Array.isArray(data.content)) {
-    const textContent = data.content.find((c: any) => c.type === 'text');
-    if (textContent && textContent.text) {
-      return textContent.text;
+    // Find the last text block (thinking comes before the actual response)
+    const textBlocks = data.content.filter((c: any) => c.type === 'text');
+    if (textBlocks.length > 0) {
+      // Use the last text block as the response
+      const textContent = textBlocks[textBlocks.length - 1];
+      if (textContent && textContent.text) {
+        return textContent.text;
+      }
     }
   }
 
@@ -100,19 +105,47 @@ export function parseClaudeResponse(responseText: string): ClaudeResponse {
   // Try to extract JSON from the response
   let jsonString = responseText.trim();
 
-  // Handle markdown code fences
-  const jsonMatch = jsonString.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (jsonMatch) {
-    jsonString = jsonMatch[1].trim();
+  // Handle markdown code fences (multiple patterns)
+  const codeBlockPatterns = [
+    /```json\s*([\s\S]*?)```/i,
+    /```\s*([\s\S]*?)```/,
+    /`([\s\S]*?)`/,
+  ];
+
+  for (const pattern of codeBlockPatterns) {
+    const match = jsonString.match(pattern);
+    if (match && match[1].includes('{')) {
+      jsonString = match[1].trim();
+      break;
+    }
   }
 
-  // Try to find JSON object in the response
+  // Try to find JSON object in the response - handle nested braces correctly
   const jsonStartIdx = jsonString.indexOf('{');
-  const jsonEndIdx = jsonString.lastIndexOf('}');
-
-  if (jsonStartIdx !== -1 && jsonEndIdx !== -1 && jsonEndIdx > jsonStartIdx) {
-    jsonString = jsonString.slice(jsonStartIdx, jsonEndIdx + 1);
+  if (jsonStartIdx !== -1) {
+    // Find matching closing brace by counting
+    let braceCount = 0;
+    let jsonEndIdx = -1;
+    for (let i = jsonStartIdx; i < jsonString.length; i++) {
+      if (jsonString[i] === '{') braceCount++;
+      if (jsonString[i] === '}') braceCount--;
+      if (braceCount === 0) {
+        jsonEndIdx = i;
+        break;
+      }
+    }
+    if (jsonEndIdx !== -1) {
+      jsonString = jsonString.slice(jsonStartIdx, jsonEndIdx + 1);
+    }
   }
+
+  // Clean up common JSON issues
+  jsonString = jsonString
+    .replace(/,\s*}/g, '}')  // Remove trailing commas before }
+    .replace(/,\s*]/g, ']')  // Remove trailing commas before ]
+    .replace(/\n/g, ' ')     // Replace newlines with spaces
+    .replace(/\r/g, '')      // Remove carriage returns
+    .replace(/\t/g, ' ');    // Replace tabs with spaces
 
   try {
     const parsed = JSON.parse(jsonString);
@@ -128,6 +161,7 @@ export function parseClaudeResponse(responseText: string): ClaudeResponse {
         fontSize: Math.max(8, Math.min(72, Number(item.fontSize) || 14)),
         color: item.color || '#000000',
         fontFamily: item.fontFamily || 'Lato',
+        zIndex: Number(item.zIndex) || 10,
       }));
     }
 
@@ -137,10 +171,11 @@ export function parseClaudeResponse(responseText: string): ClaudeResponse {
         xNorm: clampNorm(item.xNorm),
         yNormTop: clampNorm(item.yNormTop),
         widthNorm: clampNorm(item.widthNorm, 0.01),
-        heightNorm: clampNorm(item.heightNorm, 0.01),
+        heightNorm: item.type === 'line' ? clampNorm(item.heightNorm, 0) : clampNorm(item.heightNorm, 0.01),
         strokeColor: item.strokeColor || '#000000',
-        strokeWidth: Math.max(1, Math.min(20, Number(item.strokeWidth) || 2)),
+        strokeWidth: Math.max(0, Math.min(20, Number(item.strokeWidth) || 2)),
         fillColor: item.fillColor || null,
+        zIndex: Number(item.zIndex) || 0,
       }));
     }
 
@@ -171,11 +206,13 @@ export function parseClaudeResponse(responseText: string): ClaudeResponse {
       }));
     }
 
+    // Return result even if empty - this prevents errors when Claude returns partial data
     return result;
   } catch (e) {
     console.error('Failed to parse Claude response:', e);
-    console.error('Response text:', responseText);
-    throw new Error('Failed to parse AI response. Please try rephrasing your request.');
+    console.error('Response text (first 500 chars):', responseText.substring(0, 500));
+    console.error('Cleaned JSON string (first 500 chars):', jsonString.substring(0, 500));
+    throw new Error('Failed to parse AI response. The AI returned invalid JSON. Please try again.');
   }
 }
 
@@ -184,10 +221,11 @@ export function parseClaudeResponse(responseText: string): ClaudeResponse {
 // ============================================================================
 
 /**
- * Clamp a value to the 0-1 range
+ * Clamp a value to the 0-1 range (or custom min-1 range)
  */
 function clampNorm(value: any, min: number = 0): number {
-  const num = Number(value) || 0;
+  const num = Number(value);
+  if (isNaN(num)) return min;
   return Math.max(min, Math.min(1, num));
 }
 

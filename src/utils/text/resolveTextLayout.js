@@ -1,3 +1,34 @@
+/**
+ * Wrap text into lines that fit within maxWidth
+ */
+function wrapTextIntoLines(ctx, text, maxWidth) {
+  if (!text || !maxWidth || maxWidth <= 0) {
+    return [text || ""];
+  }
+
+  const words = text.split(/\s+/);
+  const lines = [];
+  let currentLine = "";
+
+  for (const word of words) {
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const metrics = ctx.measureText(testLine);
+
+    if (metrics.width > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines.length > 0 ? lines : [""];
+}
+
 export function resolveTextLayout(item, ctx, rect) {
   const fontSize   = Number(item.fontSize) || 16;
   const fontFamily = item.fontFamily || "Lato";
@@ -7,18 +38,42 @@ export function resolveTextLayout(item, ctx, rect) {
   ctx.textBaseline = "alphabetic";
   ctx.font = `${fontSize}px ${fontFamily}`;
 
-  const m = ctx.measureText(item.text || "");
+  // Check if text needs to be wrapped using item.maxWidth
+  const maxWidth = item.maxWidth;
+
+  const lines = maxWidth && maxWidth > 0 ? wrapTextIntoLines(ctx, item.text, maxWidth) : [item.text || ""];
+
+  // Calculate line height (1.2x font size for comfortable reading)
+  const lineHeight = fontSize * 1.2;
+
+  // Measure the first line for baseline metrics
+  const firstLineText = lines[0] || "";
+  const m = ctx.measureText(firstLineText);
   const ascent  = m.actualBoundingBoxAscent;
   const descent = m.actualBoundingBoxDescent;
-  const textHeight = ascent + descent;
+  const singleLineHeight = ascent + descent;
 
-  // Use actual visual bounding box, not advance width
-  // This correctly handles letters like "j" that extend left of origin
-  // actualBoundingBoxLeft: distance from origin to leftmost pixel (positive = extends left)
-  // actualBoundingBoxRight: distance from origin to rightmost pixel
+  // Total height for all lines
+  const totalTextHeight = lines.length > 1
+    ? singleLineHeight + (lines.length - 1) * lineHeight
+    : singleLineHeight;
+
+  // Calculate max width across all lines
+  let maxLineWidth = 0;
+  for (const line of lines) {
+    const lineMetrics = ctx.measureText(line);
+    const bboxLeft = lineMetrics.actualBoundingBoxLeft || 0;
+    const bboxRight = lineMetrics.actualBoundingBoxRight || lineMetrics.width;
+    const lineWidth = bboxLeft + bboxRight;
+    if (lineWidth > maxLineWidth) {
+      maxLineWidth = lineWidth;
+    }
+  }
+
+  // Use actual visual bounding box for the first line
   const bboxLeft = m.actualBoundingBoxLeft || 0;
   const bboxRight = m.actualBoundingBoxRight || m.width;
-  const textWidth = bboxLeft + bboxRight;
+  const textWidth = maxLineWidth;
 
   // X offset: shift left by bboxLeft to account for glyphs extending left of origin
   const xOffset = bboxLeft;
@@ -36,7 +91,7 @@ export function resolveTextLayout(item, ctx, rect) {
     const rawY = Number(item.y) || 0;
     const anchor = item.anchor || "baseline";
     if (anchor === "baseline")      topY = rawY - ascent;
-    else if (anchor === "bottom")   topY = rawY - textHeight;
+    else if (anchor === "bottom")   topY = rawY - totalTextHeight;
     else                            topY = rawY; // already top
   }
 
@@ -49,8 +104,12 @@ export function resolveTextLayout(item, ctx, rect) {
     fontFamily,
     padding,
     textWidth,
-    textHeight,
+    textHeight: totalTextHeight,
     ascent,
     descent,
+    // Multi-line support
+    lines,
+    lineHeight,
+    isMultiLine: lines.length > 1,
   };
 }

@@ -2,6 +2,49 @@ import { PDF_HEIGHT, PDF_WIDTH, CANVAS_WIDTH, CANVAS_HEIGHT } from "../config/co
 import { getMousePosOnCanvas } from "../utils/canvas/getMousePosOnCanvas";
 
 
+/**
+ * Find the topmost text item at a given point (respecting z-index)
+ * Returns { index, zIndex, type: 'text' } or null if no text item at point
+ */
+export function findTopmostTextAtPoint(
+  textItems: any[],
+  mouseX: number,
+  mouseY: number,
+  activePage: number,
+  resolveTextLayoutForHit: (item: any, ctx: any, canvas: any) => any,
+  ctx: any,
+  canvas: any
+): { index: number; zIndex: number; type: 'text' } | null {
+  const clickedTexts: { index: number; zIndex: number }[] = [];
+
+  for (let i = 0; i < textItems.length; i++) {
+    const item = textItems[i];
+    if (item.index !== activePage) continue;
+
+    const L = resolveTextLayoutForHit(item, ctx, canvas);
+    const b = L.box;
+
+    const isInside = mouseX >= b.x && mouseX <= b.x + b.w && mouseY >= b.y && mouseY <= b.y + b.h;
+
+    if (isInside) {
+      clickedTexts.push({
+        index: i,
+        zIndex: item.zIndex ?? 0,
+      });
+    }
+  }
+
+  if (clickedTexts.length === 0) return null;
+
+  // Sort by z-index descending (highest first) and return the topmost
+  clickedTexts.sort((a, b) => b.zIndex - a.zIndex);
+  return {
+    index: clickedTexts[0].index,
+    zIndex: clickedTexts[0].zIndex,
+    type: 'text',
+  };
+}
+
 export function useMouse() {
 
 

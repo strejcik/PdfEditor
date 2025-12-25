@@ -258,7 +258,8 @@ export function handleShapeMouseMove(e, params) {
 
   // Priority 1: If creating a shape, update preview
   if (isCreatingShape) {
-    updateShapeCreation(mouseX, mouseY);
+    // Pass shiftKey for straight line snapping (horizontal/vertical)
+    updateShapeCreation(mouseX, mouseY, e.shiftKey);
     return true; // Handled
   }
 
@@ -443,17 +444,53 @@ export function handleShapeMouseUp(e, params) {
 }
 
 /**
- * Find which shape was clicked
+ * Find which shape was clicked (respects z-index - highest z-index wins)
  */
 function findClickedShape(shapeItems, mouseX, mouseY, canvasWidth, canvasHeight, activePage) {
-  // Iterate in reverse order (top to bottom)
-  for (let i = shapeItems.length - 1; i >= 0; i--) {
+  // Find all shapes under the cursor on this page
+  const clickedShapes = [];
+
+  for (let i = 0; i < shapeItems.length; i++) {
     const shape = shapeItems[i];
     if (shape.index !== activePage) continue;
 
     if (isPointInShape(shape, mouseX, mouseY, canvasWidth, canvasHeight)) {
-      return i;
+      clickedShapes.push({
+        index: i,
+        zIndex: shape.zIndex ?? 0,
+      });
     }
   }
-  return null;
+
+  if (clickedShapes.length === 0) return null;
+
+  // Sort by z-index descending (highest first) and return the topmost
+  clickedShapes.sort((a, b) => b.zIndex - a.zIndex);
+  return clickedShapes[0].index;
+}
+
+/**
+ * Find topmost shape by z-index (exported for cross-layer comparison)
+ */
+export function findTopmostShapeAtPoint(shapeItems, mouseX, mouseY, canvasWidth, canvasHeight, activePage) {
+  const clickedShapes = [];
+
+  for (let i = 0; i < shapeItems.length; i++) {
+    const shape = shapeItems[i];
+    if (shape.index !== activePage) continue;
+
+    if (isPointInShape(shape, mouseX, mouseY, canvasWidth, canvasHeight)) {
+      clickedShapes.push({
+        index: i,
+        zIndex: shape.zIndex ?? 0,
+        type: 'shape',
+      });
+    }
+  }
+
+  if (clickedShapes.length === 0) return null;
+
+  // Return the one with highest z-index
+  clickedShapes.sort((a, b) => b.zIndex - a.zIndex);
+  return clickedShapes[0];
 }
