@@ -1376,6 +1376,7 @@ const wrappedMouseMove = (e) => {
     updateShape,
     updateFormField,
     requestCanvasDraw: () => drawCanvas(activePage),
+    snapEnabled,
   });
 
   // Update alignment guides for text dragging (single item)

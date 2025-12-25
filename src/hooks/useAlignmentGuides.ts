@@ -16,6 +16,7 @@ export function useAlignmentGuides() {
 
   /**
    * Update alignment guides based on the current dragging item position
+   * When snapEnabled is false, both snapping and guide lines are disabled
    */
   const updateGuides = useCallback((
     draggingBounds: ItemBounds,
@@ -23,6 +24,12 @@ export function useAlignmentGuides() {
     canvasWidth: number,
     canvasHeight: number
   ): AlignmentResult => {
+    // When snap is disabled, don't calculate or display any guides
+    if (!snapEnabled) {
+      setAlignmentGuides([]);
+      return { snapX: null, snapY: null, guides: [] };
+    }
+
     const result = calculateAlignmentGuides(
       draggingBounds,
       otherItemBounds,

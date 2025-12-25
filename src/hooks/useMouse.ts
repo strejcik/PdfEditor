@@ -687,7 +687,8 @@ const computeScaledTargetFont = (textBox:any) => {
         setShapeItems,
         saveTextItemsToIndexedDB,
         updateShape,
-        requestCanvasDraw
+        requestCanvasDraw,
+        snapEnabled
     } = opts;
 
       if (editingIndex !== null) {
@@ -1079,94 +1080,97 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     return { left, top, right, bottom };
   };
 
-  const dragged0 = computeDraggedBox(newX, newY);
+  // Only apply text-to-text snapping when snap is enabled
+  if (snapEnabled !== false) {
+    const dragged0 = computeDraggedBox(newX, newY);
 
-  // Snap threshold in CSS px
-  const SNAP = 4;
+    // Snap threshold in CSS px
+    const SNAP = 4;
 
-  // We'll track the best snap per axis independently
-  let bestDX = Infinity;
-  let bestDY = Infinity;
-  let snapX  = null;
-  let snapY  = null;
+    // We'll track the best snap per axis independently
+    let bestDX = Infinity;
+    let bestDY = Infinity;
+    let snapX  = null;
+    let snapY  = null;
 
-  // Check against every *other* text item on the same page
-  for (let i = 0; i < textItems.length; i++) {
-    if (i === selIdx) continue;
-    const other = textItems[i];
-    if (other.index !== activePage) continue;
+    // Check against every *other* text item on the same page
+    for (let i = 0; i < textItems.length; i++) {
+      if (i === selIdx) continue;
+      const other = textItems[i];
+      if (other.index !== activePage) continue;
 
-    const Lother   = resolveTextLayoutForHit(other, ctx, canvas);
-    const otherBox = Lother.box; // same padded/tight box as used in drawing/hit
+      const Lother   = resolveTextLayoutForHit(other, ctx, canvas);
+      const otherBox = Lother.box; // same padded/tight box as used in drawing/hit
 
-    // Other edges
-    const oLeft   = otherBox.x;
-    const oRight  = otherBox.x + otherBox.w;
-    const oTop    = otherBox.y;
-    const oBottom = otherBox.y + otherBox.h;
+      // Other edges
+      const oLeft   = otherBox.x;
+      const oRight  = otherBox.x + otherBox.w;
+      const oTop    = otherBox.y;
+      const oBottom = otherBox.y + otherBox.h;
 
-    // Current dragged edges
-    const dLeft   = dragged0.left;
-    const dRight  = dragged0.right;
-    const dTop    = dragged0.top;
-    const dBottom = dragged0.bottom;
+      // Current dragged edges
+      const dLeft   = dragged0.left;
+      const dRight  = dragged0.right;
+      const dTop    = dragged0.top;
+      const dBottom = dragged0.bottom;
 
-    // --- X-axis snapping candidates ---
-    // Snap left↔left
-    {
-      const dxCandidate = oLeft - dLeft;
-      const abs = Math.abs(dxCandidate);
-      if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
-    }
-    // Snap left↔right
-    {
-      const dxCandidate = oRight - dLeft;
-      const abs = Math.abs(dxCandidate);
-      if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
-    }
-    // Snap right↔left
-    {
-      const dxCandidate = oLeft - dRight;
-      const abs = Math.abs(dxCandidate);
-      if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
-    }
-    // Snap right↔right
-    {
-      const dxCandidate = oRight - dRight;
-      const abs = Math.abs(dxCandidate);
-      if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+      // --- X-axis snapping candidates ---
+      // Snap left↔left
+      {
+        const dxCandidate = oLeft - dLeft;
+        const abs = Math.abs(dxCandidate);
+        if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+      }
+      // Snap left↔right
+      {
+        const dxCandidate = oRight - dLeft;
+        const abs = Math.abs(dxCandidate);
+        if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+      }
+      // Snap right↔left
+      {
+        const dxCandidate = oLeft - dRight;
+        const abs = Math.abs(dxCandidate);
+        if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+      }
+      // Snap right↔right
+      {
+        const dxCandidate = oRight - dRight;
+        const abs = Math.abs(dxCandidate);
+        if (abs <= SNAP && abs < Math.abs(bestDX)) { bestDX = dxCandidate; snapX = newX + dxCandidate; }
+      }
+
+      // --- Y-axis snapping candidates ---
+      // Snap top↔top
+      {
+        const dyCandidate = oTop - dTop;
+        const abs = Math.abs(dyCandidate);
+        if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
+      }
+      // Snap top↔bottom
+      {
+        const dyCandidate = oBottom - dTop;
+        const abs = Math.abs(dyCandidate);
+        if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
+      }
+      // Snap bottom↔top
+      {
+        const dyCandidate = oTop - dBottom;
+        const abs = Math.abs(dyCandidate);
+        if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
+      }
+      // Snap bottom↔bottom
+      {
+        const dyCandidate = oBottom - dBottom;
+        const abs = Math.abs(dyCandidate);
+        if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
+      }
     }
 
-    // --- Y-axis snapping candidates ---
-    // Snap top↔top
-    {
-      const dyCandidate = oTop - dTop;
-      const abs = Math.abs(dyCandidate);
-      if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
-    }
-    // Snap top↔bottom
-    {
-      const dyCandidate = oBottom - dTop;
-      const abs = Math.abs(dyCandidate);
-      if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
-    }
-    // Snap bottom↔top
-    {
-      const dyCandidate = oTop - dBottom;
-      const abs = Math.abs(dyCandidate);
-      if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
-    }
-    // Snap bottom↔bottom
-    {
-      const dyCandidate = oBottom - dBottom;
-      const abs = Math.abs(dyCandidate);
-      if (abs <= SNAP && abs < Math.abs(bestDY)) { bestDY = dyCandidate; snapY = newY + dyCandidate; }
-    }
+    // Apply best snap per axis (if any)
+    if (snapX !== null) newX = snapX;
+    if (snapY !== null) newY = snapY;
   }
-
-  // Apply best snap per axis (if any)
-  if (snapX !== null) newX = snapX;
-  if (snapY !== null) newY = snapY;
 
   // Commit
   item.x = newX;
