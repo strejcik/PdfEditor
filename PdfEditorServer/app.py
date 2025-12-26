@@ -289,6 +289,7 @@ def flatten_manifest_to_payload(manifest):
             text_content = t.get("text", "")
             font_size = float(t.get("fontSize")) if t.get("fontSize") is not None else None
 
+            z_index = t.get("zIndex", 10)
             item = {
                 "text": text_content,
                 "xNorm": float(x_norm),
@@ -296,8 +297,9 @@ def flatten_manifest_to_payload(manifest):
                 "fontSize": font_size,
                 "index": i,
                 "anchor": "top",
-                # Manifest text typically on top:
-                "zOrder": 2_000_000 + len(out),
+                # Use zIndex from manifest for proper layer ordering
+                "zOrder": int(z_index) if z_index is not None else (2_000_000 + len(out)),
+                "zIndex": int(z_index) if z_index is not None else 10,
             }
             if "boxPadding" in t and t["boxPadding"] is not None:
                 try:
@@ -306,9 +308,19 @@ def flatten_manifest_to_payload(manifest):
                     pass
             if "fontFamily" in t and t["fontFamily"]:
                 item["fontFamily"] = str(t["fontFamily"])
+            # Include color if available (preserve original text color)
+            if "color" in t and t["color"]:
+                item["color"] = str(t["color"])
             # Include text item ID for annotation linking if available
             if "id" in t and t["id"]:
                 item["id"] = str(t["id"])
+            # Layer properties
+            if "visible" in t:
+                item["visible"] = bool(t["visible"])
+            if "locked" in t:
+                item["locked"] = bool(t["locked"])
+            if "name" in t and t["name"]:
+                item["name"] = str(t["name"])
             out.append(item)
 
         # TEXT SPANS - prefer pre-computed textSpans from manifest if available
@@ -403,17 +415,26 @@ def flatten_manifest_to_payload(manifest):
             except Exception:
                 continue
 
+            z_index = im.get("zIndex", -100)
             img_item = {
+                "type": "image",
                 "xNorm": x_norm,
                 "yNormTop": y_norm_top,
                 "widthNorm": width_norm,
                 "heightNorm": height_norm,
                 "index": i,
-                "zOrder": 1_000_000 + len(out),
+                # Use zIndex from manifest for proper layer ordering
+                "zOrder": int(z_index) if z_index is not None else (1_000_000 + len(out)),
+                "zIndex": int(z_index) if z_index is not None else -100,
             }
 
             if "name" in im:
                 img_item["name"] = im.get("name")
+            # Layer properties
+            if "visible" in im:
+                img_item["visible"] = bool(im["visible"])
+            if "locked" in im:
+                img_item["locked"] = bool(im["locked"])
             if "pixelWidth" in im:
                 try:
                     img_item["pixelWidth"] = int(im["pixelWidth"]) if im["pixelWidth"] is not None else None
@@ -433,6 +454,140 @@ def flatten_manifest_to_payload(manifest):
                     img_item["ref"] = im.get("ref")
 
             out.append(img_item)
+
+        # SHAPES (rectangle, circle, line, arrow, triangle, diamond, freehand)
+        shape_counter = 0
+        for shape in (page.get("shapes") or []):
+            shape_type = shape.get("type")
+            if not shape_type:
+                continue
+
+            try:
+                x_norm = float(shape.get("xNorm", 0))
+                y_norm_top = float(shape.get("yNormTop", 0))
+                width_norm = float(shape.get("widthNorm", 0))
+                height_norm = float(shape.get("heightNorm", 0))
+            except Exception:
+                continue
+
+            z_index = shape.get("zIndex", 0)
+            shape_item = {
+                "type": "shape",
+                "shapeType": str(shape_type),
+                "xNorm": x_norm,
+                "yNormTop": y_norm_top,
+                "widthNorm": width_norm,
+                "heightNorm": height_norm,
+                "index": i,
+                # Use zIndex from manifest for proper layer ordering
+                "zOrder": int(z_index) if z_index is not None else (500_000 + shape_counter),
+                "zIndex": int(z_index) if z_index is not None else 0,
+            }
+
+            # Include stroke properties
+            if shape.get("strokeColor"):
+                shape_item["strokeColor"] = str(shape["strokeColor"])
+            if shape.get("strokeWidth") is not None:
+                try:
+                    shape_item["strokeWidth"] = float(shape["strokeWidth"])
+                except Exception:
+                    pass
+
+            # Include fill color if available
+            if shape.get("fillColor") and shape["fillColor"] != "transparent":
+                shape_item["fillColor"] = str(shape["fillColor"])
+
+            # Layer properties
+            if "visible" in shape:
+                shape_item["visible"] = bool(shape["visible"])
+            if "locked" in shape:
+                shape_item["locked"] = bool(shape["locked"])
+            if "name" in shape and shape["name"]:
+                shape_item["name"] = str(shape["name"])
+
+            # Include freehand points if available
+            if shape_type == "freehand" and shape.get("points"):
+                shape_item["points"] = shape["points"]
+
+            out.append(shape_item)
+            shape_counter += 1
+
+        # FORM FIELDS (textInput, textarea, checkbox, radio, dropdown)
+        form_field_counter = 0
+        for field in (page.get("formFields") or []):
+            field_type = field.get("type")
+            if not field_type:
+                continue
+
+            try:
+                x_norm = float(field.get("xNorm", 0))
+                y_norm_top = float(field.get("yNormTop", 0))
+                width_norm = float(field.get("widthNorm", 0))
+                height_norm = float(field.get("heightNorm", 0))
+            except Exception:
+                continue
+
+            z_index = field.get("zIndex", 100)
+            form_field_item = {
+                "type": "formField",
+                "fieldType": str(field_type),
+                "fieldName": str(field.get("fieldName", f"field_{form_field_counter}")),
+                "xNorm": x_norm,
+                "yNormTop": y_norm_top,
+                "widthNorm": width_norm,
+                "heightNorm": height_norm,
+                "index": i,
+                # Use zIndex from manifest for proper layer ordering
+                "zOrder": int(z_index) if z_index is not None else (4_000_000 + form_field_counter),
+                "zIndex": int(z_index) if z_index is not None else 100,
+            }
+
+            # Include optional properties
+            if field.get("label"):
+                form_field_item["label"] = str(field["label"])
+            if field.get("placeholder"):
+                form_field_item["placeholder"] = str(field["placeholder"])
+            if field.get("defaultValue"):
+                form_field_item["defaultValue"] = str(field["defaultValue"])
+            if field.get("required"):
+                form_field_item["required"] = bool(field["required"])
+
+            # Radio/dropdown options
+            if field.get("options") and isinstance(field["options"], list):
+                form_field_item["options"] = field["options"]
+            if field.get("groupName"):
+                form_field_item["groupName"] = str(field["groupName"])
+
+            # Styling properties
+            if field.get("fontSize") is not None:
+                try:
+                    form_field_item["fontSize"] = float(field["fontSize"])
+                except Exception:
+                    form_field_item["fontSize"] = 14
+            if field.get("fontFamily"):
+                form_field_item["fontFamily"] = str(field["fontFamily"])
+            if field.get("textColor"):
+                form_field_item["textColor"] = str(field["textColor"])
+            if field.get("backgroundColor"):
+                form_field_item["backgroundColor"] = str(field["backgroundColor"])
+            if field.get("borderColor"):
+                form_field_item["borderColor"] = str(field["borderColor"])
+            if field.get("borderWidth") is not None:
+                try:
+                    form_field_item["borderWidth"] = float(field["borderWidth"])
+                except Exception:
+                    pass
+
+            # Layer properties
+            if "visible" in field:
+                form_field_item["visible"] = bool(field["visible"])
+            if "locked" in field:
+                form_field_item["locked"] = bool(field["locked"])
+            if "name" in field and field["name"]:
+                form_field_item["name"] = str(field["name"])
+
+            out.append(form_field_item)
+            form_field_counter += 1
 
         # ANNOTATIONS (highlight, strikethrough, underline)
         annotation_counter = 0
@@ -472,6 +627,7 @@ def flatten_manifest_to_payload(manifest):
                     span_item["descentRatio"] = float(s["descentRatio"])
                 span_items.append(span_item)
 
+            z_index = ann.get("zIndex", -50)
             annotation_item = {
                 "type": "annotation",
                 "annotationType": str(ann_type),
@@ -479,7 +635,9 @@ def flatten_manifest_to_payload(manifest):
                 "color": str(ann.get("color", "#FFFF00")),
                 "opacity": float(ann.get("opacity", 0.4)),
                 "index": i,
-                "zOrder": 3_000_000 + annotation_counter,
+                # Use zIndex from manifest for proper layer ordering
+                "zOrder": int(z_index) if z_index is not None else (3_000_000 + annotation_counter),
+                "zIndex": int(z_index) if z_index is not None else -50,
             }
 
             # Include annotation ID
@@ -493,6 +651,14 @@ def flatten_manifest_to_payload(manifest):
             # Include annotated text for reference
             if ann.get("annotatedText"):
                 annotation_item["annotatedText"] = str(ann["annotatedText"])
+
+            # Layer properties
+            if "visible" in ann:
+                annotation_item["visible"] = bool(ann["visible"])
+            if "locked" in ann:
+                annotation_item["locked"] = bool(ann["locked"])
+            if "name" in ann and ann["name"]:
+                annotation_item["name"] = str(ann["name"])
 
             out.append(annotation_item)
             annotation_counter += 1

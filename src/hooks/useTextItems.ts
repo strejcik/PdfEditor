@@ -1115,6 +1115,11 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
 
             // bytes/url for draw
             data: dataCandidate,
+
+            // Layer properties
+            zIndex: src?.zIndex ?? -100,
+            visible: src?.visible ?? true,
+            locked: src?.locked ?? false,
           });
         } else {
           // TEXT
@@ -1169,6 +1174,8 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
             index: pageIndex,
             anchor: "top",
             fontFamily,
+            // Preserve color from source (defaults to black if not specified)
+            color: src?.color || "#000000",
             // Preserve ID for annotation linking (from manifest)
             ...(src?.id && { id: src.id }),
             // Bounding box dimensions for annotation positioning
@@ -1176,6 +1183,11 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
             ...(heightNorm !== null && { heightNorm: +heightNorm.toFixed(6) }),
             ...(ascentRatio !== null && { ascentRatio: +ascentRatio.toFixed(4) }),
             ...(descentRatio !== null && { descentRatio: +descentRatio.toFixed(4) }),
+            // Layer properties
+            zIndex: src?.zIndex ?? 10,
+            visible: src?.visible ?? true,
+            locked: src?.locked ?? false,
+            ...(src?.name && { name: src.name }),
           });
         }
       }

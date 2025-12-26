@@ -1,5 +1,7 @@
 import axios from 'axios';
 import type { TextSpan, AnnotationItem } from '../../types/annotations';
+import type { ShapeItem, ShapeType } from '../../types/shapes';
+import type { FormFieldItem, FormFieldType } from '../../types/formFields';
 
 /**
  * Upload PDF file to server for processing
@@ -21,6 +23,11 @@ export const uploadPdfToServer = async ({
   setAnnotationItems,
   saveAnnotationsToIndexedDB,
   savePagesToIndexedDB,
+  setShapeItems,
+  saveShapesToIndexedDB,
+  setFormFields,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT,
 }: {
   selectedFile: File | null;
   setIsPdfDownloaded: (value: boolean) => void;
@@ -37,6 +44,11 @@ export const uploadPdfToServer = async ({
   setAnnotationItems?: (items: AnnotationItem[]) => void;
   saveAnnotationsToIndexedDB?: (items: AnnotationItem[]) => Promise<void>;
   savePagesToIndexedDB?: (pages: any[]) => Promise<void>;
+  setShapeItems?: (items: ShapeItem[]) => void;
+  saveShapesToIndexedDB?: (items: ShapeItem[]) => Promise<void>;
+  setFormFields?: (items: FormFieldItem[]) => void;
+  CANVAS_WIDTH?: number;
+  CANVAS_HEIGHT?: number;
 }) => {
   if (!selectedFile) {
     alert("No file selected. Please select a PDF file to upload.");
@@ -70,11 +82,17 @@ export const uploadPdfToServer = async ({
       return;
     }
 
-    // Separate textSpan items, annotations from regular items
+    // Separate textSpan items, annotations, shapes, form fields from regular items
     // textSpan items are used for annotation text selection
     const textSpans: TextSpan[] = [];
     const annotations: AnnotationItem[] = [];
+    const shapes: ShapeItem[] = [];
+    const formFields: FormFieldItem[] = [];
     const regularItems: any[] = [];
+
+    // Use canvas dimensions for pixel coordinate calculation
+    const W = CANVAS_WIDTH || 816;
+    const H = CANVAS_HEIGHT || 1056;
 
     for (const item of payload) {
       if (item?.type === "textSpan") {
@@ -110,8 +128,98 @@ export const uploadPdfToServer = async ({
           index: item.index ?? 0,
           annotatedText: item.annotatedText,
           linkedTextItemId: item.linkedTextItemId,
+          // Z-index
+          zIndex: item.zIndex ?? -50,
+          // Layer properties
+          visible: item.visible ?? true,
+          locked: item.locked ?? false,
+          name: item.name,
         };
         annotations.push(annotationItem);
+      } else if (item?.type === "shape") {
+        // Extract shape items from manifest
+        const xNorm = item.xNorm ?? 0;
+        const yNormTop = item.yNormTop ?? 0;
+        const widthNorm = item.widthNorm ?? 0;
+        const heightNorm = item.heightNorm ?? 0;
+
+        const shapeItem: ShapeItem = {
+          type: (item.shapeType || "rectangle") as ShapeType,
+          // Calculate pixel coordinates from normalized
+          x: xNorm * W,
+          y: yNormTop * H,
+          width: widthNorm * W,
+          height: heightNorm * H,
+          // Store normalized coordinates
+          xNorm,
+          yNormTop,
+          widthNorm,
+          heightNorm,
+          // Styling
+          strokeColor: item.strokeColor || "#000000",
+          strokeWidth: item.strokeWidth ?? 2,
+          fillColor: item.fillColor || null,
+          // Page association
+          index: item.index ?? 0,
+          // Z-index
+          zIndex: item.zIndex ?? 0,
+          // Layer properties
+          visible: item.visible ?? true,
+          locked: item.locked ?? false,
+          name: item.name,
+        };
+
+        // Include freehand points if available
+        if (item.shapeType === "freehand" && item.points) {
+          shapeItem.points = item.points;
+        }
+
+        shapes.push(shapeItem);
+      } else if (item?.type === "formField") {
+        // Extract form field items from manifest
+        const xNorm = item.xNorm ?? 0;
+        const yNormTop = item.yNormTop ?? 0;
+        const widthNorm = item.widthNorm ?? 0;
+        const heightNorm = item.heightNorm ?? 0;
+
+        const formFieldItem: FormFieldItem = {
+          type: (item.fieldType || "textInput") as FormFieldType,
+          // Calculate pixel coordinates from normalized
+          x: xNorm * W,
+          y: yNormTop * H,
+          width: widthNorm * W,
+          height: heightNorm * H,
+          // Store normalized coordinates
+          xNorm,
+          yNormTop,
+          widthNorm,
+          heightNorm,
+          // Form field properties
+          fieldName: item.fieldName || `field_${Date.now()}`,
+          label: item.label,
+          placeholder: item.placeholder,
+          defaultValue: item.defaultValue,
+          required: item.required,
+          options: item.options,
+          groupName: item.groupName,
+          // Styling
+          fontSize: item.fontSize ?? 14,
+          fontFamily: item.fontFamily,
+          textColor: item.textColor || "#000000",
+          backgroundColor: item.backgroundColor || "#ffffff",
+          borderColor: item.borderColor || "#374151",
+          borderWidth: item.borderWidth ?? 1,
+          // Page association
+          index: item.index ?? 0,
+          // Z-index
+          zIndex: item.zIndex ?? 100,
+          // Layer properties
+          visible: item.visible ?? true,
+          locked: item.locked ?? false,
+          name: item.name,
+        };
+
+        formFields.push(formFieldItem);
       } else {
         // Regular items (text lines, images)
         regularItems.push(item);
@@ -191,6 +299,87 @@ export const uploadPdfToServer = async ({
           saveAnnotationsToIndexedDB(annotations);
         }
       }, 200);
+    }
+
+    // Store shapes AFTER addTextToCanvas3 so pages already have text items
+    if (shapes.length > 0) {
+      // Use setTimeout to ensure React has processed text/image state updates first
+      setTimeout(() => {
+        // Group shapes by page index
+        const shapesByPage: Record<number, ShapeItem[]> = {};
+        shapes.forEach((shape) => {
+          const pageIdx = shape.index ?? 0;
+          if (!shapesByPage[pageIdx]) shapesByPage[pageIdx] = [];
+          shapesByPage[pageIdx].push(shape);
+        });
+
+        // Update pages with shapes
+        setPages((prevPages: any[]) => {
+          const nextPages = Array.isArray(prevPages) ? [...prevPages] : [];
+          // Ensure we have enough pages
+          const maxPageIndex = Math.max(...Object.keys(shapesByPage).map(Number), 0);
+          while (nextPages.length <= maxPageIndex) {
+            nextPages.push({ textItems: [], imageItems: [], shapes: [] });
+          }
+          // Add shapes to each page
+          Object.entries(shapesByPage).forEach(([pageIdxStr, pageShapes]) => {
+            const pageIdx = parseInt(pageIdxStr, 10);
+            nextPages[pageIdx] = {
+              ...nextPages[pageIdx],
+              shapes: pageShapes,
+            };
+          });
+          return nextPages;
+        });
+
+        // Also set shape items state directly
+        if (setShapeItems) {
+          setShapeItems(shapes);
+        }
+
+        // Save to IndexedDB for persistence
+        if (saveShapesToIndexedDB) {
+          saveShapesToIndexedDB(shapes);
+        }
+      }, 250); // Slightly longer delay than annotations to ensure proper ordering
+    }
+
+    // Store form fields AFTER other items
+    if (formFields.length > 0) {
+      // Use setTimeout to ensure React has processed other state updates first
+      setTimeout(() => {
+        // Group form fields by page index
+        const formFieldsByPage: Record<number, FormFieldItem[]> = {};
+        formFields.forEach((field) => {
+          const pageIdx = field.index ?? 0;
+          if (!formFieldsByPage[pageIdx]) formFieldsByPage[pageIdx] = [];
+          formFieldsByPage[pageIdx].push(field);
+        });
+
+        // Update pages with form fields
+        setPages((prevPages: any[]) => {
+          const nextPages = Array.isArray(prevPages) ? [...prevPages] : [];
+          // Ensure we have enough pages
+          const maxPageIndex = Math.max(...Object.keys(formFieldsByPage).map(Number), 0);
+          while (nextPages.length <= maxPageIndex) {
+            nextPages.push({ textItems: [], imageItems: [], formFields: [] });
+          }
+          // Add form fields to each page
+          Object.entries(formFieldsByPage).forEach(([pageIdxStr, pageFormFields]) => {
+            const pageIdx = parseInt(pageIdxStr, 10);
+            nextPages[pageIdx] = {
+              ...nextPages[pageIdx],
+              formFields: pageFormFields,
+            };
+          });
+          return nextPages;
+        });
+
+        // Also set form fields state directly
+        if (setFormFields) {
+          setFormFields(formFields);
+        }
+      }, 300); // Slightly longer delay than shapes to ensure proper ordering
     }
   } catch (error) {
     console.error("Error uploading PDF:", error);

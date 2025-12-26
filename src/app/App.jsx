@@ -1995,7 +1995,8 @@ return (
                   selectedFile, setIsPdfDownloaded, addTextToCanvas3, pushSnapshotToUndo,
                   activePage, canvasRefs, fontSize, setImageItems, setPages,
                   saveImageItemsToIndexedDB, drawCanvas, setPdfTextSpans, setAnnotationItems,
-                  saveAnnotationsToIndexedDB,
+                  saveAnnotationsToIndexedDB, setShapeItems, setFormFields,
+                  CANVAS_WIDTH: canvasWidth, CANVAS_HEIGHT: canvasHeight,
                 })}
                 disabled={isViewer}
               >
@@ -2982,26 +2983,19 @@ return (
               <>
                 <div className="panel-divider" />
                 <div className="panel-section">
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      cursor: isViewer ? 'not-allowed' : 'pointer',
-                      fontSize: '13px',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={linkToTextItem || false}
-                      onChange={(e) => !isViewer && setLinkToTextItem(e.target.checked)}
-                      disabled={isViewer}
-                      style={{ cursor: isViewer ? 'not-allowed' : 'pointer' }}
-                    />
-                    <span>Link to text item</span>
-                  </label>
-                  <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '4px', marginLeft: '24px' }}>
-                    Linked annotations move with text
+                  <div className="panel-checkbox-option">
+                    <label className="panel-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={linkToTextItem || false}
+                        onChange={(e) => !isViewer && setLinkToTextItem(e.target.checked)}
+                        disabled={isViewer}
+                      />
+                      <span>Link to text item</span>
+                    </label>
+                    <span className="panel-checkbox-hint">
+                      Linked annotations move with text
+                    </span>
                   </div>
                 </div>
               </>

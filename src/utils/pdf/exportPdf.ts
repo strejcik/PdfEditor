@@ -300,6 +300,10 @@ export async function saveAllPagesAsPDF({
           index: item.index,
           color: item.color,
           zIndex: item.zIndex ?? 10,
+          // Layer properties
+          visible: item.visible ?? true,
+          locked: item.locked ?? false,
+          ...(item.name && { name: item.name }),
           ...(item.id && { id: item.id }),
         };
         pageManifest.texts.push(textEntry);
@@ -358,6 +362,10 @@ export async function saveAllPagesAsPDF({
           widthNorm: +((drawW) / W).toFixed(6),
           heightNorm: +((drawH) / H).toFixed(6),
           zIndex: item.zIndex ?? 5,
+          // Layer properties
+          visible: item.visible ?? true,
+          locked: item.locked ?? false,
+          ...(item.name && { name: item.name }),
           ref: src,
         });
 
@@ -506,6 +514,12 @@ export async function saveAllPagesAsPDF({
           fillColor: item.fillColor || null,
           index: item.index,
           zIndex: item.zIndex ?? 0,
+          // Layer properties
+          visible: item.visible ?? true,
+          locked: item.locked ?? false,
+          ...(item.name && { name: item.name }),
+          // Freehand points
+          ...(item.type === "freehand" && item.points && { points: item.points }),
         });
       }
     }
@@ -699,6 +713,11 @@ export async function saveAllPagesAsPDF({
         opacity: opacity,
         index: i,
         annotatedText: annotation.annotatedText,
+        zIndex: annotation.zIndex ?? -50,
+        // Layer properties
+        visible: annotation.visible ?? true,
+        locked: annotation.locked ?? false,
+        ...(annotation.name && { name: annotation.name }),
       };
       // Preserve linked text item ID for re-linking on import
       if (annotation.linkedTextItemId) {
@@ -854,6 +873,24 @@ export async function saveAllPagesAsPDF({
           widthNorm: +((fieldW) / W).toFixed(6),
           heightNorm: +((fieldH) / H).toFixed(6),
           index: i,
+          // Preserve all form field properties
+          ...(field.label && { label: field.label }),
+          ...(field.placeholder && { placeholder: field.placeholder }),
+          ...(field.defaultValue && { defaultValue: field.defaultValue }),
+          ...(field.required && { required: field.required }),
+          ...(field.options && { options: field.options }),
+          ...(field.groupName && { groupName: field.groupName }),
+          fontSize: field.fontSize || 14,
+          ...(field.fontFamily && { fontFamily: field.fontFamily }),
+          textColor: field.textColor || '#000000',
+          backgroundColor: field.backgroundColor || '#ffffff',
+          borderColor: field.borderColor || '#374151',
+          borderWidth: field.borderWidth || 1,
+          zIndex: field.zIndex ?? 100,
+          // Layer properties
+          visible: field.visible ?? true,
+          locked: field.locked ?? false,
+          ...(field.name && { name: field.name }),
         });
       } catch (e) {
         console.warn("Form field creation failed:", field.fieldName, e);

@@ -130,27 +130,17 @@ export function AnnotationToolbar({
 
       {/* Link to text item checkbox - shown when tool is active */}
       {activeAnnotationTool && setLinkToTextItem && (
-        <div style={{ marginTop: "8px" }}>
-          <label
-            style={{
-              fontSize: "11px",
-              color: "#9ca3af",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              cursor: "pointer",
-            }}
-          >
+        <div className="panel-checkbox-option" style={{ marginTop: "8px" }}>
+          <label className="panel-checkbox-label">
             <input
               type="checkbox"
               checked={linkToTextItem || false}
               onChange={(e) => setLinkToTextItem(e.target.checked)}
               disabled={isViewer}
-              style={{ cursor: "pointer" }}
             />
-            Link to text item
+            <span>Link to text item</span>
           </label>
-          <span style={{ fontSize: "10px", color: "#6b7280", display: "block", marginTop: "2px" }}>
+          <span className="panel-checkbox-hint">
             Linked annotations move with text
           </span>
         </div>
