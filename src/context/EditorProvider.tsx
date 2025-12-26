@@ -602,10 +602,29 @@ export function EditorProvider({ children }: PropsWithChildren) {
     );
   }, [history]);
 
-  // inside EditorProvider
+  // inside EditorProvider - use refs for stable bindings that always read current state
 useLayoutEffect(() => {
-  history.bindFromSlices(text, images, pages, shapes); // 👈 pass ALL four
-}, [history, text, images, pages, shapes]);
+  history.bindFromSlices(
+    // Use refs to always get current state, avoiding stale closures
+    {
+      get textItems() { return textRef.current.textItems; },
+      setTextItems: (next: any) => textRef.current.setTextItems(next),
+    },
+    {
+      get imageItems() { return imagesRef.current.imageItems; },
+      setImageItems: (next: any) => imagesRef.current.setImageItems(next),
+    },
+    pages,
+    {
+      get shapeItems() { return shapesRef.current.shapeItems; },
+      setShapeItems: (next: any) => shapesRef.current.setShapeItems(next),
+    },
+    {
+      get annotationItems() { return annotationsRef.current.annotationItems; },
+      setAnnotationItems: (next: any) => annotationsRef.current.setAnnotationItems(next),
+    }
+  );
+}, [history, pages]);
 
   const value = useMemo<EditorContextValue>(
     () => ({

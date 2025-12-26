@@ -256,11 +256,11 @@ const cutSelection = useCallback(() => {
         return;
       }
 
-      // CUT (your request mentions Ctrl+Z; we support both X and Z)
-      if (k === "x" || k === "z") {
+      // CUT (Ctrl+X)
+      if (k === "x") {
         const did = cutSelection();
         if (did) {
-          e.preventDefault();          // prevent default undo if Ctrl+Z
+          e.preventDefault();
           e.stopPropagation();
         }
         return;

@@ -235,6 +235,8 @@ export function handleAnnotationKeyDown(e, params) {
     deleteSelectedAnnotations,
     cancelTextSelection,
     isSelectingText,
+    pushSnapshotToUndo,
+    activePage,
   } = params;
 
   // Escape cancels text selection
@@ -253,6 +255,11 @@ export function handleAnnotationKeyDown(e, params) {
       e.target instanceof HTMLTextAreaElement
     ) {
       return false;
+    }
+
+    // Push undo snapshot before deleting annotation
+    if (pushSnapshotToUndo && activePage !== undefined) {
+      pushSnapshotToUndo(activePage);
     }
 
     if (deleteSelectedAnnotations) {

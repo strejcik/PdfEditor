@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useLayoutEffect, useState} from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import './App.css'
 import { DEFAULT_FONT_SIZE, CELL_SIZE, BOX_PADDING, CANVAS_WIDTH, CANVAS_HEIGHT, PDF_WIDTH, PDF_HEIGHT } from "../config/constants";
 import { getMousePosOnCanvas } from "../utils/canvas/getMousePosOnCanvas";
@@ -407,9 +407,11 @@ useEffect(() => {
       addAnnotation,
       updateAnnotation,
       deleteAnnotation,
+      deleteSelectedAnnotations,
       startTextSelection,
       updateTextSelection,
       finishTextSelection,
+      cancelTextSelection,
       hydrateFromPages: hydrateAnnotationsFromPages,
       // Linking annotations to text items
       linkToTextItem, setLinkToTextItem,
@@ -923,15 +925,13 @@ useEffect(() => {
 
 
 
-const handleUndo = () => {
-  fnUndoStack(activePage)
-};
+const handleUndo = useCallback(() => {
+  fnUndoStack(activePage);
+}, [fnUndoStack, activePage]);
 
-
-
-const handleRedo = () => {
+const handleRedo = useCallback(() => {
   fnRedoStack(activePage);
-};
+}, [fnRedoStack, activePage]);
 
 // Wrapper mouse handlers that check annotations, then form fields, then shapes, then fall through to existing handlers
 const wrappedMouseDown = (e) => {
@@ -1177,6 +1177,7 @@ const wrappedMouseDown = (e) => {
     setTextBox,
     setSelectionStart,
     setSelectionEnd,
+    pushSnapshotToUndo,
   });
 };
 
@@ -1610,49 +1611,77 @@ useEffect(() => { selectedTextIndexesRef.current = selectedTextIndexes; }, [sele
 
 useEffect(() => {
   // Use document for better reliability; capture=false is fine
-  const listener = (event) => handleKeyDown(event,{
-    canvasRefs,
-    fontSize,
-    isTextBoxEditEnabled,
-    textBox,
-    textItems,
-    isMultilineMode,
-    mlText,
-    mlCaret,
-    mlAnchor,
-    mlPreferredX,
-    activePage,
-    mlConfig,
-    setSelectedTextIndexes,
-    setIsTextSelected,
-    setSelectedTextIndex,
-    setTextItems,
-    setMlText,
-    selectedTextIndexesRef,
-    saveTextItemsToIndexedDB,
-    updatePageItems,
-    wrapTextPreservingNewlinesResponsive,
-    setTextBox,
-    toUnits,
-    pdfToCssMargins,
-    layoutMultiline,
-    setMlCaret,
-    setMlAnchor,
-    setMlPreferredX,
-    indexToXY,
-    selectedShapeIndex,
-    selectedShapeIndexes,
-    deleteSelectedShape,
-    deleteSelectedShapes,
-    pushSnapshotToUndo
-  });
+  const listener = (event) => {
+    // Handle undo/redo shortcuts (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z)
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      if (event.key === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        handleUndo();
+        return;
+      }
+      if (event.key === 'y' || (event.key === 'z' && event.shiftKey)) {
+        event.preventDefault();
+        handleRedo();
+        return;
+      }
+    }
+
+    // Try annotation keyboard handler first
+    const annotationHandled = handleAnnotationKeyDown(event, {
+      selectedAnnotationIndex,
+      deleteSelectedAnnotations,
+      cancelTextSelection,
+      isSelectingText,
+      pushSnapshotToUndo,
+      activePage,
+    });
+    if (annotationHandled) return;
+
+    // Fall through to other keyboard handlers
+    handleKeyDown(event,{
+      canvasRefs,
+      fontSize,
+      isTextBoxEditEnabled,
+      textBox,
+      textItems,
+      isMultilineMode,
+      mlText,
+      mlCaret,
+      mlAnchor,
+      mlPreferredX,
+      activePage,
+      mlConfig,
+      setSelectedTextIndexes,
+      setIsTextSelected,
+      setSelectedTextIndex,
+      setTextItems,
+      setMlText,
+      selectedTextIndexesRef,
+      saveTextItemsToIndexedDB,
+      updatePageItems,
+      wrapTextPreservingNewlinesResponsive,
+      setTextBox,
+      toUnits,
+      pdfToCssMargins,
+      layoutMultiline,
+      setMlCaret,
+      setMlAnchor,
+      setMlPreferredX,
+      indexToXY,
+      selectedShapeIndex,
+      selectedShapeIndexes,
+      deleteSelectedShape,
+      deleteSelectedShapes,
+      pushSnapshotToUndo
+    });
+  };
 
   document.addEventListener("keydown", listener, { passive: false });
 
   return () => {
     document.removeEventListener("keydown", listener);
   };
-}, [handleKeyDown]);  // <-- depend on the handler itself
+}, [handleKeyDown, selectedAnnotationIndex, deleteSelectedAnnotations, cancelTextSelection, isSelectingText, pushSnapshotToUndo, activePage, handleUndo, handleRedo]);  // <-- depend on all handlers
 
 
 

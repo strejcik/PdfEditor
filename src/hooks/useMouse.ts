@@ -391,7 +391,8 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         setIsResizing,
         setTextBox,
         setSelectionStart,
-        setSelectionEnd
+        setSelectionEnd,
+        pushSnapshotToUndo
     } = opts;
     
     if (editingIndex !== null) {
@@ -506,6 +507,9 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
 
         if (hasMixedSelection) {
             // Clicking on a text item that's part of a mixed selection
+            // Push undo snapshot BEFORE starting drag (captures original positions)
+            pushSnapshotToUndo?.(activePage);
+
             // Start mixed-item dragging without changing any selections
             setIsDraggingMixedItems(true);
             setDragStart({ x: cssX, y: cssY });
@@ -569,6 +573,9 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
             : [bestTextIndex];
 
         setSelectedTextIndexes(newSelectedIndexes);
+
+        // Push undo snapshot BEFORE starting drag (captures original positions)
+        pushSnapshotToUndo?.(activePage);
 
         // Regular text-only dragging
         setIsDragging(true);
@@ -1296,7 +1303,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     setIsDragging(false);
     setInitialPositions([]);
     setDragStart({ x: 0, y: 0 });
-    pushSnapshotToUndo(activePage);
+    // Snapshot was already pushed in mouseDown before drag started
   }
 
   if (isDraggingMixedItems) {
@@ -1333,8 +1340,7 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
     setInitialMixedItemPositions([]);
     setDragStart({ x: 0, y: 0 });
 
-    // Push to undo
-    pushSnapshotToUndo(activePage);
+    // Snapshot was already pushed in mouseDown before drag started
 
     // CRITICAL: Defer canvas redraw to next frame to ensure React state has updated
     // Otherwise canvas draws with old drag state still active (items follow cursor)

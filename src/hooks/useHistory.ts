@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UndoRedoState, TextItem, ImageItem } from "../types/editor";
 import type { ShapeItem } from "../types/shapes";
+import type { AnnotationItem } from "../types/annotations";
 import { remapStacksAfterPageRemoval } from "../utils/history/remapStacksAfterPageRemoval";
 
-type Snapshot = { textItems?: TextItem[]; imageItems?: ImageItem[]; shapeItems?: ShapeItem[] };
+type Snapshot = { textItems?: TextItem[]; imageItems?: ImageItem[]; shapeItems?: ShapeItem[]; annotationItems?: AnnotationItem[] };
 
 const MAX_SNAPSHOTS = 100;
 
@@ -64,7 +65,8 @@ type SetItems<T> = (next: T[] | ((prev: T[]) => T[])) => void;
 type TextSliceLike  = { textItems: TextItem[]; setTextItems: SetItems<TextItem> };
 type ImageSliceLike = { imageItems: ImageItem[]; setImageItems: SetItems<ImageItem> };
 type ShapeSliceLike = { shapeItems: ShapeItem[]; setShapeItems: SetItems<ShapeItem> };
-type PagesSliceLike = { pages: Array<{ textItems?: TextItem[]; imageItems?: ImageItem[]; shapes?: ShapeItem[] }>; setPages: (updater: any) => void };
+type AnnotationSliceLike = { annotationItems: AnnotationItem[]; setAnnotationItems: SetItems<AnnotationItem> };
+type PagesSliceLike = { pages: Array<{ textItems?: TextItem[]; imageItems?: ImageItem[]; shapes?: ShapeItem[]; annotations?: AnnotationItem[] }>; setPages: (updater: any) => void };
 
 export function useHistory() {
   const [undoStack, setUndoStack] = useState<UndoRedoState>({});
@@ -74,11 +76,13 @@ export function useHistory() {
   const getTextItemsRef = useRef<() => TextItem[]>(() => []);
   const getImageItemsRef = useRef<() => ImageItem[]>(() => []);
   const getShapeItemsRef = useRef<() => ShapeItem[]>(() => []);
+  const getAnnotationItemsRef = useRef<() => AnnotationItem[]>(() => []);
   const getPagesRef     = useRef<() => PagesSliceLike["pages"]>(() => []);
 
   const setTextItemsRef = useRef<SetItems<TextItem> | null>(null);
   const setImageItemsRef = useRef<SetItems<ImageItem> | null>(null);
   const setShapeItemsRef = useRef<SetItems<ShapeItem> | null>(null);
+  const setAnnotationItemsRef = useRef<SetItems<AnnotationItem> | null>(null);
   const setPagesRef      = useRef<PagesSliceLike["setPages"] | null>(null);
 
   const isBoundRef = useRef(false);
@@ -110,7 +114,7 @@ export function useHistory() {
 
   // High-level binder (pass slices)
   const bindFromSlices = useCallback(
-    (text: TextSliceLike, images: ImageSliceLike, pages?: PagesSliceLike, shapes?: ShapeSliceLike) => {
+    (text: TextSliceLike, images: ImageSliceLike, pages?: PagesSliceLike, shapes?: ShapeSliceLike, annotations?: AnnotationSliceLike) => {
       getTextItemsRef.current  = () => text.textItems;
       getImageItemsRef.current = () => images.imageItems;
       setTextItemsRef.current  = text.setTextItems;
@@ -119,6 +123,11 @@ export function useHistory() {
       if (shapes) {
         getShapeItemsRef.current = () => shapes.shapeItems;
         setShapeItemsRef.current = shapes.setShapeItems;
+      }
+
+      if (annotations) {
+        getAnnotationItemsRef.current = () => annotations.annotationItems;
+        setAnnotationItemsRef.current = annotations.setAnnotationItems;
       }
 
       if (pages) {
@@ -133,17 +142,19 @@ export function useHistory() {
   const takeCurrentPageSnapshot = useCallback((page: number): Snapshot => {
     if (!isBoundRef.current) {
       if (process.env.NODE_ENV !== "production") {
-        console.warn("[history] Not bound yet. Call history.bindFromSlices(text, images, pages, shapes) in your Provider.");
+        console.warn("[history] Not bound yet. Call history.bindFromSlices(text, images, pages, shapes, annotations) in your Provider.");
       }
-      return { textItems: [], imageItems: [], shapeItems: [] };
+      return { textItems: [], imageItems: [], shapeItems: [], annotationItems: [] };
     }
     const textItems = getTextItemsRef.current();
     const imageItems = getImageItemsRef.current();
     const shapeItems = getShapeItemsRef.current();
+    const annotationItems = getAnnotationItemsRef.current();
 
     const textOnPage = (textItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
     const imgsOnPage = (imageItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
     const shapesOnPage = (shapeItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
+    const annotationsOnPage = (annotationItems || []).filter(it => belongsToPage(it, page)).map(deepClone);
 
     if (process.env.NODE_ENV !== "production") {
       if ((textItems?.length ?? 0) > 0 && textOnPage.length === 0) {
@@ -155,9 +166,12 @@ export function useHistory() {
       if ((shapeItems?.length ?? 0) > 0 && shapesOnPage.length === 0) {
         console.warn(`[history] No shapeItems matched page ${page}. Ensure items carry {index|page|pageIndex}.`);
       }
+      if ((annotationItems?.length ?? 0) > 0 && annotationsOnPage.length === 0) {
+        console.warn(`[history] No annotationItems matched page ${page}. Ensure items carry {index|page|pageIndex}.`);
+      }
     }
 
-    return { textItems: textOnPage, imageItems: imgsOnPage, shapeItems: shapesOnPage };
+    return { textItems: textOnPage, imageItems: imgsOnPage, shapeItems: shapesOnPage, annotationItems: annotationsOnPage };
   }, []);
 
   /**
@@ -170,6 +184,7 @@ export function useHistory() {
     const setText  = setTextItemsRef.current;
     const setImage = setImageItemsRef.current;
     const setShape = setShapeItemsRef.current;
+    const setAnnotation = setAnnotationItemsRef.current;
     const setPages = setPagesRef.current;
 
     if (!setText || !setImage) {
@@ -182,6 +197,7 @@ export function useHistory() {
     const currentText = getTextItemsRef.current();
     const currentImgs = getImageItemsRef.current();
     const currentShapes = getShapeItemsRef.current();
+    const currentAnnotations = getAnnotationItemsRef.current();
 
     const nextText = [
       ...currentText.filter(it => !belongsToPage(it, page)),
@@ -195,26 +211,33 @@ export function useHistory() {
       ...currentShapes.filter(it => !belongsToPage(it, page)),
       ...((snap.shapeItems || []).map(x => deepClone(x))),
     ];
+    const nextAnnotations = [
+      ...currentAnnotations.filter(it => !belongsToPage(it, page)),
+      ...((snap.annotationItems || []).map(x => deepClone(x))),
+    ];
 
     // 1) Update flat slices
     setText(nextText);
     setImage(nextImgs);
     if (setShape) setShape(nextShapes);
+    if (setAnnotation) setAnnotation(nextAnnotations);
 
     // 2) Update pages slice (if bound)
     if (setPages) {
       const nextPageText = (snap.textItems || []).map(x => deepClone(x));
       const nextPageImgs = (snap.imageItems || []).map(x => deepClone(x));
       const nextPageShapes = (snap.shapeItems || []).map(x => deepClone(x));
+      const nextPageAnnotations = (snap.annotationItems || []).map(x => deepClone(x));
 
       setPages((prev: PagesSliceLike["pages"]) => {
         const next = Array.isArray(prev) ? [...prev] : [];
-        const pageObj = next[page] || { textItems: [], imageItems: [], shapes: [] };
+        const pageObj = next[page] || { textItems: [], imageItems: [], shapes: [], annotations: [] };
         next[page] = {
           ...pageObj,
           textItems: nextPageText,
           imageItems: nextPageImgs,
           shapes: nextPageShapes,
+          annotations: nextPageAnnotations,
         };
         return next;
       });
