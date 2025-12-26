@@ -20,8 +20,8 @@ export function drawSingleTextItem(ctx, rect, item, globalIndex, state, config) 
     ctx.strokeRect(boxX, boxY, boxW, boxH);
   }
 
-  // Draw the text
-  ctx.fillStyle = item.color;
+  // Draw the text (default to black if no color specified)
+  ctx.fillStyle = item.color || "#000000";
   ctx.font = `${L.fontSize}px ${L.fontFamily}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
@@ -31,12 +31,24 @@ export function drawSingleTextItem(ctx, rect, item, globalIndex, state, config) 
   if (L.lines && L.lines.length > 0) {
     // Draw each line (works for both single and multi-line text)
     L.lines.forEach((line, lineIndex) => {
-      const lineY = L.topY + L.ascent + (lineIndex * L.lineHeight);
+      // Use exact baseline position from PDF if available, otherwise calculate from topY
+      let lineY;
+      if (L.baselineY != null && lineIndex === 0) {
+        // PDF text: use exact baseline position for first line
+        lineY = L.baselineY;
+      } else if (L.baselineY != null) {
+        // PDF text: subsequent lines offset from baseline
+        lineY = L.baselineY + (lineIndex * L.lineHeight);
+      } else {
+        // User-created text: calculate from topY
+        lineY = L.topY + L.ascent + (lineIndex * L.lineHeight);
+      }
       ctx.fillText(line, Math.round(drawX), Math.round(lineY));
     });
   } else {
     // Fallback for items without wrapping
-    ctx.fillText(item.text || "", Math.round(drawX), Math.round(L.topY + L.ascent));
+    const baseY = L.baselineY != null ? L.baselineY : (L.topY + L.ascent);
+    ctx.fillText(item.text || "", Math.round(drawX), Math.round(baseY));
   }
 }
 

@@ -9,7 +9,7 @@
  *
  * @param {object} span - The annotation span
  * @param {object} linkedTextItem - The linked text item (if any)
- * @returns {object} Coordinates { xNorm, yNormTop, widthNorm, heightNorm }
+ * @returns {object} Coordinates { xNorm, yNormTop, widthNorm, heightNorm, yNormBaseline }
  */
 function getSpanCoordinatesForHit(span, linkedTextItem) {
   // If linked to a textItem and has relative offsets, calculate from textItem position
@@ -17,17 +17,107 @@ function getSpanCoordinatesForHit(span, linkedTextItem) {
     return {
       xNorm: linkedTextItem.xNorm + span.relativeXNorm,
       yNormTop: linkedTextItem.yNormTop + span.relativeYNorm,
+      yNormBaseline: linkedTextItem.yNormBaseline, // Preserve baseline if available
       widthNorm: span.widthNorm,
       heightNorm: span.heightNorm,
+      fontSize: span.fontSize,
+      text: span.text,
     };
   }
   // Otherwise use absolute coordinates
   return {
     xNorm: span.xNorm,
     yNormTop: span.yNormTop,
+    yNormBaseline: span.yNormBaseline, // Preserve baseline if available
     widthNorm: span.widthNorm,
     heightNorm: span.heightNorm,
+    fontSize: span.fontSize,
+    text: span.text,
   };
+}
+
+/**
+ * Calculate visual bounding box for a span
+ * MUST match getSpanVisualMetrics in drawAnnotations.js for consistent hit detection
+ *
+ * @param {object} span - The span with normalized coordinates
+ * @param {number} canvasWidth - Canvas width in pixels
+ * @param {number} canvasHeight - Canvas height in pixels
+ * @param {CanvasRenderingContext2D} ctx - Canvas context for text measurement (optional)
+ * @returns {object} Visual bounding box { x, y, w, h }
+ */
+function getSpanVisualBox(span, canvasWidth, canvasHeight, ctx = null) {
+  let fontSize = span.fontSize || 16;
+  const text = span.text || "";
+
+  // Check if this is PDF-extracted text with bounds/baseline
+  const hasPdfBounds = span.widthNorm != null && span.heightNorm != null;
+  const hasPdfBaseline = span.yNormBaseline != null;
+
+  // If we don't have a canvas context, use simple normalized coordinates
+  if (!ctx) {
+    const x = span.xNorm * canvasWidth;
+    let y;
+    if (hasPdfBaseline) {
+      // Estimate topY from baseline (ascent is roughly 80% of fontSize)
+      const estimatedAscent = fontSize * 0.8;
+      const baselineY = span.yNormBaseline * canvasHeight;
+      y = baselineY - estimatedAscent;
+    } else {
+      y = span.yNormTop * canvasHeight;
+    }
+    const w = span.widthNorm * canvasWidth;
+    const h = span.heightNorm * canvasHeight;
+    return { x, y, w, h };
+  }
+
+  // With canvas context, use accurate text measurement
+  const fontFamily = "Lato";
+
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+
+  // For PDF-extracted text: scale font to fit within PDF's bounding box
+  if (hasPdfBounds && text) {
+    const targetWidth = span.widthNorm * canvasWidth;
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    const measuredWidth = ctx.measureText(text).width;
+    if (measuredWidth > targetWidth * 1.02 && targetWidth > 0) {
+      const scaleFactor = targetWidth / measuredWidth;
+      const minScale = 0.5;
+      const adjustedScale = Math.max(scaleFactor, minScale);
+      fontSize = fontSize * adjustedScale;
+    }
+  }
+
+  ctx.font = `${fontSize}px ${fontFamily}`;
+  const m = ctx.measureText(text);
+
+  const bboxLeft = m.actualBoundingBoxLeft || 0;
+  const bboxRight = m.actualBoundingBoxRight || m.width;
+  const ascent = m.actualBoundingBoxAscent || fontSize * 0.8;
+  const descent = m.actualBoundingBoxDescent || fontSize * 0.2;
+
+  const visualWidth = bboxLeft + bboxRight;
+  const visualHeight = ascent + descent;
+
+  ctx.restore();
+
+  const xOrigin = span.xNorm * canvasWidth;
+  const x = xOrigin - bboxLeft;
+
+  let y;
+  if (hasPdfBaseline) {
+    const baselineY = span.yNormBaseline * canvasHeight;
+    y = baselineY - ascent;
+  } else if (span.yNormTop != null) {
+    y = span.yNormTop * canvasHeight;
+  } else {
+    y = 0;
+  }
+
+  return { x, y, w: visualWidth, h: visualHeight };
 }
 
 /**
@@ -39,26 +129,25 @@ function getSpanCoordinatesForHit(span, linkedTextItem) {
  * @param {number} canvasWidth - Canvas width
  * @param {number} canvasHeight - Canvas height
  * @param {object} linkedTextItem - The linked text item (if any)
+ * @param {CanvasRenderingContext2D} ctx - Canvas context for accurate measurement (optional)
  * @returns {boolean} True if point is inside any span
  */
-export function isPointInAnnotation(annotation, mouseX, mouseY, canvasWidth, canvasHeight, linkedTextItem = null) {
+export function isPointInAnnotation(annotation, mouseX, mouseY, canvasWidth, canvasHeight, linkedTextItem = null, ctx = null) {
   if (!annotation || !annotation.spans) return false;
 
   for (const span of annotation.spans) {
     // Get coordinates accounting for linked textItem
     const coords = getSpanCoordinatesForHit(span, linkedTextItem);
-    const x = coords.xNorm * canvasWidth;
-    const y = coords.yNormTop * canvasHeight;
-    const w = coords.widthNorm * canvasWidth;
-    const h = coords.heightNorm * canvasHeight;
+    // Use visual box for accurate hit detection
+    const box = getSpanVisualBox(coords, canvasWidth, canvasHeight, ctx);
 
     // Check if point is inside this span (with small padding for easier clicking)
     const padding = 2;
     if (
-      mouseX >= x - padding &&
-      mouseX <= x + w + padding &&
-      mouseY >= y - padding &&
-      mouseY <= y + h + padding
+      mouseX >= box.x - padding &&
+      mouseX <= box.x + box.w + padding &&
+      mouseY >= box.y - padding &&
+      mouseY <= box.y + box.h + padding
     ) {
       return true;
     }
@@ -116,28 +205,28 @@ export function findClickedAnnotation(
  * @param {object} selectionRect - Selection rectangle { x, y, width, height }
  * @param {number} canvasWidth - Canvas width
  * @param {number} canvasHeight - Canvas height
+ * @param {CanvasRenderingContext2D} ctx - Canvas context for accurate measurement (optional)
  * @returns {boolean} True if any span intersects
  */
 export function isAnnotationInSelectionRect(
   annotation,
   selectionRect,
   canvasWidth,
-  canvasHeight
+  canvasHeight,
+  ctx = null
 ) {
   if (!annotation || !annotation.spans || !selectionRect) return false;
 
   for (const span of annotation.spans) {
-    const x = span.xNorm * canvasWidth;
-    const y = span.yNormTop * canvasHeight;
-    const w = span.widthNorm * canvasWidth;
-    const h = span.heightNorm * canvasHeight;
+    // Use visual box for accurate intersection
+    const box = getSpanVisualBox(span, canvasWidth, canvasHeight, ctx);
 
     // AABB intersection test
     const intersects =
-      selectionRect.x < x + w &&
-      selectionRect.x + selectionRect.width > x &&
-      selectionRect.y < y + h &&
-      selectionRect.y + selectionRect.height > y;
+      selectionRect.x < box.x + box.w &&
+      selectionRect.x + selectionRect.width > box.x &&
+      selectionRect.y < box.y + box.h &&
+      selectionRect.y + selectionRect.height > box.y;
 
     if (intersects) return true;
   }
@@ -153,21 +242,20 @@ export function isAnnotationInSelectionRect(
  * @param {number} mouseY - Mouse Y position in pixels
  * @param {number} canvasWidth - Canvas width
  * @param {number} canvasHeight - Canvas height
+ * @param {CanvasRenderingContext2D} ctx - Canvas context for accurate measurement (optional)
  * @returns {boolean} True if point is inside the span
  */
-export function isPointInTextSpan(span, mouseX, mouseY, canvasWidth, canvasHeight) {
+export function isPointInTextSpan(span, mouseX, mouseY, canvasWidth, canvasHeight, ctx = null) {
   if (!span) return false;
 
-  const x = span.xNorm * canvasWidth;
-  const y = span.yNormTop * canvasHeight;
-  const w = span.widthNorm * canvasWidth;
-  const h = span.heightNorm * canvasHeight;
+  // Use visual box for accurate hit detection
+  const box = getSpanVisualBox(span, canvasWidth, canvasHeight, ctx);
 
   return (
-    mouseX >= x &&
-    mouseX <= x + w &&
-    mouseY >= y &&
-    mouseY <= y + h
+    mouseX >= box.x &&
+    mouseX <= box.x + box.w &&
+    mouseY >= box.y &&
+    mouseY <= box.y + box.h
   );
 }
 
@@ -179,6 +267,7 @@ export function isPointInTextSpan(span, mouseX, mouseY, canvasWidth, canvasHeigh
  * @param {number} canvasWidth - Canvas width
  * @param {number} canvasHeight - Canvas height
  * @param {number} pageIndex - Current page index
+ * @param {CanvasRenderingContext2D} ctx - Canvas context for accurate measurement (optional)
  * @returns {Array} Array of intersecting text spans
  */
 export function findTextSpansInSelection(
@@ -186,7 +275,8 @@ export function findTextSpansInSelection(
   selectionRect,
   canvasWidth,
   canvasHeight,
-  pageIndex
+  pageIndex,
+  ctx = null
 ) {
   if (!pdfTextSpans || pdfTextSpans.length === 0 || !selectionRect) {
     return [];
@@ -195,17 +285,15 @@ export function findTextSpansInSelection(
   return pdfTextSpans.filter(span => {
     if (span.index !== pageIndex) return false;
 
-    const x = span.xNorm * canvasWidth;
-    const y = span.yNormTop * canvasHeight;
-    const w = span.widthNorm * canvasWidth;
-    const h = span.heightNorm * canvasHeight;
+    // Use visual box for accurate intersection
+    const box = getSpanVisualBox(span, canvasWidth, canvasHeight, ctx);
 
     // AABB intersection test
     return (
-      selectionRect.x < x + w &&
-      selectionRect.x + selectionRect.width > x &&
-      selectionRect.y < y + h &&
-      selectionRect.y + selectionRect.height > y
+      selectionRect.x < box.x + box.w &&
+      selectionRect.x + selectionRect.width > box.x &&
+      selectionRect.y < box.y + box.h &&
+      selectionRect.y + selectionRect.height > box.y
     );
   });
 }
@@ -216,9 +304,10 @@ export function findTextSpansInSelection(
  * @param {object} annotation - The annotation item
  * @param {number} canvasWidth - Canvas width
  * @param {number} canvasHeight - Canvas height
+ * @param {CanvasRenderingContext2D} ctx - Canvas context for accurate measurement (optional)
  * @returns {object|null} Bounding box { x, y, width, height } or null
  */
-export function getAnnotationBoundingBox(annotation, canvasWidth, canvasHeight) {
+export function getAnnotationBoundingBox(annotation, canvasWidth, canvasHeight, ctx = null) {
   if (!annotation || !annotation.spans || annotation.spans.length === 0) {
     return null;
   }
@@ -229,15 +318,13 @@ export function getAnnotationBoundingBox(annotation, canvasWidth, canvasHeight) 
   let maxY = -Infinity;
 
   for (const span of annotation.spans) {
-    const x = span.xNorm * canvasWidth;
-    const y = span.yNormTop * canvasHeight;
-    const w = span.widthNorm * canvasWidth;
-    const h = span.heightNorm * canvasHeight;
+    // Use visual box for accurate bounding box
+    const box = getSpanVisualBox(span, canvasWidth, canvasHeight, ctx);
 
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x + w);
-    maxY = Math.max(maxY, y + h);
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.w);
+    maxY = Math.max(maxY, box.y + box.h);
   }
 
   return {

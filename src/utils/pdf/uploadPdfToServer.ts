@@ -28,6 +28,8 @@ export const uploadPdfToServer = async ({
   setFormFields,
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
+  setCanvasWidth,
+  setCanvasHeight,
 }: {
   selectedFile: File | null;
   setIsPdfDownloaded: (value: boolean) => void;
@@ -49,6 +51,8 @@ export const uploadPdfToServer = async ({
   setFormFields?: (items: FormFieldItem[]) => void;
   CANVAS_WIDTH?: number;
   CANVAS_HEIGHT?: number;
+  setCanvasWidth?: (width: number) => void;
+  setCanvasHeight?: (height: number) => void;
 }) => {
   if (!selectedFile) {
     alert("No file selected. Please select a PDF file to upload.");
@@ -71,15 +75,64 @@ export const uploadPdfToServer = async ({
       }
     );
 
-    // Expecting an array with mixed items:
-    //  - { type: "text", text, xNorm, yNormTop, fontSize, index, ... }
-    //  - { type: "image", xNorm, yNormTop, widthNorm, heightNorm, index, ref(base64), ... }
-    const payload = response?.data;
+    // Response format:
+    // New format: { items: [...], pageDimensions: { width: number, height: number } }
+    // Legacy format: [...] (array of items)
+    const responseData = response?.data;
+    console.log('[uploadPdfToServer] Raw response data:', responseData);
+    console.log('[uploadPdfToServer] Response is array:', Array.isArray(responseData));
 
-    if (!Array.isArray(payload)) {
-      console.error("Unexpected response:", payload);
+    // Handle both new format (object with items and pageDimensions) and legacy format (array)
+    let payload: any[];
+    let pageDimensions: { width: number; height: number } | null = null;
+
+    if (Array.isArray(responseData)) {
+      // Legacy format: response is directly an array
+      payload = responseData;
+    } else if (responseData && typeof responseData === 'object') {
+      // New format: { items: [...], pageDimensions: { width, height } }
+      if (Array.isArray(responseData.items)) {
+        payload = responseData.items;
+      } else {
+        console.error("Unexpected response format:", responseData);
+        alert("Server returned an unexpected response.");
+        return;
+      }
+
+      // Extract page dimensions if available
+      if (responseData.pageDimensions) {
+        pageDimensions = {
+          width: responseData.pageDimensions.width || 595,
+          height: responseData.pageDimensions.height || 842,
+        };
+        console.log('[uploadPdfToServer] Extracted pageDimensions:', pageDimensions);
+      }
+    } else {
+      console.error("Unexpected response:", responseData);
       alert("Server returned an unexpected response.");
       return;
+    }
+
+    // Apply page dimensions to canvas if available
+    console.log('[uploadPdfToServer] pageDimensions:', pageDimensions);
+    console.log('[uploadPdfToServer] setCanvasWidth available:', !!setCanvasWidth);
+    console.log('[uploadPdfToServer] setCanvasHeight available:', !!setCanvasHeight);
+
+    // Store dimensions for use in setTimeout callbacks
+    const pdfWidth = pageDimensions?.width;
+    const pdfHeight = pageDimensions?.height;
+
+    if (pageDimensions) {
+      if (setCanvasWidth && typeof pageDimensions.width === 'number') {
+        console.log('[uploadPdfToServer] Setting canvas width to:', pageDimensions.width);
+        setCanvasWidth(pageDimensions.width);
+      }
+      if (setCanvasHeight && typeof pageDimensions.height === 'number') {
+        console.log('[uploadPdfToServer] Setting canvas height to:', pageDimensions.height);
+        setCanvasHeight(pageDimensions.height);
+      }
+    } else {
+      console.warn('[uploadPdfToServer] No pageDimensions received from server');
     }
 
     // Separate textSpan items, annotations, shapes, form fields from regular items
@@ -90,9 +143,20 @@ export const uploadPdfToServer = async ({
     const formFields: FormFieldItem[] = [];
     const regularItems: any[] = [];
 
+    // Debug: Log text items and their xNorm values
+    const textItems = payload.filter((i: any) => i.type === 'text');
+    console.log('[uploadPdfToServer] Total items in payload:', payload.length);
+    console.log('[uploadPdfToServer] Text items count:', textItems.length);
+    if (textItems.length > 0) {
+      console.log('[uploadPdfToServer] First 5 text items xNorm values:',
+        textItems.slice(0, 5).map((i: any) => ({ text: i.text?.substring(0, 30), xNorm: i.xNorm, yNormTop: i.yNormTop }))
+      );
+    }
+
     // Use canvas dimensions for pixel coordinate calculation
-    const W = CANVAS_WIDTH || 816;
-    const H = CANVAS_HEIGHT || 1056;
+    // Use PDF dimensions if available, otherwise fall back to provided constants
+    const W = pageDimensions?.width || CANVAS_WIDTH || 816;
+    const H = pageDimensions?.height || CANVAS_HEIGHT || 1056;
 
     for (const item of payload) {
       if (item?.type === "textSpan") {
@@ -175,6 +239,14 @@ export const uploadPdfToServer = async ({
         }
 
         shapes.push(shapeItem);
+      } else if (item?.type === "text") {
+        // Explicit text items from PyMuPDF extraction
+        // Pass through with fontFamily preserved
+        regularItems.push(item);
+      } else if (item?.type === "vector") {
+        // Vector graphics (SVG paths) from PyMuPDF extraction
+        // Pass through - will be handled as image-like items with SVG data URI
+        regularItems.push(item);
       } else if (item?.type === "formField") {
         // Extract form field items from manifest
         const xNorm = item.xNorm ?? 0;
@@ -243,22 +315,34 @@ export const uploadPdfToServer = async ({
     });
 
     setIsPdfDownloaded(true);
-    // Your improved addTextToCanvas3 already handles both text and images
-    addTextToCanvas3(normalized, {
-      pushSnapshotToUndo,
-      activePage,
-      canvasRefs,
-      fontSize,
-      setImageItems,
-      setPages,
-      saveImageItemsToIndexedDB,
-      drawCanvas,
-    });
+
+    // IMPORTANT: Delay adding content until React has re-rendered the canvas with new dimensions.
+    // This ensures getBoundingClientRect() returns correct values for coordinate conversion.
+    // Without this delay, the canvas still has old dimensions when addTextToCanvas3 runs.
+    setTimeout(() => {
+      console.log('[uploadPdfToServer] Adding content after canvas resize, checking canvas dimensions...');
+      const canvas = canvasRefs?.current?.[activePage];
+      const rect = canvas?.getBoundingClientRect?.();
+      console.log('[uploadPdfToServer] Canvas rect after delay:', rect?.width, 'x', rect?.height);
+
+      // Your improved addTextToCanvas3 already handles both text and images
+      addTextToCanvas3(normalized, {
+        pushSnapshotToUndo,
+        activePage,
+        canvasRefs,
+        fontSize,
+        setImageItems,
+        setPages,
+        saveImageItemsToIndexedDB,
+        drawCanvas,
+      });
+    }, 100); // 100ms delay to allow React to apply canvas dimension changes
 
     // Store annotations AFTER addTextToCanvas3 so pages already have text items
     // IMPORTANT: We must also update pages with annotations to prevent EditorProvider sync from overwriting
     if (annotations.length > 0) {
       // Use setTimeout to ensure React has processed text/image state updates first
+      // Delay is longer than addTextToCanvas3 (100ms) to ensure content is loaded first
       setTimeout(() => {
         // Group annotations by page index (remove 'index' for page storage)
         const annotationsByPage: Record<number, any[]> = {};
@@ -298,12 +382,13 @@ export const uploadPdfToServer = async ({
         if (saveAnnotationsToIndexedDB) {
           saveAnnotationsToIndexedDB(annotations);
         }
-      }, 200);
+      }, 300); // After addTextToCanvas3 (100ms)
     }
 
     // Store shapes AFTER addTextToCanvas3 so pages already have text items
     if (shapes.length > 0) {
       // Use setTimeout to ensure React has processed text/image state updates first
+      // Delay is longer than addTextToCanvas3 (100ms) to ensure content is loaded first
       setTimeout(() => {
         // Group shapes by page index
         const shapesByPage: Record<number, ShapeItem[]> = {};
@@ -341,12 +426,13 @@ export const uploadPdfToServer = async ({
         if (saveShapesToIndexedDB) {
           saveShapesToIndexedDB(shapes);
         }
-      }, 250); // Slightly longer delay than annotations to ensure proper ordering
+      }, 350); // After annotations (300ms)
     }
 
     // Store form fields AFTER other items
     if (formFields.length > 0) {
       // Use setTimeout to ensure React has processed other state updates first
+      // Delay is longer than shapes (350ms) to ensure proper ordering
       setTimeout(() => {
         // Group form fields by page index
         const formFieldsByPage: Record<number, FormFieldItem[]> = {};
@@ -379,7 +465,7 @@ export const uploadPdfToServer = async ({
         if (setFormFields) {
           setFormFields(formFields);
         }
-      }, 300); // Slightly longer delay than shapes to ensure proper ordering
+      }, 400); // After shapes (350ms)
     }
   } catch (error) {
     console.error("Error uploading PDF:", error);

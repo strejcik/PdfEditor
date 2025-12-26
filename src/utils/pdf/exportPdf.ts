@@ -78,18 +78,52 @@ export async function saveAllPagesAsPDF({
   // Helper: resolve text draw position (x, topY) and metrics in PDF units
   // Uses CANVAS_WIDTH/CANVAS_HEIGHT to ensure consistency with resolveTopLeft
   // Now includes word wrapping support using item.maxWidth
+  // IMPORTANT: Uses yNormBaseline when available for precise PDF positioning
+  // IMPORTANT: Scales font to fit PDF bounds (prevents text overlap)
   const resolveTextLayout = (item: any) => {
-    const fontSize = Number(item.fontSize) || 16;
+    let fontSize = Number(item.fontSize) || 16;
     const fontFamily = item.fontFamily || "Lato";
     const padding = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
 
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
+
+    // Check if this is PDF-extracted text with width bounds
+    const hasPdfBounds = (item.widthNorm != null) && (item.heightNorm != null);
+    const hasPdfBaseline = item.yNormBaseline != null;
+    const textContent = item.text || "";
+
+    // For PDF-extracted text: scale font to fit within PDF's bounding box
+    // This prevents text overlap when browser font has different metrics than PDF font
+    // MUST match canvas rendering logic exactly
+    if (hasPdfBounds && textContent) {
+      const targetWidth = Number(item.widthNorm) * pdfWidth;
+
+      // Measure text with original font size
+      ctx.font = `${fontSize}px ${fontFamily}`;
+      const m = ctx.measureText(textContent);
+      const measuredWidth = m.width;
+
+      // If text is wider than target, scale down font size
+      // Add small tolerance (2%) to avoid overly aggressive scaling
+      if (measuredWidth > targetWidth * 1.02 && targetWidth > 0) {
+        const scaleFactor = targetWidth / measuredWidth;
+        // Don't scale below 50% of original size to maintain readability
+        const minScale = 0.5;
+        const adjustedScale = Math.max(scaleFactor, minScale);
+        fontSize = fontSize * adjustedScale;
+      }
+    }
+
+    // Set final font for all measurements
     ctx.font = `${fontSize}px ${fontFamily}`;
 
     // Check if text needs to be wrapped using item.maxWidth (same as canvas)
+    // PDF-extracted text should NOT be wrapped (it has precise positioning)
     const maxWidth = item.maxWidth;
-    const lines = maxWidth && maxWidth > 0 ? wrapTextIntoLines(item.text || "", maxWidth) : [item.text || ""];
+    const lines = (hasPdfBounds || hasPdfBaseline || !maxWidth || maxWidth <= 0)
+      ? [textContent]
+      : wrapTextIntoLines(textContent, maxWidth);
 
     // Calculate line height (1.2x font size for comfortable reading - same as canvas)
     const lineHeight = fontSize * 1.2;
@@ -97,8 +131,8 @@ export async function saveAllPagesAsPDF({
     // Measure the first line for baseline metrics
     const firstLineText = lines[0] || "";
     const m = ctx.measureText(firstLineText);
-    const ascent = m.actualBoundingBoxAscent;
-    const descent = m.actualBoundingBoxDescent;
+    const ascent = m.actualBoundingBoxAscent || fontSize * 0.8;
+    const descent = m.actualBoundingBoxDescent || fontSize * 0.2;
     const singleLineHeight = ascent + descent;
 
     // Total height for all lines (same as canvas)
@@ -133,22 +167,37 @@ export async function saveAllPagesAsPDF({
     // Actual visual x position (accounts for left-extending glyphs like "j")
     const x = xOrigin - bboxLeft;
 
+    // Calculate baseline Y position
+    // If PDF provides exact baseline position, use it directly (most accurate)
+    let baselineY: number | null = null;
     let topY: number;
-    if (hasNorm) {
+
+    if (hasPdfBaseline) {
+      // PDF-extracted text: use exact baseline position from PDF
+      baselineY = Number(item.yNormBaseline) * pdfHeight;
+      // Calculate topY from baseline for bounding box
+      topY = baselineY - ascent;
+    } else if (hasNorm) {
       topY = Number(item.yNormTop) * pdfHeight;
     } else {
       // Legacy: item.y may be baseline; convert to top if needed
       const anchor = item.anchor || "baseline"; // "top" | "baseline" | "bottom"
       const rawY = Number(item.y) || 0;
-      if (anchor === "baseline") topY = rawY - ascent;
-      else if (anchor === "bottom") topY = rawY - totalTextHeight;
-      else topY = rawY; // already top
+      if (anchor === "baseline") {
+        baselineY = rawY;
+        topY = rawY - ascent;
+      } else if (anchor === "bottom") {
+        topY = rawY - totalTextHeight;
+      } else {
+        topY = rawY; // already top
+      }
     }
 
     return {
       x,
       xOrigin,   // Original x position (where text is drawn from)
       topY,
+      baselineY, // Exact baseline Y position (null if not available)
       fontSize,
       fontFamily,
       padding,
@@ -160,20 +209,102 @@ export async function saveAllPagesAsPDF({
       lines,
       lineHeight,
       isMultiLine: lines.length > 1,
+      // PDF precision flag
+      hasPdfBaseline,
     };
   };
 
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit?.(fontkit);
 
-  // Embed EXACT font (public assets are served from "/", not "/public")
-  let pdfFont;
-  try {
-    const fontBytes = await loadArrayBuffer("/fonts/Lato-Regular.ttf");
-    pdfFont = await pdfDoc.embedFont(fontBytes, { subset: true });
-  } catch {
-    pdfFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  }
+  // Font cache for multiple fonts - keyed by the actual PDF font to avoid duplicates
+  const fontCache: Map<string, any> = new Map();
+
+  // Map frontend fonts to PDF standard fonts
+  // Each font maps to a distinct PDF font when possible
+  const fontMapping: Record<string, { font: string; style?: 'bold' | 'italic' | 'boldItalic' }> = {
+    // Custom embedded fonts
+    'Lato': { font: 'Lato' },
+
+    // Sans-serif fonts → Helvetica family
+    'Arial': { font: 'Helvetica' },
+    'Helvetica': { font: 'Helvetica' },
+    'Verdana': { font: 'Helvetica', style: 'bold' },     // Use bold to differentiate
+    'Trebuchet MS': { font: 'Helvetica', style: 'italic' }, // Use italic to differentiate
+
+    // Serif fonts → Times family
+    'Times New Roman': { font: 'TimesRoman' },
+    'Georgia': { font: 'TimesRoman', style: 'bold' },    // Use bold to differentiate
+    'Palatino': { font: 'TimesRoman', style: 'italic' }, // Use italic to differentiate
+
+    // Monospace fonts → Courier family
+    'Courier New': { font: 'Courier' },
+
+    // Decorative fonts - best effort mapping
+    'Comic Sans MS': { font: 'Helvetica', style: 'italic' },
+    'Impact': { font: 'Helvetica', style: 'bold' },
+  };
+
+  // Standard font enum mapping
+  const standardFontMap: Record<string, any> = {
+    'Helvetica': StandardFonts.Helvetica,
+    'Helvetica-bold': StandardFonts.HelveticaBold,
+    'Helvetica-italic': StandardFonts.HelveticaOblique,
+    'Helvetica-boldItalic': StandardFonts.HelveticaBoldOblique,
+    'TimesRoman': StandardFonts.TimesRoman,
+    'TimesRoman-bold': StandardFonts.TimesRomanBold,
+    'TimesRoman-italic': StandardFonts.TimesRomanItalic,
+    'TimesRoman-boldItalic': StandardFonts.TimesRomanBoldItalic,
+    'Courier': StandardFonts.Courier,
+    'Courier-bold': StandardFonts.CourierBold,
+    'Courier-italic': StandardFonts.CourierOblique,
+    'Courier-boldItalic': StandardFonts.CourierBoldOblique,
+  };
+
+  // Get or create a PDF font for the given font family
+  const getPdfFont = async (fontFamily: string) => {
+    // Normalize font family (take first font if it's a font stack)
+    const primaryFont = fontFamily.split(',')[0].trim().replace(/['"]/g, '');
+
+    // Get mapping for this font
+    const mapping = fontMapping[primaryFont] || { font: 'Helvetica' };
+    const cacheKey = mapping.style ? `${mapping.font}-${mapping.style}` : mapping.font;
+
+    // Check cache first
+    if (fontCache.has(cacheKey)) {
+      return fontCache.get(cacheKey);
+    }
+
+    let font;
+
+    if (mapping.font === 'Lato') {
+      // Embed Lato font
+      try {
+        const fontBytes = await loadArrayBuffer("/fonts/Lato-Regular.ttf");
+        font = await pdfDoc.embedFont(fontBytes, { subset: true });
+      } catch {
+        font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      }
+    } else {
+      // Use PDF standard font with style variation
+      const standardFontKey = cacheKey;
+      const standardFont = standardFontMap[standardFontKey];
+
+      if (standardFont) {
+        font = await pdfDoc.embedFont(standardFont);
+      } else {
+        // Fallback to base font without style
+        const baseFontKey = mapping.font;
+        font = await pdfDoc.embedFont(standardFontMap[baseFontKey] || StandardFonts.Helvetica);
+      }
+    }
+
+    fontCache.set(cacheKey, font);
+    return font;
+  };
+
+  // Pre-load default Lato font
+  const defaultFont = await getPdfFont('Lato');
 
   const manifest = {
     pageSize: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
@@ -203,15 +334,34 @@ export async function saveAllPagesAsPDF({
     // **Clip to the page rectangle** so overflow matches canvas behavior
     clipToPage(pdfPage, W, H);
 
+    // Get annotations for this page
+    const annotations = annotationItemsOverride
+      ? annotationItemsOverride.filter((item: any) => item.index === i)
+      : (Array.isArray(page.annotations) ? page.annotations : []);
+
     // ---- Z-INDEX SORTING: Combine all drawable items and sort by z-index ----
     // This ensures items are drawn in the correct order (lower z-index first = background)
     type DrawableItem = {
-      type: 'text' | 'image' | 'shape';
+      type: 'text' | 'image' | 'shape' | 'annotation';
       item: any;
       zIndex: number;
     };
 
     const drawableItems: DrawableItem[] = [];
+
+    // Add annotation items with z-index
+    // Highlights go behind text, strikethrough/underline go in front
+    for (const item of annotations) {
+      let defaultZIndex = -50; // Default: behind everything (for highlights)
+      if (item.type === 'strikethrough' || item.type === 'underline') {
+        defaultZIndex = 20; // In front of text (text is 10)
+      }
+      drawableItems.push({
+        type: 'annotation',
+        item,
+        zIndex: item.zIndex ?? defaultZIndex,
+      });
+    }
 
     // Add text items with z-index
     for (const item of textItems) {
@@ -252,8 +402,12 @@ export async function saveAllPagesAsPDF({
         const text = String(item.text ?? "");
         if (!text) continue;
 
-        const size = Number(item.fontSize) || 16;
+        // Use scaled font size from layout (may be smaller for PDF text to fit bounds)
+        const size = L.fontSize;
         const { xTop, yTop, xNorm, yNormTop } = resolveTopLeft(item, W, H);
+
+        // Get the appropriate PDF font for this item's font family
+        const itemFont = await getPdfFont(item.fontFamily || 'Lato');
 
         // Draw each line separately (handles word wrapping same as canvas)
         if (L.lines && L.lines.length > 0) {
@@ -261,33 +415,46 @@ export async function saveAllPagesAsPDF({
             const line = L.lines[lineIndex];
             if (!line) continue;
 
-            // Calculate Y position for this line (same as canvas: topY + ascent + lineIndex * lineHeight)
+            // Calculate Y position for this line
+            // Use exact baseline position from PDF if available, otherwise calculate from topY
             // In PDF coordinates, Y is bottom-up, so we need to convert
-            const canvasLineY = yTop + L.ascent + (lineIndex * L.lineHeight);
+            let canvasLineY: number;
+            if (L.baselineY != null && lineIndex === 0) {
+              // PDF text: use exact baseline position for first line
+              canvasLineY = L.baselineY;
+            } else if (L.baselineY != null) {
+              // PDF text: subsequent lines offset from baseline
+              canvasLineY = L.baselineY + (lineIndex * L.lineHeight);
+            } else {
+              // User-created text: calculate from topY
+              canvasLineY = yTop + L.ascent + (lineIndex * L.lineHeight);
+            }
             const pdfLineY = H - canvasLineY;
 
             pdfPage.drawText(line, {
               x: xTop,
               y: pdfLineY,
               size,
-              font: pdfFont,
+              font: itemFont,
               color: hexToRgb(item.color),
             });
           }
         } else {
           // Fallback for items without wrapping
-          const baseline = H - yTop - L.textHeight;
+          // Use baselineY if available, otherwise calculate from topY
+          const canvasBaseline = L.baselineY != null ? L.baselineY : (yTop + L.ascent);
+          const pdfBaseline = H - canvasBaseline;
           pdfPage.drawText(text, {
             x: xTop,
-            y: baseline,
+            y: pdfBaseline,
             size,
-            font: pdfFont,
+            font: itemFont,
             color: hexToRgb(item.color),
           });
         }
 
         // Store actual measured text dimensions for accurate annotation positioning
-        const textEntry = {
+        const textEntry: any = {
           text,
           xNorm: +xNorm.toFixed(6),
           yNormTop: +yNormTop.toFixed(6),
@@ -296,6 +463,7 @@ export async function saveAllPagesAsPDF({
           ascentRatio: +(L.ascent / L.textHeight).toFixed(4),
           descentRatio: +(L.descent / L.textHeight).toFixed(4),
           fontSize: size,
+          fontFamily: item.fontFamily || 'Lato',  // Preserve font family for re-import
           anchor: "top",
           index: item.index,
           color: item.color,
@@ -306,6 +474,10 @@ export async function saveAllPagesAsPDF({
           ...(item.name && { name: item.name }),
           ...(item.id && { id: item.id }),
         };
+        // Preserve baseline position if available (for precise re-import)
+        if (item.yNormBaseline != null) {
+          textEntry.yNormBaseline = +Number(item.yNormBaseline).toFixed(6);
+        }
         pageManifest.texts.push(textEntry);
 
         pageManifest.textSpans.push({
@@ -315,6 +487,7 @@ export async function saveAllPagesAsPDF({
           widthNorm: +(L.textWidth / W).toFixed(6),
           heightNorm: +(L.textHeight / H).toFixed(6),
           fontSize: size,
+          fontFamily: item.fontFamily || 'Lato',
           index: i,
           ascentRatio: +(L.ascent / L.textHeight).toFixed(4),
           descentRatio: +(L.descent / L.textHeight).toFixed(4),
@@ -521,209 +694,185 @@ export async function saveAllPagesAsPDF({
           // Freehand points
           ...(item.type === "freehand" && item.points && { points: item.points }),
         });
-      }
-    }
+      } else if (drawable.type === 'annotation') {
+        const annotation = drawable.item;
+        // ---- ANNOTATION DRAWING ----
+        // Typographic constants - MUST match drawAnnotations.js exactly
+        const TYPO_ANNOT = {
+          HIGHLIGHT_HORIZONTAL_PAD: 0,
+          UNDERLINE_POSITION: 0.98,
+          UNDERLINE_THICKNESS_RATIO: 0.06,
+          STRIKETHROUGH_POSITION: 0.50,
+          STRIKETHROUGH_THICKNESS_RATIO: 0.06,
+        };
 
-    // ---- ANNOTATIONS (highlight, strikethrough, underline) ----
-    // Typographic constants - MUST match drawAnnotations.js exactly
-    const TYPO_ANNOT = {
-      // Highlight: covers the full text bounding box exactly (no padding)
-      HIGHLIGHT_HORIZONTAL_PAD: 0, // No horizontal padding - exact bounding box
+        /**
+         * Calculate visual metrics for a span - MUST match getSpanVisualMetrics in drawAnnotations.js
+         */
+        const getSpanVisualMetricsForPdf = (span: any, xNorm: number, yNormTop: number) => {
+          const fontFamily = "Lato";
+          const spanText = span.text || "";
+          let fontSize = span.fontSize || 16;
 
-      // Underline: positioned at the very bottom of the bounding box
-      UNDERLINE_POSITION: 0.98, // 98% from top (near bottom of bounding box)
-      UNDERLINE_THICKNESS_RATIO: 0.06, // Line thickness as ratio of height
+          const hasPdfBounds = span.widthNorm != null && span.heightNorm != null;
+          const hasPdfBaseline = span.yNormBaseline != null;
 
-      // Strikethrough: positioned at exact vertical center of bounding box
-      STRIKETHROUGH_POSITION: 0.50, // Exactly 50% from top (visual center)
-      STRIKETHROUGH_THICKNESS_RATIO: 0.06, // Line thickness as ratio of height
-    };
+          ctx.save();
+          ctx.textAlign = "left";
+          ctx.textBaseline = "alphabetic";
 
-    /**
-     * Calculate visual metrics for a span - MUST match getSpanVisualMetrics in drawAnnotations.js
-     * This ensures PDF annotations are positioned exactly like canvas annotations
-     */
-    const getSpanVisualMetricsForPdf = (spanText: string, fontSize: number, xNorm: number, yNormTop: number) => {
-      const fontFamily = "Lato";
+          if (hasPdfBounds && spanText) {
+            const targetWidth = span.widthNorm * W;
+            ctx.font = `${fontSize}px ${fontFamily}`;
+            const measuredWidth = ctx.measureText(spanText).width;
+            if (measuredWidth > targetWidth * 1.02 && targetWidth > 0) {
+              const scaleFactor = targetWidth / measuredWidth;
+              const minScale = 0.5;
+              const adjustedScale = Math.max(scaleFactor, minScale);
+              fontSize = fontSize * adjustedScale;
+            }
+          }
 
-      // Set font to measure text accurately
-      ctx.save();
-      ctx.font = `${fontSize}px ${fontFamily}`;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "alphabetic";
+          ctx.font = `${fontSize}px ${fontFamily}`;
+          const m = ctx.measureText(spanText);
 
-      const m = ctx.measureText(spanText);
+          const bboxLeft = m.actualBoundingBoxLeft || 0;
+          const bboxRight = m.actualBoundingBoxRight || m.width;
+          const ascent = m.actualBoundingBoxAscent || fontSize * 0.8;
+          const descent = m.actualBoundingBoxDescent || fontSize * 0.2;
 
-      // Get actual bounding box metrics - SAME as drawAnnotations.js
-      const bboxLeft = m.actualBoundingBoxLeft || 0;
-      const bboxRight = m.actualBoundingBoxRight || m.width;
-      const ascent = m.actualBoundingBoxAscent || fontSize * 0.8;
-      const descent = m.actualBoundingBoxDescent || fontSize * 0.2;
+          const visualWidth = bboxLeft + bboxRight;
+          const visualHeight = ascent + descent;
 
-      // Calculate visual width and height (actual rendered dimensions) - SAME as canvas
-      const visualWidth = bboxLeft + bboxRight;
-      const visualHeight = ascent + descent;
+          ctx.restore();
 
-      ctx.restore();
+          const xOrigin = xNorm * W;
+          const visualX = xOrigin - bboxLeft;
 
-      // xOrigin is where fillText would be called (from normalized coords)
-      const xOrigin = xNorm * W;
-      // Visual left edge accounts for glyphs extending left of origin
-      const visualX = xOrigin - bboxLeft;
+          let y;
+          if (hasPdfBaseline) {
+            const baselineY = span.yNormBaseline * H;
+            y = baselineY - ascent;
+          } else if (yNormTop != null) {
+            y = yNormTop * H;
+          } else {
+            y = 0;
+          }
 
-      // Y position from stored normalized value - matches canvas calculation
-      const y = yNormTop * H;
+          return { x: visualX, y: y, width: visualWidth, height: visualHeight, bboxLeft: bboxLeft };
+        };
 
-      return {
-        x: visualX,           // Visual left edge (matches text bounding box on canvas)
-        y: y,                 // Top Y position
-        width: visualWidth,   // Visual width (bboxLeft + bboxRight)
-        height: visualHeight, // Visual height (ascent + descent) - measured like canvas
-        bboxLeft: bboxLeft,   // How far left of origin glyphs extend
-      };
-    };
+        if (!annotation.spans || annotation.spans.length === 0) continue;
 
-    // Use override annotations if provided (ensures fresh data), otherwise fall back to pageList
-    const annotations = annotationItemsOverride
-      ? annotationItemsOverride.filter((item: any) => item.index === i)
-      : (Array.isArray(page.annotations) ? page.annotations : []);
+        const annotationColor = hexToRgb(annotation.color || "#FFFF00");
+        const opacity = annotation.opacity ?? 0.4;
 
-    for (const annotation of annotations) {
-      if (!annotation.spans || annotation.spans.length === 0) continue;
-
-      const annotationColor = hexToRgb(annotation.color || "#FFFF00");
-      const opacity = annotation.opacity ?? 0.4;
-
-      // Find linked textItem if annotation is linked
-      let linkedTextItem: any = null;
-      if (annotation.linkedTextItemId) {
-        linkedTextItem = textItems.find((t: any) => t.id === annotation.linkedTextItemId);
-      }
-
-      for (const span of annotation.spans) {
-        // Calculate position - if linked to textItem, use textItem position + relative offset
-        let xNorm = span.xNorm ?? 0;
-        let yNormTop = span.yNormTop ?? 0;
-
-        if (linkedTextItem && span.relativeXNorm !== undefined && span.relativeYNorm !== undefined) {
-          // Annotation is linked - calculate position from linked textItem
-          xNorm = linkedTextItem.xNorm + span.relativeXNorm;
-          yNormTop = linkedTextItem.yNormTop + span.relativeYNorm;
+        let linkedTextItem: any = null;
+        if (annotation.linkedTextItemId) {
+          linkedTextItem = textItems.find((t: any) => t.id === annotation.linkedTextItemId);
         }
 
-        // Get text and fontSize for measurement
-        const spanText = span.text || "";
-        const fontSize = span.fontSize || 16;
+        for (const span of annotation.spans) {
+          let xNorm = span.xNorm ?? 0;
+          let yNormTop = span.yNormTop ?? 0;
 
-        // Calculate visual metrics using canvas measurement - SAME as drawAnnotations.js
-        // This ensures the PDF annotation matches the canvas bounding box exactly
-        const metrics = getSpanVisualMetricsForPdf(spanText, fontSize, xNorm, yNormTop);
+          const adjustedSpan = { ...span };
 
-        // Use measured values - exactly like canvas does in drawAnnotations.js
-        // IMPORTANT: Use exact dimensions without any padding to match canvas 1:1
-        const pdfX = metrics.x;       // Visual left edge (adjusted by bboxLeft)
-        const pdfW = metrics.width;   // Visual width (bboxLeft + bboxRight)
-        const pdfH = metrics.height;  // Exact visual height (ascent + descent) - no padding
-        const pdfY = metrics.y;       // Exact top Y position - no offset
+          if (linkedTextItem && span.relativeXNorm !== undefined && span.relativeYNorm !== undefined) {
+            xNorm = linkedTextItem.xNorm + span.relativeXNorm;
+            yNormTop = linkedTextItem.yNormTop + span.relativeYNorm;
+            if (linkedTextItem.yNormBaseline != null) {
+              adjustedSpan.yNormBaseline = linkedTextItem.yNormBaseline;
+            }
+          }
 
-        // Skip if dimensions are invalid
-        if (pdfW <= 0 || pdfH <= 0) continue;
+          const metrics = getSpanVisualMetricsForPdf(adjustedSpan, xNorm, yNormTop);
 
-        if (annotation.type === "highlight") {
-          // Highlight: covers the full text bounding box with minimal horizontal padding
-          // Matches canvas rendering exactly
-          const hlX = pdfX - TYPO_ANNOT.HIGHLIGHT_HORIZONTAL_PAD;
-          const hlY = pdfY;
-          const hlW = pdfW + (TYPO_ANNOT.HIGHLIGHT_HORIZONTAL_PAD * 2);
-          const hlH = pdfH;
+          const pdfX = metrics.x;
+          const pdfW = metrics.width;
+          const pdfH = metrics.height;
+          const pdfY = metrics.y;
 
-          // PDF Y is bottom-up: convert from canvas top-down coords
-          const pdfHlY = H - hlY - hlH;
+          if (pdfW <= 0 || pdfH <= 0) continue;
 
-          pdfPage.drawRectangle({
-            x: hlX,
-            y: pdfHlY,
-            width: hlW,
-            height: hlH,
-            color: annotationColor,
-            opacity: opacity,
-          });
-        } else if (annotation.type === "strikethrough") {
-          // Strikethrough: positioned at exact vertical center (50%) of bounding box
-          // Matches canvas rendering exactly
-          const strikeCanvasY = pdfY + (pdfH * TYPO_ANNOT.STRIKETHROUGH_POSITION);
-          const pdfStrikeY = H - strikeCanvasY;
-          const lineThickness = Math.max(1, pdfH * TYPO_ANNOT.STRIKETHROUGH_THICKNESS_RATIO);
+          if (annotation.type === "highlight") {
+            const hlX = pdfX - TYPO_ANNOT.HIGHLIGHT_HORIZONTAL_PAD;
+            const hlY = pdfY;
+            const hlW = pdfW + (TYPO_ANNOT.HIGHLIGHT_HORIZONTAL_PAD * 2);
+            const hlH = pdfH;
 
-          pdfPage.drawLine({
-            start: { x: pdfX, y: pdfStrikeY },
-            end: { x: pdfX + pdfW, y: pdfStrikeY },
-            color: annotationColor,
-            thickness: lineThickness,
-            opacity: opacity,
-          });
-        } else if (annotation.type === "underline") {
-          // Underline: positioned at 98% from top (bottom of bounding box)
-          // Matches canvas rendering exactly
-          const underlineCanvasY = pdfY + (pdfH * TYPO_ANNOT.UNDERLINE_POSITION);
-          const pdfUnderlineY = H - underlineCanvasY;
-          const lineThickness = Math.max(1, pdfH * TYPO_ANNOT.UNDERLINE_THICKNESS_RATIO);
+            const pdfHlY = H - hlY - hlH;
 
-          pdfPage.drawLine({
-            start: { x: pdfX, y: pdfUnderlineY },
-            end: { x: pdfX + pdfW, y: pdfUnderlineY },
-            color: annotationColor,
-            thickness: lineThickness,
-            opacity: opacity,
-          });
+            pdfPage.drawRectangle({
+              x: hlX,
+              y: pdfHlY,
+              width: hlW,
+              height: hlH,
+              color: annotationColor,
+              opacity: opacity,
+            });
+          } else if (annotation.type === "strikethrough") {
+            const strikeY = pdfY + (pdfH * TYPO_ANNOT.STRIKETHROUGH_POSITION);
+            const lineWidth = Math.max(1, pdfH * TYPO_ANNOT.STRIKETHROUGH_THICKNESS_RATIO);
+
+            pdfPage.drawLine({
+              start: { x: pdfX, y: H - strikeY },
+              end: { x: pdfX + pdfW, y: H - strikeY },
+              color: annotationColor,
+              thickness: lineWidth,
+              opacity: opacity,
+            });
+          } else if (annotation.type === "underline") {
+            const underlineY = pdfY + (pdfH * TYPO_ANNOT.UNDERLINE_POSITION);
+            const lineWidth = Math.max(1, pdfH * TYPO_ANNOT.UNDERLINE_THICKNESS_RATIO);
+
+            pdfPage.drawLine({
+              start: { x: pdfX, y: H - underlineY },
+              end: { x: pdfX + pdfW, y: H - underlineY },
+              color: annotationColor,
+              thickness: lineWidth,
+              opacity: opacity,
+            });
+          }
         }
-      }
 
-      // Add to manifest - store visual metrics for accurate re-import
-      // Build annotation manifest entry
-      const annotationEntry: any = {
-        id: annotation.id,
-        type: annotation.type,
-        spans: annotation.spans.map((s: any) => {
-          // Calculate actual position for linked annotations
-          let finalXNorm = s.xNorm ?? 0;
-          let finalYNormTop = s.yNormTop ?? 0;
-          if (linkedTextItem && s.relativeXNorm !== undefined && s.relativeYNorm !== undefined) {
-            finalXNorm = linkedTextItem.xNorm + s.relativeXNorm;
-            finalYNormTop = linkedTextItem.yNormTop + s.relativeYNorm;
-          }
-          const spanEntry: any = {
-            xNorm: +finalXNorm.toFixed(6),
-            yNormTop: +finalYNormTop.toFixed(6),
-            widthNorm: +(s.widthNorm ?? 0).toFixed(6),
-            heightNorm: +(s.heightNorm ?? 0).toFixed(6),
-            text: s.text || "",
-            fontSize: s.fontSize || 16,
-          };
-          // Preserve relative offsets for linked annotations
-          if (s.relativeXNorm !== undefined) {
-            spanEntry.relativeXNorm = +s.relativeXNorm.toFixed(6);
-          }
-          if (s.relativeYNorm !== undefined) {
-            spanEntry.relativeYNorm = +s.relativeYNorm.toFixed(6);
-          }
-          return spanEntry;
-        }),
-        color: annotation.color || "#FFFF00",
-        opacity: opacity,
-        index: i,
-        annotatedText: annotation.annotatedText,
-        zIndex: annotation.zIndex ?? -50,
-        // Layer properties
-        visible: annotation.visible ?? true,
-        locked: annotation.locked ?? false,
-        ...(annotation.name && { name: annotation.name }),
-      };
-      // Preserve linked text item ID for re-linking on import
-      if (annotation.linkedTextItemId) {
-        annotationEntry.linkedTextItemId = annotation.linkedTextItemId;
+        // Build annotation manifest entry
+        const annotationEntry: any = {
+          id: annotation.id,
+          type: annotation.type,
+          spans: annotation.spans.map((s: any) => {
+            let actualXNorm = s.xNorm;
+            let actualYNormTop = s.yNormTop;
+            if (linkedTextItem && s.relativeXNorm !== undefined && s.relativeYNorm !== undefined) {
+              actualXNorm = linkedTextItem.xNorm + s.relativeXNorm;
+              actualYNormTop = linkedTextItem.yNormTop + s.relativeYNorm;
+            }
+            return {
+              text: s.text || "",
+              xNorm: actualXNorm,
+              yNormTop: actualYNormTop,
+              widthNorm: s.widthNorm,
+              heightNorm: s.heightNorm,
+              fontSize: s.fontSize || 16,
+              ...(s.relativeXNorm !== undefined && { relativeXNorm: s.relativeXNorm }),
+              ...(s.relativeYNorm !== undefined && { relativeYNorm: s.relativeYNorm }),
+              ...(s.yNormBaseline !== undefined && { yNormBaseline: s.yNormBaseline }),
+            };
+          }),
+          color: annotation.color || "#FFFF00",
+          opacity: opacity,
+          annotatedText: annotation.annotatedText,
+          zIndex: annotation.zIndex ?? -50,
+          index: annotation.index,
+          visible: annotation.visible ?? true,
+          locked: annotation.locked ?? false,
+          ...(annotation.name && { name: annotation.name }),
+        };
+        if (annotation.linkedTextItemId) {
+          annotationEntry.linkedTextItemId = annotation.linkedTextItemId;
+        }
+        pageManifest.annotations.push(annotationEntry);
       }
-      pageManifest.annotations.push(annotationEntry);
     }
 
     // End clipping for this page
@@ -899,7 +1048,7 @@ export async function saveAllPagesAsPDF({
 
     // Update field appearances with the embedded font
     try {
-      form.updateFieldAppearances(pdfFont);
+      form.updateFieldAppearances(defaultFont);
     } catch (e) {
       console.warn("Failed to update form field appearances:", e);
     }

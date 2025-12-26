@@ -75,6 +75,11 @@ export function textItemsToSpans(
       index: item.index,
     };
 
+    // Include yNormBaseline if available (for accurate positioning)
+    if ((item as any).yNormBaseline !== undefined) {
+      (span as any).yNormBaseline = (item as any).yNormBaseline;
+    }
+
     // Include font metrics if available
     if (ascentRatio !== undefined) {
       span.ascentRatio = ascentRatio;

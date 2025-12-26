@@ -60,18 +60,37 @@ function hexToRgba(hex, alpha) {
 /**
  * Calculate visual text metrics for a span
  * This matches how text items calculate their visual bounding box
+ * MUST match resolveTextLayoutForHit logic for consistent positioning
  */
 function getSpanVisualMetrics(ctx, span, rect) {
-  const fontSize = span.fontSize || 16;
+  let fontSize = span.fontSize || 16;
   const fontFamily = "Lato"; // Default font used for rendering
+  const text = span.text || "";
+
+  // Check if this is PDF-extracted text with bounds/baseline
+  const hasPdfBounds = span.widthNorm != null && span.heightNorm != null;
+  const hasPdfBaseline = span.yNormBaseline != null;
 
   // Set font to measure text accurately
   ctx.save();
-  ctx.font = `${fontSize}px ${fontFamily}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
 
-  const text = span.text || "";
+  // For PDF-extracted text: scale font to fit within PDF's bounding box
+  // MUST match resolveTextLayout exactly for consistent positioning
+  if (hasPdfBounds && text) {
+    const targetWidth = span.widthNorm * rect.width;
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    const measuredWidth = ctx.measureText(text).width;
+    if (measuredWidth > targetWidth * 1.02 && targetWidth > 0) {
+      const scaleFactor = targetWidth / measuredWidth;
+      const minScale = 0.5;
+      const adjustedScale = Math.max(scaleFactor, minScale);
+      fontSize = fontSize * adjustedScale;
+    }
+  }
+
+  ctx.font = `${fontSize}px ${fontFamily}`;
   const m = ctx.measureText(text);
 
   // Get actual bounding box metrics
@@ -91,7 +110,19 @@ function getSpanVisualMetrics(ctx, span, rect) {
   // Visual left edge accounts for glyphs extending left of origin
   const visualX = xOrigin - bboxLeft;
 
-  const y = span.yNormTop * rect.height;
+  // Calculate y position - MUST match resolveTextLayoutForHit exactly
+  // If PDF provides exact baseline position, use it to calculate topY
+  let y;
+  if (hasPdfBaseline) {
+    // PDF-extracted text: calculate topY from baseline position
+    const baselineY = span.yNormBaseline * rect.height;
+    y = baselineY - ascent;
+  } else if (span.yNormTop != null) {
+    // User-created text or span with normalized coords
+    y = span.yNormTop * rect.height;
+  } else {
+    y = 0;
+  }
 
   return {
     x: visualX,           // Visual left edge (matches text bounding box)

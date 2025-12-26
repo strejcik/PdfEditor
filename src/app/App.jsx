@@ -47,8 +47,11 @@ const App = () => {
   const cellSize = CELL_SIZE;
   const boxPadding = BOX_PADDING;
   const APP_FONT_FAMILY = "Lato";
-  const canvasWidth = CANVAS_WIDTH;
-  const canvasHeight = CANVAS_HEIGHT;
+
+  // Canvas dimensions - stateful to allow resizing based on PDF dimensions
+  const [canvasWidth, setCanvasWidth] = useState(CANVAS_WIDTH);
+  const [canvasHeight, setCanvasHeight] = useState(CANVAS_HEIGHT);
+
   const pdfWidth = PDF_WIDTH;
   const pdfHeight = PDF_HEIGHT;
   const fontsReadyRef = useRef(null);
@@ -616,6 +619,17 @@ useEffect(() => {
   const id = setInterval(() => setMlCaretBlink(v => !v), 1000);
   return () => clearInterval(id);
 }, [isMultilineMode]);
+
+// Redraw canvas when dimensions change (e.g., after PDF upload with different page size)
+useEffect(() => {
+  // Small delay to ensure canvas element has updated its size
+  const timeoutId = setTimeout(() => {
+    if (canvasRefs.current[activePage]) {
+      drawCanvas(activePage);
+    }
+  }, 50);
+  return () => clearTimeout(timeoutId);
+}, [canvasWidth, canvasHeight, activePage]);
 
 const toUnits = (str) => Array.from(str ?? "");
 
@@ -1999,6 +2013,7 @@ return (
                   saveImageItemsToIndexedDB, drawCanvas, setPdfTextSpans, setAnnotationItems,
                   saveAnnotationsToIndexedDB, setShapeItems, setFormFields,
                   CANVAS_WIDTH: canvasWidth, CANVAS_HEIGHT: canvasHeight,
+                  setCanvasWidth, setCanvasHeight,
                 })}
                 disabled={isViewer}
               >
@@ -3475,6 +3490,9 @@ return (
                     setResizingImageIndex?.(null);
                     setTextBox?.(null);
                     setIsTextSelected(false);
+                    // Reset canvas size to default
+                    setCanvasWidth(CANVAS_WIDTH);
+                    setCanvasHeight(CANVAS_HEIGHT);
                     drawCanvas(0);
                   }
                 }}
@@ -3508,8 +3526,8 @@ return (
             data-page-index={activePage}
             style={{
               display: "block",
-              width: CANVAS_WIDTH,
-              height: CANVAS_HEIGHT,
+              width: canvasWidth,
+              height: canvasHeight,
               backgroundColor: "white",
               border: "1px solid #3b82f6",
               userSelect: "none",

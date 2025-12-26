@@ -1119,19 +1119,19 @@ if (isResizing && textBox) {
             if (item && item.index === activePage) {
               const newX = pos.xTop + dx;
               const newY = pos.yTop + dy;
-    
+
               item.x = newX;
               item.y = newY;
               item.anchor = "top";
-    
+
               item.xNorm    = rect.width  ? (newX / rect.width)  : 0; // NO clamp
               item.yNormTop = rect.height ? (newY / rect.height) : 0; // NO clamp
             }
           });
-    
+
           setTextItems(updated);
-          updatePageItems('textItems', updated.filter(i => i.index === activePage));
-          saveTextItemsToIndexedDB(updated);
+          // Skip updatePageItems and saveTextItemsToIndexedDB during drag for performance
+          // These will be called on mouseUp
           drawCanvas(activePage);
           return;
         }
@@ -1270,8 +1270,8 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
   item.yNormTop = rect.height ? (newY / rect.height) : 0; // NO clamp
 
   setTextItems(updated);
-  updatePageItems('textItems', updated.filter(i => i.index === activePage));
-  saveTextItemsToIndexedDB(updated);
+  // Skip updatePageItems and saveTextItemsToIndexedDB during drag for performance
+  // These will be called on mouseUp
   drawCanvas(activePage);
   return;
 }
@@ -1290,10 +1290,10 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
             it.yNormTop = rect.height ? (newY / rect.height) : 0; // NO clamp
           }
         });
-    
+
         setTextItems(updated);
-        updatePageItems('textItems', updated.filter(t => t.index === activePage));
-        saveTextItemsToIndexedDB(updated);
+        // Skip updatePageItems and saveTextItemsToIndexedDB during drag for performance
+        // These will be called on mouseUp
         drawCanvas(activePage);
       }
     };
@@ -1382,6 +1382,10 @@ if (selectedTextIndexes.length === 1 && initialPositions.length === 1) {
   const wasDragging = isDragging || isDraggingMixedItems;
 
   if (isDragging) {
+    // Save text items to IndexedDB and sync to pages (skipped during drag for performance)
+    updatePageItems('textItems', textItems.filter((t:any) => t.index === activePage));
+    saveTextItemsToIndexedDB(textItems);
+
     setIsDragging(false);
     setInitialPositions([]);
     setDragStart({ x: 0, y: 0 });
@@ -1947,8 +1951,6 @@ lines = lines
     text: line.text
   }));
 
-  console.log(lines);
-
   // Snapshot BEFORE state change for undo
   pushSnapshotToUndo(activePage);
 
@@ -2089,7 +2091,44 @@ const handleDoubleClick = (e: MouseEvent, opts: any) => {
     setEditingText(item.text);
     setEditingFontSize(fontSize);
     setEditingColor(item.color || "black");
-    setEditingFont(item.fontFamily || "Lato");
+
+    // Normalize font family to match selector options
+    // Backend returns CSS font-family like "Times New Roman, serif"
+    // but the selector expects just "Times New Roman"
+    const normalizeEditingFont = (fontFamily: string | undefined): string => {
+      if (!fontFamily) return "Lato";
+
+      // Known font selector options (must match FontSelector.jsx)
+      const knownFonts = [
+        "Lato", "Arial", "Times New Roman", "Georgia", "Verdana",
+        "Courier New", "Comic Sans MS", "Impact", "Trebuchet MS", "Palatino"
+      ];
+
+      // Check if any known font is contained in the fontFamily string
+      const fontLower = fontFamily.toLowerCase();
+      for (const font of knownFonts) {
+        if (fontLower.includes(font.toLowerCase())) {
+          return font;
+        }
+      }
+
+      // If no match found, try extracting the first font from the list
+      // "Times New Roman, serif" -> "Times New Roman"
+      const firstFont = fontFamily.split(",")[0].trim().replace(/["']/g, "");
+
+      // Check if extracted font matches any known font
+      const firstFontLower = firstFont.toLowerCase();
+      for (const font of knownFonts) {
+        if (firstFontLower === font.toLowerCase()) {
+          return font;
+        }
+      }
+
+      // Fallback to Lato if no match
+      return "Lato";
+    };
+
+    setEditingFont(normalizeEditingFont(item.fontFamily));
     setEditingIndex(bestIndex);
   }
 };

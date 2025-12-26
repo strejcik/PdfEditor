@@ -28,9 +28,11 @@ function ensureNormalizedCoords<T extends Partial<TextItem>>(it: T, CW: number, 
   return out as T;
 }
 
+// Constants - computed once, not on every render
+const CANVAS_WIDTH  = typeof CW_CONST === "number" && CW_CONST > 0 ? CW_CONST : 595; // A4 @ 72 dpi
+const CANVAS_HEIGHT = typeof CH_CONST === "number" && CH_CONST > 0 ? CH_CONST : 842;
+
 export function useTextItems() {
-  const CANVAS_WIDTH  = typeof CW_CONST === "number" && CW_CONST > 0 ? CW_CONST : 595; // A4 @ 72 dpi
-  const CANVAS_HEIGHT = typeof CH_CONST === "number" && CH_CONST > 0 ? CH_CONST : 842;
   
   // Core item state
   const [textItemsState, _setTextItems] = useState<TextItem[]>([]);
@@ -59,6 +61,7 @@ export function useTextItems() {
   /**
    * Wrapped setter that ALWAYS ensures normalized coords exist.
    * Accepts either an array or a functional updater (same as React setState).
+   * Note: CANVAS_WIDTH/CANVAS_HEIGHT are module-level constants, so this callback is stable.
    */
   const setTextItems = useCallback(
     (update: TextItem[] | ((prev: TextItem[]) => TextItem[])) => {
@@ -69,7 +72,7 @@ export function useTextItems() {
         return normalized as TextItem[];
       });
     },
-    [CANVAS_WIDTH, CANVAS_HEIGHT]
+    [] // CANVAS_WIDTH/CANVAS_HEIGHT are module-level constants
   );
 
 
@@ -552,16 +555,36 @@ function resolveTextLayoutForHit(item:any, ctx:any, canvas:any) {
   const cssW = rect.width;
   const cssH = rect.height;
 
-  const fontSize   = Number(item.fontSize) || 16;
+  let fontSize   = Number(item.fontSize) || 16;
   const fontFamily = item.fontFamily || "Lato";
   const padding    = item.boxPadding != null ? Number(item.boxPadding) : Math.round(fontSize * 0.2);
+
+  // Check if this is PDF-extracted text with bounds/baseline
+  const hasPdfBounds = (item.widthNorm != null) && (item.heightNorm != null);
+  const hasPdfBaseline = item.yNormBaseline != null;
+  const textContent = item.text || "";
 
   ctx.save();
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
+
+  // For PDF-extracted text: scale font to fit within PDF's bounding box
+  // MUST match resolveTextLayout exactly for consistent hit detection
+  if (hasPdfBounds && textContent) {
+    const targetWidth = Number(item.widthNorm) * cssW;
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    const measuredWidth = ctx.measureText(textContent).width;
+    if (measuredWidth > targetWidth * 1.02 && targetWidth > 0) {
+      const scaleFactor = targetWidth / measuredWidth;
+      const minScale = 0.5;
+      const adjustedScale = Math.max(scaleFactor, minScale);
+      fontSize = fontSize * adjustedScale;
+    }
+  }
+
   ctx.font = `${fontSize}px ${fontFamily}`;
 
-  const m = ctx.measureText(item.text || "");
+  const m = ctx.measureText(textContent);
   const ascent  = (typeof m.actualBoundingBoxAscent  === "number") ? m.actualBoundingBoxAscent  : fontSize * 0.83;
   const descent = (typeof m.actualBoundingBoxDescent === "number") ? m.actualBoundingBoxDescent : fontSize * 0.20;
   const textHeight = ascent + descent;
@@ -585,9 +608,15 @@ function resolveTextLayoutForHit(item:any, ctx:any, canvas:any) {
   // Actual visual x position (accounts for left-extending glyphs like "j")
   const x = xOrigin - xOffset;
 
+  // Calculate topY - MUST match resolveTextLayout exactly
+  // If PDF provides exact baseline position, use it to calculate topY
   let topY;
-  if (hasNorm) {
-    // ❌ no clamping
+  if (hasPdfBaseline) {
+    // PDF-extracted text: calculate topY from baseline position
+    const baselineY = Number(item.yNormBaseline) * cssH;
+    topY = baselineY - ascent;
+  } else if (hasNorm) {
+    // User-created text with normalized coords
     topY = Number(item.yNormTop) * cssH;
   } else {
     // Legacy pixel mode: convert baseline/bottom to top
@@ -910,17 +939,48 @@ function wrapTextIntoLines(ctx: CanvasRenderingContext2D, text: string, maxWidth
 }
 
 const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => {
-  const fontSize   = Number(item.fontSize) || 16;
+  let fontSize   = Number(item.fontSize) || 16;
   const fontFamily = item.fontFamily || "Lato";
   const padding    = item.boxPadding != null ? item.boxPadding : Math.round(fontSize * 0.2);
 
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
+
+  // Check if this is PDF-extracted text with width bounds
+  const hasPdfBounds = (item.widthNorm != null) && (item.heightNorm != null);
+  const hasPdfBaseline = item.yNormBaseline != null;
+  const textContent = item.text || "";
+
+  // For PDF-extracted text: scale font to fit within PDF's bounding box
+  // This prevents text overlap when browser font has different metrics than PDF font
+  if (hasPdfBounds && textContent) {
+    const targetWidth = Number(item.widthNorm) * rect.width;
+
+    // Measure text with original font size
+    ctx.font = `${fontSize}px ${fontFamily}`;
+    const m = ctx.measureText(textContent);
+    const measuredWidth = m.width;
+
+    // If text is wider than target, scale down font size
+    // Add small tolerance (2%) to avoid overly aggressive scaling
+    if (measuredWidth > targetWidth * 1.02 && targetWidth > 0) {
+      const scaleFactor = targetWidth / measuredWidth;
+      // Don't scale below 50% of original size to maintain readability
+      const minScale = 0.5;
+      const adjustedScale = Math.max(scaleFactor, minScale);
+      fontSize = fontSize * adjustedScale;
+    }
+  }
+
+  // Set final font for all measurements
   ctx.font = `${fontSize}px ${fontFamily}`;
 
   // Check if text needs to be wrapped using item.maxWidth
+  // PDF-extracted text should NOT be wrapped (it has precise positioning)
   const maxWidth = item.maxWidth;
-  const lines = maxWidth && maxWidth > 0 ? wrapTextIntoLines(ctx, item.text, maxWidth) : [item.text || ""];
+  const lines = (hasPdfBounds || hasPdfBaseline || !maxWidth || maxWidth <= 0)
+    ? [textContent]
+    : wrapTextIntoLines(ctx, textContent, maxWidth);
 
   // Calculate line height (1.2x font size for comfortable reading)
   const lineHeight = fontSize * 1.2;
@@ -928,8 +988,8 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
   // Measure the first line for baseline metrics
   const firstLineText = lines[0] || "";
   const m = ctx.measureText(firstLineText);
-  const ascent  = m.actualBoundingBoxAscent;
-  const descent = m.actualBoundingBoxDescent;
+  const ascent  = m.actualBoundingBoxAscent || fontSize * 0.8;
+  const descent = m.actualBoundingBoxDescent || fontSize * 0.2;
   const singleLineHeight = ascent + descent;
 
   // Total height for all lines
@@ -962,15 +1022,31 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
   // Visual left edge (accounts for left-extending glyphs like "j")
   const x = xOrigin - xOffset;
 
-  let topY;
-  if (hasNorm) {
+  // Calculate baseline Y position
+  // If PDF provides exact baseline position, use it directly (most accurate)
+  // Otherwise calculate from top position + ascent
+  let baselineY: number | null = null;
+  let topY: number;
+
+  if (hasPdfBaseline) {
+    // PDF-extracted text: use exact baseline position from PDF
+    baselineY = Number(item.yNormBaseline) * rect.height;
+    // Calculate topY from baseline for bounding box (using canvas-measured ascent)
+    topY = baselineY - ascent;
+  } else if (hasNorm) {
     topY = Number(item.yNormTop) * rect.height;
+    // baselineY will be calculated from topY + ascent in drawing code
   } else {
     const rawY = Number(item.y) || 0;
     const anchor = item.anchor || "baseline";
-    if (anchor === "baseline")      topY = rawY - ascent;
-    else if (anchor === "bottom")   topY = rawY - totalTextHeight;
-    else                            topY = rawY; // already top
+    if (anchor === "baseline") {
+      baselineY = rawY;
+      topY = rawY - ascent;
+    } else if (anchor === "bottom") {
+      topY = rawY - totalTextHeight;
+    } else {
+      topY = rawY; // already top
+    }
   }
 
   return {
@@ -978,7 +1054,8 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     xOrigin,     // Original x position (where text is drawn from)
     xOffset,     // How much glyph extends left of origin
     topY,
-    fontSize,
+    baselineY,   // Exact baseline Y position (null if not available, use topY + ascent)
+    fontSize,    // May be scaled down for PDF text to fit bounds
     fontFamily,
     padding,
     textWidth,   // Visual width (not advance width)
@@ -989,6 +1066,9 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     lines,
     lineHeight,
     isMultiLine: lines.length > 1,
+    // PDF precision flags
+    hasPdfBaseline,
+    hasPdfBounds,
   };
 }
 
@@ -1062,16 +1142,21 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
       return Number.isFinite(n) ? n : def;
     };
 
-    // Be very permissive when deciding if an item is an image
+    // Be very permissive when deciding if an item is an image or vector
     const isImageLike = (o: any): boolean => {
       if (!o || typeof o !== "object") return false;
+      // Explicit type checks first - text items should NOT be treated as images
+      if (o.type === "text") return false;
       if (o.type === "image") return true;
-      // Consider as image if it has any of these signals:
-      if ("widthNorm" in o || "heightNorm" in o) return true;
+      if (o.type === "vector") return true;  // Vectors are SVG data URIs, treat like images
+      // Consider as image if it has pixelWidth/pixelHeight (image-specific properties)
       if ("pixelWidth" in o || "pixelHeight" in o) return true;
-      if (typeof o.ref === "string" || typeof o.data === "string" || typeof o.src === "string") return true;
-      // If it has only text fields, treat as text:
-      if ("text" in o && !("widthNorm" in o) && !("heightNorm" in o)) return false;
+      // Consider as image if it has data/ref/src (image data properties) WITHOUT being text
+      if ((typeof o.ref === "string" || typeof o.data === "string" || typeof o.src === "string") && !("text" in o)) return true;
+      // If it has widthNorm/heightNorm but also has text, it's a text item with bounds
+      if (("widthNorm" in o || "heightNorm" in o) && "text" in o) return false;
+      // If it has widthNorm/heightNorm without text, it's likely an image
+      if ("widthNorm" in o || "heightNorm" in o) return true;
       return false;
     };
 
@@ -1099,7 +1184,7 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
             null;
 
           newImageItems.push({
-            type: "image",
+            type: src.type === "vector" ? "vector" : "image",  // Preserve vector type
             index: pageIndex,
 
             // normalized (persisted)
@@ -1116,8 +1201,8 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
             // bytes/url for draw
             data: dataCandidate,
 
-            // Layer properties
-            zIndex: src?.zIndex ?? -100,
+            // Layer properties - vectors default to -50 (above images, below text)
+            zIndex: src?.zIndex ?? (src.type === "vector" ? -50 : -100),
             visible: src?.visible ?? true,
             locked: src?.locked ?? false,
           });
@@ -1183,6 +1268,11 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
             ...(heightNorm !== null && { heightNorm: +heightNorm.toFixed(6) }),
             ...(ascentRatio !== null && { ascentRatio: +ascentRatio.toFixed(4) }),
             ...(descentRatio !== null && { descentRatio: +descentRatio.toFixed(4) }),
+            // Preserve baseline position for precise rendering (from PDF extraction)
+            ...(src?.yNormBaseline != null && { yNormBaseline: +toNum(src.yNormBaseline).toFixed(6) }),
+            // Preserve ascender/descender from PDF extraction
+            ...(src?.ascender != null && { ascender: toNum(src.ascender) }),
+            ...(src?.descender != null && { descender: toNum(src.descender) }),
             // Layer properties
             zIndex: src?.zIndex ?? 10,
             visible: src?.visible ?? true,
