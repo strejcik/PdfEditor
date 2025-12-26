@@ -133,6 +133,129 @@ function getSpanCoordinates(span, linkedTextItem) {
 }
 
 /**
+ * Draw a single annotation item
+ * Exported for unified z-index rendering
+ *
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {DOMRect} rect - Canvas bounding rect
+ * @param {object} item - Annotation item
+ * @param {number} globalIndex - Index in annotations array
+ * @param {object} state - Editor state
+ */
+export function drawSingleAnnotation(ctx, rect, item, globalIndex, state) {
+  const {
+    selectedAnnotationIndex,
+    selectedAnnotationIndexes = [],
+    textItems = [],
+  } = state;
+
+  ctx.save();
+
+  // Find linked text item if annotation is linked
+  const linkedTextItem = item.linkedTextItemId
+    ? findTextItemById(textItems, item.linkedTextItemId)
+    : null;
+
+  // Draw each span of the annotation
+  (item.spans || []).forEach(span => {
+    // Get span coordinates (adjusted for linked text item if applicable)
+    const adjustedSpan = getSpanCoordinates(span, linkedTextItem);
+
+    // Calculate visual metrics to match text rendering
+    const metrics = getSpanVisualMetrics(ctx, adjustedSpan, rect);
+    const x = metrics.x;
+    const y = metrics.y;
+    const w = metrics.width;
+    const h = metrics.height;
+
+    switch (item.type) {
+      case 'highlight': {
+        // Highlight: covers the full text bounding box with minimal horizontal padding
+        const hlX = x - TYPO.HIGHLIGHT_HORIZONTAL_PAD;
+        const hlY = y;
+        const hlW = w + (TYPO.HIGHLIGHT_HORIZONTAL_PAD * 2);
+        const hlH = h;
+
+        ctx.fillStyle = hexToRgba(item.color, item.opacity || 0.4);
+        const radius = Math.min(3, hlH * 0.15);
+        ctx.beginPath();
+        ctx.roundRect(hlX, hlY, hlW, hlH, radius);
+        ctx.fill();
+        break;
+      }
+
+      case 'strikethrough': {
+        const strikeY = y + (h * TYPO.STRIKETHROUGH_POSITION);
+        const lineWidth = Math.max(TYPO.STRIKETHROUGH_MIN_THICKNESS, h * TYPO.STRIKETHROUGH_THICKNESS_RATIO);
+
+        ctx.strokeStyle = item.color || '#FF0000';
+        ctx.lineWidth = lineWidth;
+        ctx.globalAlpha = item.opacity || 1.0;
+        ctx.lineCap = 'butt';
+        ctx.beginPath();
+        ctx.moveTo(x, strikeY);
+        ctx.lineTo(x + w, strikeY);
+        ctx.stroke();
+        break;
+      }
+
+      case 'underline': {
+        const underlineY = y + (h * TYPO.UNDERLINE_POSITION);
+        const lineWidth = Math.max(TYPO.UNDERLINE_MIN_THICKNESS, h * TYPO.UNDERLINE_THICKNESS_RATIO);
+
+        ctx.strokeStyle = item.color || '#0000FF';
+        ctx.lineWidth = lineWidth;
+        ctx.globalAlpha = item.opacity || 1.0;
+        ctx.lineCap = 'butt';
+        ctx.beginPath();
+        ctx.moveTo(x, underlineY);
+        ctx.lineTo(x + w, underlineY);
+        ctx.stroke();
+        break;
+      }
+
+      default:
+        break;
+    }
+  });
+
+  ctx.restore();
+
+  // Draw selection highlight around the annotation
+  const isSelected =
+    globalIndex === selectedAnnotationIndex ||
+    (selectedAnnotationIndexes && selectedAnnotationIndexes.includes(globalIndex));
+
+  if (isSelected) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(30, 144, 255, 0.8)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+
+    // Draw selection rectangle around all spans
+    (item.spans || []).forEach(span => {
+      const adjustedSpan = getSpanCoordinates(span, linkedTextItem);
+      const metrics = getSpanVisualMetrics(ctx, adjustedSpan, rect);
+      ctx.strokeRect(metrics.x, metrics.y, metrics.width, metrics.height);
+    });
+
+    // Show link indicator if annotation is linked
+    if (item.linkedTextItemId && linkedTextItem) {
+      ctx.fillStyle = "rgba(59, 130, 246, 0.8)";
+      ctx.font = "10px sans-serif";
+      const firstSpan = item.spans[0];
+      if (firstSpan) {
+        const adjustedSpan = getSpanCoordinates(firstSpan, linkedTextItem);
+        const metrics = getSpanVisualMetrics(ctx, adjustedSpan, rect);
+        ctx.fillText("\u{1F517}", metrics.x - 12, metrics.y + 10);
+      }
+    }
+
+    ctx.restore();
+  }
+}
+
+/**
  * Draw all annotations for a specific page
  * MUST be called BEFORE drawTextItems for highlights to appear behind text
  *
@@ -142,127 +265,17 @@ function getSpanCoordinates(span, linkedTextItem) {
  * @param {object} state - Editor state containing annotations and textItems
  */
 export function drawAnnotations(ctx, rect, pageIndex, state) {
-  const {
-    annotationItems = [],
-    selectedAnnotationIndex,
-    selectedAnnotationIndexes = [],
-    textItems = [],
-  } = state;
+  const { annotationItems = [] } = state;
 
   if (!annotationItems || annotationItems.length === 0) return;
 
   annotationItems.forEach((item, globalIndex) => {
     // Only draw annotations for current page
     if (item.index !== pageIndex) return;
+    // Respect visibility
+    if (item.visible === false) return;
 
-    ctx.save();
-
-    // Find linked text item if annotation is linked
-    const linkedTextItem = item.linkedTextItemId
-      ? findTextItemById(textItems, item.linkedTextItemId)
-      : null;
-
-    // Draw each span of the annotation
-    (item.spans || []).forEach(span => {
-      // Get span coordinates (adjusted for linked text item if applicable)
-      const adjustedSpan = getSpanCoordinates(span, linkedTextItem);
-
-      // Calculate visual metrics to match text rendering
-      const metrics = getSpanVisualMetrics(ctx, adjustedSpan, rect);
-      const x = metrics.x;
-      const y = metrics.y;
-      const w = metrics.width;
-      const h = metrics.height;
-
-      switch (item.type) {
-        case 'highlight': {
-          // Highlight: covers the full text bounding box with minimal horizontal padding
-          // Stays exactly within the bounding box for professional appearance
-          const hlX = x - TYPO.HIGHLIGHT_HORIZONTAL_PAD;
-          const hlY = y;
-          const hlW = w + (TYPO.HIGHLIGHT_HORIZONTAL_PAD * 2);
-          const hlH = h;
-
-          ctx.fillStyle = hexToRgba(item.color, item.opacity || 0.4);
-          // Use rounded corners for a softer, more professional look
-          const radius = Math.min(3, hlH * 0.15);
-          ctx.beginPath();
-          ctx.roundRect(hlX, hlY, hlW, hlH, radius);
-          ctx.fill();
-          break;
-        }
-
-        case 'strikethrough': {
-          // Strikethrough: positioned at exact vertical center (50%) of bounding box
-          const strikeY = y + (h * TYPO.STRIKETHROUGH_POSITION);
-          const lineWidth = Math.max(TYPO.STRIKETHROUGH_MIN_THICKNESS, h * TYPO.STRIKETHROUGH_THICKNESS_RATIO);
-
-          ctx.strokeStyle = item.color || '#FF0000';
-          ctx.lineWidth = lineWidth;
-          ctx.globalAlpha = item.opacity || 1.0;
-          ctx.lineCap = 'butt'; // Exact endpoints, no extension
-          ctx.beginPath();
-          ctx.moveTo(x, strikeY);
-          ctx.lineTo(x + w, strikeY);
-          ctx.stroke();
-          break;
-        }
-
-        case 'underline': {
-          // Underline: positioned at the bottom of the bounding box
-          const underlineY = y + (h * TYPO.UNDERLINE_POSITION);
-          const lineWidth = Math.max(TYPO.UNDERLINE_MIN_THICKNESS, h * TYPO.UNDERLINE_THICKNESS_RATIO);
-
-          ctx.strokeStyle = item.color || '#0000FF';
-          ctx.lineWidth = lineWidth;
-          ctx.globalAlpha = item.opacity || 1.0;
-          ctx.lineCap = 'butt'; // Exact endpoints, no extension
-          ctx.beginPath();
-          ctx.moveTo(x, underlineY);
-          ctx.lineTo(x + w, underlineY);
-          ctx.stroke();
-          break;
-        }
-
-        default:
-          break;
-      }
-    });
-
-    ctx.restore();
-
-    // Draw selection highlight around the annotation
-    const isSelected =
-      globalIndex === selectedAnnotationIndex ||
-      (selectedAnnotationIndexes && selectedAnnotationIndexes.includes(globalIndex));
-
-    if (isSelected) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(30, 144, 255, 0.8)"; // Dodger blue
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 4]);
-
-      // Draw selection rectangle around all spans (using visual metrics and adjusted coords)
-      (item.spans || []).forEach(span => {
-        const adjustedSpan = getSpanCoordinates(span, linkedTextItem);
-        const metrics = getSpanVisualMetrics(ctx, adjustedSpan, rect);
-        ctx.strokeRect(metrics.x, metrics.y, metrics.width, metrics.height);
-      });
-
-      // Show link indicator if annotation is linked
-      if (item.linkedTextItemId && linkedTextItem) {
-        ctx.fillStyle = "rgba(59, 130, 246, 0.8)";
-        ctx.font = "10px sans-serif";
-        const firstSpan = item.spans[0];
-        if (firstSpan) {
-          const adjustedSpan = getSpanCoordinates(firstSpan, linkedTextItem);
-          const metrics = getSpanVisualMetrics(ctx, adjustedSpan, rect);
-          ctx.fillText("🔗", metrics.x - 12, metrics.y + 10);
-        }
-      }
-
-      ctx.restore();
-    }
+    drawSingleAnnotation(ctx, rect, item, globalIndex, state);
   });
 }
 

@@ -70,7 +70,7 @@ export function useAlignmentGuides() {
     excludeImageIndex: number | null,
     canvasWidth: number,
     canvasHeight: number,
-    resolveTextLayout?: (item: any) => { width: number; height: number }
+    resolveTextLayout?: (item: any) => { width: number; height: number; xOffset?: number }
   ): ItemBounds[] => {
     const bounds: ItemBounds[] = [];
 
@@ -79,8 +79,9 @@ export function useAlignmentGuides() {
       if (item.index !== pageIndex) return;
       if (i === excludeTextIndex) return;
 
-      const textSize = resolveTextLayout ? resolveTextLayout(item) : { width: 100, height: 20 };
-      bounds.push(getTextItemBounds(item, canvasWidth, canvasHeight, textSize.width, textSize.height));
+      const textSize = resolveTextLayout ? resolveTextLayout(item) : { width: 100, height: 20, xOffset: 0 };
+      const xOffset = textSize.xOffset ?? 0;
+      bounds.push(getTextItemBounds(item, canvasWidth, canvasHeight, textSize.width, textSize.height, xOffset));
     });
 
     // Add shape item bounds

@@ -60,6 +60,10 @@ export function handleFormFieldMouseDown(e, params) {
       const handle = getFormFieldResizeHandle(selectedField, mouseX, mouseY, rect.width, rect.height);
 
       if (handle) {
+        // Check if field is locked - don't allow resize
+        if (selectedField.locked) {
+          return false; // Let other handlers process
+        }
         setIsResizingFormField(true);
         setResizeStart({ x: mouseX, y: mouseY });
         setResizeHandle(handle);
@@ -97,6 +101,18 @@ export function handleFormFieldMouseDown(e, params) {
     const handle = getFormFieldResizeHandle(field, mouseX, mouseY, rect.width, rect.height);
 
     if (handle) {
+      // Check if field is locked - don't allow resize, but still select it
+      if (field.locked) {
+        // Select the locked field but don't allow resize
+        setSelectedShapeIndex?.(null);
+        setSelectedShapeIndexes?.([]);
+        setSelectedTextIndex?.(null);
+        setSelectedTextIndexes?.([]);
+        setIsTextSelected?.(false);
+        setSelectedFormFieldIndex(clickedFieldIndex);
+        setSelectedFormFieldIndexes?.([]);
+        return true; // Handled - selected but not resizing
+      }
       // Clear other selections when resizing
       setSelectedShapeIndex?.(null);
       setSelectedShapeIndexes?.([]);
@@ -212,9 +228,16 @@ export function handleFormFieldMouseDown(e, params) {
       setSelectedTextIndexes?.([]);
       setIsTextSelected?.(false);
 
-      // Start dragging single form field
+      // Select the form field
       setSelectedFormFieldIndex(clickedFieldIndex);
       setSelectedFormFieldIndexes?.([]);
+
+      // Check if field is locked - don't allow drag
+      if (field.locked) {
+        return true; // Handled - selected but not dragging
+      }
+
+      // Start dragging single form field
       setIsDraggingFormField(true);
       setDragStart({ x: mouseX, y: mouseY });
 

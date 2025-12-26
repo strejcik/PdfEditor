@@ -26,6 +26,7 @@ import { useClaudeAI } from '../hooks/useClaudeAI';
 import { useAnnotations } from '../hooks/useAnnotations';
 import { useTemplates } from '../hooks/useTemplates';
 import { useAlignmentGuides } from '../hooks/useAlignmentGuides';
+import { useLayers } from '../hooks/useLayers';
 
 type EditorContextValue = {
   ui: ReturnType<typeof useUiPanels>;
@@ -46,6 +47,7 @@ type EditorContextValue = {
   annotations: ReturnType<typeof useAnnotations>;
   templates: ReturnType<typeof useTemplates>;
   alignmentGuides: ReturnType<typeof useAlignmentGuides>;
+  layers: ReturnType<typeof useLayers>;
 };
 
 const EditorContext = createContext<EditorContextValue | null>(null);
@@ -75,6 +77,63 @@ export function EditorProvider({ children }: PropsWithChildren) {
   const annotations = useAnnotations();
   const templates = useTemplates();
   const alignmentGuides = useAlignmentGuides();
+
+  // Initialize the layers hook for unified layer management
+  const layers = useLayers({
+    // Element arrays
+    textItems: text.textItems,
+    shapeItems: shapes.shapeItems,
+    imageItems: images.imageItems,
+    formFields: formFields.formFields,
+    annotationItems: annotations.annotationItems,
+
+    // Z-index setters
+    setTextZIndex: text.setTextZIndex,
+    setShapeZIndex: shapes.setShapeZIndex,
+    setImageZIndex: images.setImageZIndex,
+    setFormFieldZIndex: formFields.setFormFieldZIndex,
+    setAnnotationZIndex: annotations.setAnnotationZIndex,
+
+    // Visibility toggles
+    toggleTextVisibility: text.toggleTextVisibility,
+    toggleShapeVisibility: shapes.toggleShapeVisibility,
+    toggleImageVisibility: images.toggleImageVisibility,
+    toggleFormFieldVisibility: formFields.toggleFormFieldVisibility,
+    toggleAnnotationVisibility: annotations.toggleAnnotationVisibility,
+
+    // Lock toggles
+    toggleTextLock: text.toggleTextLock,
+    toggleShapeLock: shapes.toggleShapeLock,
+    toggleImageLock: images.toggleImageLock,
+    toggleFormFieldLock: formFields.toggleFormFieldLock,
+    toggleAnnotationLock: annotations.toggleAnnotationLock,
+
+    // Name updates
+    updateTextName: text.updateTextName,
+    updateShapeName: shapes.updateShapeName,
+    updateImageName: images.updateImageName,
+    updateFormFieldName: formFields.updateFormFieldName,
+    updateAnnotationName: annotations.updateAnnotationName,
+
+    // Selection setters
+    setSelectedTextIndex: text.setSelectedTextIndex,
+    setSelectedTextIndexes: text.setSelectedTextIndexes,
+    setIsTextSelected: text.setIsTextSelected,
+    setSelectedShapeIndex: shapes.setSelectedShapeIndex,
+    setSelectedImageIndex: images.setSelectedImageIndex,
+    setSelectedFormFieldIndex: formFields.setSelectedFormFieldIndex,
+    setSelectedAnnotationIndex: annotations.setSelectedAnnotationIndex,
+
+    // Current selections
+    selectedTextIndex: text.selectedTextIndex,
+    selectedShapeIndex: shapes.selectedShapeIndex,
+    selectedImageIndex: images.selectedImageIndex,
+    selectedFormFieldIndex: formFields.selectedFormFieldIndex,
+    selectedAnnotationIndex: annotations.selectedAnnotationIndex,
+
+    // Current page
+    activePage: pages.activePage,
+  });
 
   // Keep latest slices in refs so history bindings always read current data
   const textRef = useRef(text);
@@ -646,8 +705,9 @@ useLayoutEffect(() => {
       annotations,
       templates,
       alignmentGuides,
+      layers,
     }),
-    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes, formFields, ai, annotations, templates, alignmentGuides]
+    [ui, history, pages, text, selection, textBox, images, pdf, multiline, mouse, keyboard, share, shapes, formFields, ai, annotations, templates, alignmentGuides, layers]
   );
 
   return <EditorContext.Provider value={value}>{children}</EditorContext.Provider>;

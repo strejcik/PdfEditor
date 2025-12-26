@@ -29,6 +29,11 @@ export interface ShapeItem {
 
   // Z-index for layering (higher = in front)
   zIndex?: number;          // default: 0
+
+  // Layer panel properties
+  visible?: boolean;        // default: true - whether element is drawn
+  locked?: boolean;         // default: false - whether element can be edited
+  name?: string;            // custom name for layer panel
 }
 
 export interface ShapeState {

@@ -332,6 +332,35 @@ export function useShapes() {
     });
   };
 
+  // Layer panel functions
+  // Toggle shape visibility
+  const toggleShapeVisibility = (index: number) => {
+    setShapeItems((prev) =>
+      prev.map((s, i) => i === index ? { ...s, visible: !(s.visible ?? true) } : s)
+    );
+  };
+
+  // Toggle shape lock
+  const toggleShapeLock = (index: number) => {
+    setShapeItems((prev) =>
+      prev.map((s, i) => i === index ? { ...s, locked: !s.locked } : s)
+    );
+  };
+
+  // Update shape name
+  const updateShapeName = (index: number, name: string) => {
+    setShapeItems((prev) =>
+      prev.map((s, i) => i === index ? { ...s, name } : s)
+    );
+  };
+
+  // Set shape z-index directly
+  const setShapeZIndex = (index: number, zIndex: number) => {
+    setShapeItems((prev) =>
+      prev.map((s, i) => i === index ? { ...s, zIndex } : s)
+    );
+  };
+
   return {
     // State
     shapeItems,
@@ -387,5 +416,11 @@ export function useShapes() {
     sendShapeBackward,
     bringShapeToFront,
     sendShapeToBack,
+
+    // Layer panel functions
+    toggleShapeVisibility,
+    toggleShapeLock,
+    updateShapeName,
+    setShapeZIndex,
   };
 }

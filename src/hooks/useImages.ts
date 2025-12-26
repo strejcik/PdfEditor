@@ -239,7 +239,67 @@ const createImageElement = useCallback(
       return img;
 },[]);
 
+  // Layer panel functions
+  // Toggle image visibility
+  const toggleImageVisibility = useCallback((index: number) => {
+    setImageItems((prev) =>
+      prev.map((img, i) => i === index ? { ...img, visible: !(img.visible ?? true) } : img)
+    );
+  }, []);
 
+  // Toggle image lock
+  const toggleImageLock = useCallback((index: number) => {
+    setImageItems((prev) =>
+      prev.map((img, i) => i === index ? { ...img, locked: !img.locked } : img)
+    );
+  }, []);
+
+  // Update image name
+  const updateImageName = useCallback((index: number, name: string) => {
+    setImageItems((prev) =>
+      prev.map((img, i) => i === index ? { ...img, name } : img)
+    );
+  }, []);
+
+  // Set image z-index directly
+  const setImageZIndex = useCallback((index: number, zIndex: number) => {
+    setImageItems((prev) =>
+      prev.map((img, i) => i === index ? { ...img, zIndex } : img)
+    );
+  }, []);
+
+  // Z-index actions for layering
+  const bringImageForward = useCallback((index: number) => {
+    setImageItems((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? -100;
+      return prev.map((img, i) => i === index ? { ...img, zIndex: currentZ + 1 } : img);
+    });
+  }, []);
+
+  const sendImageBackward = useCallback((index: number) => {
+    setImageItems((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? -100;
+      return prev.map((img, i) => i === index ? { ...img, zIndex: currentZ - 1 } : img);
+    });
+  }, []);
+
+  const bringImageToFront = useCallback((index: number) => {
+    setImageItems((prev) => {
+      const maxZ = Math.max(...prev.map(img => img.zIndex ?? -100), -100);
+      return prev.map((img, i) => i === index ? { ...img, zIndex: maxZ + 1 } : img);
+    });
+  }, []);
+
+  const sendImageToBack = useCallback((index: number) => {
+    setImageItems((prev) => {
+      const minZ = Math.min(...prev.map(img => img.zIndex ?? -100), -100);
+      return prev.map((img, i) => i === index ? { ...img, zIndex: minZ - 1 } : img);
+    });
+  }, []);
 
   return {
     imageItems, setImageItems,
@@ -249,10 +309,22 @@ const createImageElement = useCallback(
     resizingImageIndex, setResizingImageIndex,
     resizeStart, setResizeStart,
     hydrateFromPages,
-    addImageFromFile,           // ← new action
+    addImageFromFile,
     handleAddImage,
     saveImageItemsToIndexedDB,
     createImageElement,
-    resolveImageRectCss
+    resolveImageRectCss,
+
+    // Z-index layering
+    bringImageForward,
+    sendImageBackward,
+    bringImageToFront,
+    sendImageToBack,
+
+    // Layer panel functions
+    toggleImageVisibility,
+    toggleImageLock,
+    updateImageName,
+    setImageZIndex,
   };
 }

@@ -56,6 +56,10 @@ export function handleShapeMouseDown(e, params) {
       const handle = getResizeHandle(selectedShape, mouseX, mouseY, rect.width, rect.height);
 
       if (handle) {
+        // Check if shape is locked - don't allow resize
+        if (selectedShape.locked) {
+          return false; // Let other handlers process
+        }
         // Start resizing the already selected shape
         setIsResizingShape(true);
         setResizeStart({ x: mouseX, y: mouseY });
@@ -95,6 +99,16 @@ export function handleShapeMouseDown(e, params) {
     const handle = getResizeHandle(shape, mouseX, mouseY, rect.width, rect.height);
 
     if (handle) {
+      // Check if shape is locked - don't allow resize, but still select it
+      if (shape.locked) {
+        // Select the locked shape but don't allow resize
+        params.setSelectedTextIndex?.(null);
+        params.setSelectedTextIndexes?.([]);
+        params.setIsTextSelected?.(false);
+        setSelectedShapeIndex(clickedShapeIndex);
+        setSelectedShapeIndexes([]);
+        return true; // Handled - selected but not resizing
+      }
       // Start resizing (clear multi-selection, only resize the clicked shape)
       // Clear text selections when selecting a shape
       params.setSelectedTextIndex?.(null);
@@ -211,6 +225,12 @@ export function handleShapeMouseDown(e, params) {
 
         setSelectedShapeIndex(clickedShapeIndex);
         setSelectedShapeIndexes([]);
+
+        // Check if shape is locked - don't allow drag
+        if (shape.locked) {
+          return true; // Handled - selected but not dragging
+        }
+
         setIsDraggingShape(true);
         setDragStart({ x: mouseX, y: mouseY });
         setInitialShape({ ...shape });

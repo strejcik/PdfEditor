@@ -251,14 +251,14 @@ const saveTextItemsToIndexedDB = useCallback(async (items:any) => {
 }, []);
 
 
-// Function to remove selected text
+// Function to remove selected text (respects locked property)
 const removeSelectedText  = useCallback((opts: any) => {
   const {updatePageItems, activePage} = opts;
   let updatedItems = [...textItemsState];
   // === Remove Multiple Selected Texts ===
   if (selectedTextIndexes.length > 0) {
-    // Filter out all selected indexes
-    updatedItems = updatedItems.filter((_, i) => !selectedTextIndexes.includes(i));
+    // Filter out selected indexes, but keep locked items
+    updatedItems = updatedItems.filter((item, i) => !selectedTextIndexes.includes(i) || item.locked);
 
     setTextItems(updatedItems);
     saveTextItemsToIndexedDB(updatedItems);
@@ -267,14 +267,20 @@ const removeSelectedText  = useCallback((opts: any) => {
     const visibleItems = updatedItems.filter((item) => item.index === activePage);
     updatePageItems('textItems', visibleItems);
 
-    // Clear selection
-    setSelectedTextIndexes([]);
-    setIsTextSelected(false);
-    setSelectedTextIndex(null);
+    // Keep locked items in selection
+    const remainingSelected = selectedTextIndexes.filter(i => textItemsState[i]?.locked);
+    setSelectedTextIndexes(remainingSelected);
+    if (remainingSelected.length === 0) {
+      setIsTextSelected(false);
+      setSelectedTextIndex(null);
+    }
     return; // prevent running single delete block
   }
    // === Remove Single Selected Text ===
   if (selectedTextIndex !== null) {
+    // Don't delete if text item is locked
+    if (textItemsState[selectedTextIndex]?.locked) return;
+
     updatedItems = updatedItems.filter((_, i) => i !== selectedTextIndex);
 
     setTextItems(updatedItems);
@@ -286,7 +292,7 @@ const removeSelectedText  = useCallback((opts: any) => {
     setIsTextSelected(false);
     setSelectedTextIndex(null);
   }
-}, [selectedTextIndexes]);
+}, [selectedTextIndexes, textItemsState]);
 
 
 
@@ -1525,6 +1531,35 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     });
   }, [setTextItems]);
 
+  // Layer panel functions
+  // Toggle text item visibility
+  const toggleTextVisibility = useCallback((index: number) => {
+    setTextItems((prev) =>
+      prev.map((t, i) => i === index ? { ...t, visible: !(t.visible ?? true) } : t)
+    );
+  }, [setTextItems]);
+
+  // Toggle text item lock
+  const toggleTextLock = useCallback((index: number) => {
+    setTextItems((prev) =>
+      prev.map((t, i) => i === index ? { ...t, locked: !t.locked } : t)
+    );
+  }, [setTextItems]);
+
+  // Update text item name
+  const updateTextName = useCallback((index: number, name: string) => {
+    setTextItems((prev) =>
+      prev.map((t, i) => i === index ? { ...t, name } : t)
+    );
+  }, [setTextItems]);
+
+  // Set text item z-index directly
+  const setTextZIndex = useCallback((index: number, zIndex: number) => {
+    setTextItems((prev) =>
+      prev.map((t, i) => i === index ? { ...t, zIndex } : t)
+    );
+  }, [setTextItems]);
+
   return {
     // items
     textItems: textItemsState,
@@ -1566,5 +1601,11 @@ const resolveTextLayout = (item:any, ctx:CanvasRenderingContext2D, rect:any) => 
     sendTextBackward,
     bringTextToFront,
     sendTextToBack,
+
+    // Layer panel functions
+    toggleTextVisibility,
+    toggleTextLock,
+    updateTextName,
+    setTextZIndex,
   };
 }

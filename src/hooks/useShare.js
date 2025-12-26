@@ -39,6 +39,7 @@ export const useShare = () => {
     if (Array.isArray(s.state.imageItems)) m.setImageItems?.(s.state.imageItems);
     if (Array.isArray(s.state.shapeItems)) m.setShapeItems?.(s.state.shapeItems);
     if (Array.isArray(s.state.formFields)) m.setFormFields?.(s.state.formFields);
+    if (Array.isArray(s.state.annotationItems)) m.setAnnotationItems?.(s.state.annotationItems);
 
     // Apply shape creation state for viewers to see real-time freehand drawing
     if (s.state.isCreatingShape !== undefined ||

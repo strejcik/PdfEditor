@@ -68,6 +68,14 @@ export interface AnnotationItem {
   linkedTextItemId?: string;
   // Stores the last linked textItem ID when unlinked, for re-linking to original textItem
   lastLinkedTextItemId?: string;
+
+  // Z-index for layering (higher = in front)
+  zIndex?: number;          // default: -50 (behind content)
+
+  // Layer panel properties
+  visible?: boolean;        // default: true - whether element is drawn
+  locked?: boolean;         // default: false - whether element can be edited
+  name?: string;            // custom name for layer panel
 }
 
 /**

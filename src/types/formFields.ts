@@ -37,6 +37,14 @@ export interface FormFieldItem {
 
   // Page association
   index: number;
+
+  // Z-index for layering (higher = in front)
+  zIndex?: number;          // default: 100 (above content)
+
+  // Layer panel properties
+  visible?: boolean;        // default: true - whether element is drawn
+  locked?: boolean;         // default: false - whether element can be edited
+  name?: string;            // custom name for layer panel
 }
 
 export interface FormFieldState {

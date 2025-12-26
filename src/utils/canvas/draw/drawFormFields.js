@@ -6,85 +6,97 @@ function resolveCoord(norm, pixel, canvasSize) {
 }
 
 /**
+ * Draw a single form field
+ * Exported for unified z-index rendering
+ */
+export function drawSingleFormField(ctx, rect, field, globalIndex, state) {
+  const { selectedFormFieldIndex, selectedFormFieldIndexes } = state;
+
+  // Resolve coordinates
+  const x = resolveCoord(field.xNorm, field.x, rect.width);
+  const y = resolveCoord(field.yNormTop, field.y, rect.height);
+  const w = resolveCoord(field.widthNorm, field.width, rect.width);
+  const h = resolveCoord(field.heightNorm, field.height, rect.height);
+
+  // Draw based on type
+  switch (field.type) {
+    case "textInput":
+      drawTextInput(ctx, x, y, w, h, field);
+      break;
+
+    case "textarea":
+      drawTextarea(ctx, x, y, w, h, field);
+      break;
+
+    case "checkbox":
+      drawCheckbox(ctx, x, y, w, h, field);
+      break;
+
+    case "radio":
+      drawRadio(ctx, x, y, w, h, field);
+      break;
+
+    case "dropdown":
+      drawDropdown(ctx, x, y, w, h, field);
+      break;
+
+    default:
+      console.warn("Unknown form field type:", field.type);
+  }
+
+  // Draw selection highlight (single selection OR multi-selection)
+  const isSelected = globalIndex === selectedFormFieldIndex ||
+                     (selectedFormFieldIndexes && selectedFormFieldIndexes.includes(globalIndex));
+
+  if (isSelected) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(59, 130, 246, 0.8)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+
+    // Draw resize handles (small squares at corners)
+    const handleSize = 8;
+    ctx.fillStyle = "rgba(59, 130, 246, 0.8)";
+    ctx.setLineDash([]);
+
+    // Top-left
+    ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
+    // Top-right
+    ctx.fillRect(x + w - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
+    // Bottom-left
+    ctx.fillRect(x - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+    // Bottom-right
+    ctx.fillRect(x + w - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
+
+    ctx.restore();
+  }
+
+  // Draw required indicator
+  if (field.required) {
+    ctx.save();
+    ctx.fillStyle = "#ef4444";
+    ctx.font = "bold 14px Arial";
+    ctx.fillText("*", x + w + 4, y + 14);
+    ctx.restore();
+  }
+}
+
+/**
  * Draw all form fields for a specific page
  */
 export function drawFormFields(ctx, rect, pageIndex, state) {
-  const { formFields, selectedFormFieldIndex, selectedFormFieldIndexes } = state;
+  const { formFields } = state;
 
   if (!formFields || formFields.length === 0) return;
 
   formFields.forEach((field, globalIndex) => {
     // Only draw fields for this page
     if (field.index !== pageIndex) return;
+    // Respect visibility
+    if (field.visible === false) return;
 
-    // Resolve coordinates
-    const x = resolveCoord(field.xNorm, field.x, rect.width);
-    const y = resolveCoord(field.yNormTop, field.y, rect.height);
-    const w = resolveCoord(field.widthNorm, field.width, rect.width);
-    const h = resolveCoord(field.heightNorm, field.height, rect.height);
-
-    // Draw based on type
-    switch (field.type) {
-      case "textInput":
-        drawTextInput(ctx, x, y, w, h, field);
-        break;
-
-      case "textarea":
-        drawTextarea(ctx, x, y, w, h, field);
-        break;
-
-      case "checkbox":
-        drawCheckbox(ctx, x, y, w, h, field);
-        break;
-
-      case "radio":
-        drawRadio(ctx, x, y, w, h, field);
-        break;
-
-      case "dropdown":
-        drawDropdown(ctx, x, y, w, h, field);
-        break;
-
-      default:
-        console.warn("Unknown form field type:", field.type);
-    }
-
-    // Draw selection highlight (single selection OR multi-selection)
-    const isSelected = globalIndex === selectedFormFieldIndex ||
-                       (selectedFormFieldIndexes && selectedFormFieldIndexes.includes(globalIndex));
-
-    if (isSelected) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(59, 130, 246, 0.8)";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 5]);
-      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
-
-      // Draw resize handles (small squares at corners)
-      const handleSize = 8;
-      ctx.fillStyle = "rgba(59, 130, 246, 0.8)";
-      ctx.setLineDash([]);
-
-      // Top-left
-      ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
-      // Top-right
-      ctx.fillRect(x + w - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
-      // Bottom-left
-      ctx.fillRect(x - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
-      // Bottom-right
-      ctx.fillRect(x + w - handleSize / 2, y + h - handleSize / 2, handleSize, handleSize);
-
-      ctx.restore();
-    }
-
-    // Draw required indicator
-    if (field.required) {
-      ctx.save();
-      ctx.fillStyle = "#ef4444";
-      ctx.font = "bold 14px Arial";
-      ctx.fillText("*", x + w + 4, y + 14);
-      ctx.restore();
-    }
+    drawSingleFormField(ctx, rect, field, globalIndex, state);
   });
 }
 

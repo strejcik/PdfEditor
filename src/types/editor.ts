@@ -31,6 +31,11 @@ export type TextItem = {
   descentRatio?: number;
   // Z-index for layering (higher = in front)
   zIndex?: number;
+
+  // Layer panel properties
+  visible?: boolean;        // default: true - whether element is drawn
+  locked?: boolean;         // default: false - whether element can be edited
+  name?: string;            // custom name for layer panel
 };
 
 export type ImageItem = {
@@ -45,6 +50,14 @@ export type ImageItem = {
   heightNorm: number;
   x:number;
   y:number;
+
+  // Z-index for layering (higher = in front)
+  zIndex?: number;          // default: -100 (background layer)
+
+  // Layer panel properties
+  visible?: boolean;        // default: true - whether element is drawn
+  locked?: boolean;         // default: false - whether element can be edited
+  name?: string;            // custom name for layer panel
 };
 
 export type Page = {

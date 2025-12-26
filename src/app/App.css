@@ -352,26 +352,6 @@ button:hover {
   border-color: rgba(59, 130, 246, 0.4);
 }
 
-/* Layer Order Grid (Z-index controls) */
-.layer-order-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.layer-order-grid .layer-btn {
-  padding: 6px 8px;
-  font-size: 11px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-
-.layer-order-grid .layer-btn .panel-btn-icon {
-  font-size: 14px;
-}
-
 /* Panel input styling */
 .panel-input-file {
   width: 92%;
@@ -2281,5 +2261,220 @@ select.input-text option {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ==========================================
+   LAYER PANEL - Object Management
+   ========================================== */
+
+.layer-panel-content {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 56px);
+}
+
+.layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.layer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  min-height: 40px;
+}
+
+.layer-item:hover {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.layer-item.selected {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: #3b82f6;
+}
+
+.layer-item.dragging {
+  opacity: 0.5;
+}
+
+.layer-item.drag-overlay {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  background: rgba(30, 41, 59, 0.95);
+  border-color: #3b82f6;
+}
+
+.layer-item.hidden-layer {
+  opacity: 0.5;
+}
+
+.layer-item.hidden-layer .layer-name {
+  text-decoration: line-through;
+  color: #64748b;
+}
+
+.layer-item.viewer-disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.layer-item.viewer-disabled:hover {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.layer-drag-handle {
+  cursor: grab;
+  color: #64748b;
+  font-size: 16px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.layer-drag-handle:active {
+  cursor: grabbing;
+}
+
+.layer-type-icon {
+  font-size: 14px;
+  width: 22px;
+  height: 22px;
+  text-align: center;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 4px;
+  color: #94a3b8;
+}
+
+.layer-name {
+  flex: 1;
+  font-size: 12px;
+  color: #e5e7eb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.layer-name-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #f9fafb;
+  outline: none;
+  min-width: 0;
+}
+
+.layer-name-input:focus {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+
+.layer-controls {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.layer-control-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #94a3b8;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.layer-control-btn:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.2);
+  color: #e5e7eb;
+}
+
+.layer-control-btn.inactive {
+  opacity: 0.4;
+}
+
+.layer-control-btn.active {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.layer-control-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+.layer-empty-state {
+  text-align: center;
+  color: #64748b;
+  padding: 32px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.layer-empty-state p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.layer-empty-hint {
+  font-size: 11px !important;
+  color: #64748b !important;
+  max-width: 200px;
+}
+
+.layer-panel-footer {
+  margin-top: auto;
+  padding: 12px 0 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.layer-count {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.layer-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 10px;
+  color: #64748b;
+}
+
+.layer-legend span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 

@@ -29,25 +29,33 @@ const SNAP_THRESHOLD = 0.015; // ~1.5% of canvas width/height
 
 /**
  * Calculate bounds for a text item
+ * @param xOffset - How much the glyph extends left of the text origin (e.g., for "j")
+ *                  This is needed because xNorm represents the text origin, not the visual left edge
  */
 export function getTextItemBounds(
   item: { xNorm?: number; yNormTop?: number; x?: number; y?: number },
   canvasWidth: number,
   canvasHeight: number,
   textWidth: number,
-  textHeight: number
+  textHeight: number,
+  xOffset: number = 0
 ): ItemBounds {
   const xNorm = item.xNorm ?? (item.x ?? 0) / canvasWidth;
   const yNorm = item.yNormTop ?? (item.y ?? 0) / canvasHeight;
   const widthNorm = textWidth / canvasWidth;
   const heightNorm = textHeight / canvasHeight;
 
+  // Calculate actual visual left edge (accounting for glyphs extending left of origin)
+  // xNorm is the text origin, but the visual left edge is shifted left by xOffset
+  const xOffsetNorm = xOffset / canvasWidth;
+  const left = xNorm - xOffsetNorm;
+
   return {
-    left: xNorm,
-    right: xNorm + widthNorm,
+    left: left,
+    right: left + widthNorm,
     top: yNorm,
     bottom: yNorm + heightNorm,
-    centerX: xNorm + widthNorm / 2,
+    centerX: left + widthNorm / 2,
     centerY: yNorm + heightNorm / 2,
   };
 }

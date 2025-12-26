@@ -39,6 +39,7 @@ import { TemplatesPanel } from "../components/TemplatesPanel";
 import { TemplatePreviewModal } from "../components/TemplatePreviewModal";
 import { PlaceholderEditorModal } from "../components/PlaceholderEditorModal";
 import { loadTemplate } from "../utils/templates/templateLoader";
+import { LayerPanel } from "../components/LayerPanel";
 
 
 const App = () => {
@@ -457,6 +458,7 @@ useEffect(() => {
       setSnapEnabled,
       getOtherItemBounds,
     },
+    layers,
   } = useEditor(); // ✅ correct
   useClipboard(useEditor());
 
@@ -537,6 +539,7 @@ const requestCanvasDraw = (page) => {
       imageItems,
       shapeItems,
       formFields,
+      annotationItems,
       isCreatingShape,
       activeShapeTool,
       shapeCreationStart,
@@ -559,6 +562,7 @@ const requestCanvasDraw = (page) => {
       imageItems: latestStateRef.current.imageItems,
       shapeItems: latestStateRef.current.shapeItems,
       formFields: latestStateRef.current.formFields,
+      annotationItems: latestStateRef.current.annotationItems,
       isCreatingShape: latestStateRef.current.isCreatingShape,
       activeShapeTool: latestStateRef.current.activeShapeTool,
       shapeCreationStart: latestStateRef.current.shapeCreationStart,
@@ -573,8 +577,9 @@ const requestCanvasDraw = (page) => {
       setActivePage,
       setShapeItems,
       setFormFields,
+      setAnnotationItems,
     }
-  }, [activePage, pageList, textItems, imageItems, shapeItems, formFields, isCreatingShape, activeShapeTool, shapeCreationStart, shapeCreationCurrent, freehandPoints, cursorPosition]);
+  }, [activePage, pageList, textItems, imageItems, shapeItems, formFields, annotationItems, isCreatingShape, activeShapeTool, shapeCreationStart, shapeCreationCurrent, freehandPoints, cursorPosition]);
 
 
 
@@ -652,6 +657,7 @@ useEffect(() => {
         textItems,
         imageItems,
         shapeItems,
+        selectedImageIndex,
         selectedShapeIndex,
         selectedShapeIndexes,
         // Use viewer creation state when in viewer mode, otherwise use local state
@@ -716,6 +722,7 @@ useEffect(() => {
               textItems,
               imageItems,
               shapeItems,
+              selectedImageIndex,
               selectedShapeIndex,
               selectedShapeIndexes,
               // Use viewer creation state when in viewer mode, otherwise use local state
@@ -777,6 +784,7 @@ useEffect(() => {
   textItems,
   imageItems,
   shapeItems,
+  selectedImageIndex,
   selectedShapeIndex,
   selectedShapeIndexes,
   isCreatingShape,
@@ -1236,9 +1244,14 @@ const wrappedMouseMove = (e) => {
             centerX: (field.xNorm ?? 0) + (field.widthNorm ?? 0.1) / 2,
             centerY: (field.yNormTop ?? 0) + (field.heightNorm ?? 0.05) / 2,
           };
+          const ctx = canvas.getContext('2d');
           const otherBounds = getOtherItemBounds(
             textItems, shapeItems, imageItems, activePage,
-            null, null, null, rect.width, rect.height
+            null, null, null, rect.width, rect.height,
+            (item) => {
+              const L = resolveTextLayoutForHit(item, ctx, canvas);
+              return { width: L.box.w, height: L.box.h, xOffset: L.xOffset ?? 0 };
+            }
           ).concat(
             formFields.filter((_, i) => i !== selectedFormFieldIndex && formFields[i]?.index === activePage)
               .map(f => ({
@@ -1294,9 +1307,14 @@ const wrappedMouseMove = (e) => {
             centerX: (shape.xNorm ?? 0) + (shape.widthNorm ?? 0.1) / 2,
             centerY: (shape.yNormTop ?? 0) + (shape.heightNorm ?? 0.05) / 2,
           };
+          const ctx = canvas.getContext('2d');
           const otherBounds = getOtherItemBounds(
             textItems, shapeItems, imageItems, activePage,
-            null, selectedShapeIndex, null, rect.width, rect.height
+            null, selectedShapeIndex, null, rect.width, rect.height,
+            (item) => {
+              const L = resolveTextLayoutForHit(item, ctx, canvas);
+              return { width: L.box.w, height: L.box.h, xOffset: L.xOffset ?? 0 };
+            }
           ).concat(
             formFields.filter(f => f?.index === activePage).map(f => ({
               left: f.xNorm ?? 0,
@@ -1405,7 +1423,7 @@ const wrappedMouseMove = (e) => {
           textIndex, null, null, rect.width, rect.height,
           (item) => {
             const L = resolveTextLayoutForHit(item, ctx, canvas);
-            return { width: L.box.w, height: L.box.h };
+            return { width: L.box.w, height: L.box.h, xOffset: L.xOffset ?? 0 };
           }
         ).concat(
           formFields.filter(f => f?.index === activePage).map(f => ({
@@ -1437,9 +1455,14 @@ const wrappedMouseMove = (e) => {
           centerX: (img.xNorm ?? 0) + (img.widthNorm ?? 0.1) / 2,
           centerY: (img.yNormTop ?? 0) + (img.heightNorm ?? 0.1) / 2,
         };
+        const ctx = canvas.getContext('2d');
         const otherBounds = getOtherItemBounds(
           textItems, shapeItems, imageItems, activePage,
-          null, null, draggedImageIndex, rect.width, rect.height
+          null, null, draggedImageIndex, rect.width, rect.height,
+          (item) => {
+            const L = resolveTextLayoutForHit(item, ctx, canvas);
+            return { width: L.box.w, height: L.box.h, xOffset: L.xOffset ?? 0 };
+          }
         ).concat(
           formFields.filter(f => f?.index === activePage).map(f => ({
             left: f.xNorm ?? 0,
@@ -1891,6 +1914,13 @@ return (
       >
         📄
       </button>
+      <button
+        className={`rail-btn ${activePanel === 'layers' ? 'active' : ''}`}
+        title="Layers"
+        onClick={() => togglePanel('layers')}
+      >
+        ☰
+      </button>
 
       <div className="rail-divider" />
 
@@ -2090,56 +2120,13 @@ return (
               <button
                 className="panel-btn"
                 onClick={isViewer ? viewOnly : () => removeSelectedText({ updatePageItems, activePage })}
-                disabled={isViewer || (selectedTextIndex === null && selectedTextIndexes.length < 1)}
+                disabled={isViewer || (selectedTextIndex === null && selectedTextIndexes.length < 1) || (selectedTextIndex !== null && textItems[selectedTextIndex]?.locked)}
+                title={selectedTextIndex !== null && textItems[selectedTextIndex]?.locked ? "Unlock this text from Layers panel to delete" : "Remove Selected"}
               >
                 <span className="panel-btn-icon">🗑️</span>
                 Remove Selected
               </button>
 
-              {/* Z-index / Layer Order Controls for Text */}
-              {selectedTextIndex !== null && (
-                <div className="layer-order-section" style={{ marginTop: 12 }}>
-                  <div className="panel-section-label" style={{ marginBottom: 8 }}>Layer Order</div>
-                  <div className="layer-order-grid">
-                    <button
-                      className="panel-btn panel-btn-secondary layer-btn"
-                      onClick={isViewer ? viewOnly : () => bringTextToFront(selectedTextIndex)}
-                      disabled={isViewer}
-                      title="Bring to Front"
-                    >
-                      <span className="panel-btn-icon">⬆⬆</span>
-                      Front
-                    </button>
-                    <button
-                      className="panel-btn panel-btn-secondary layer-btn"
-                      onClick={isViewer ? viewOnly : () => bringTextForward(selectedTextIndex)}
-                      disabled={isViewer}
-                      title="Bring Forward"
-                    >
-                      <span className="panel-btn-icon">⬆</span>
-                      Up
-                    </button>
-                    <button
-                      className="panel-btn panel-btn-secondary layer-btn"
-                      onClick={isViewer ? viewOnly : () => sendTextBackward(selectedTextIndex)}
-                      disabled={isViewer}
-                      title="Send Backward"
-                    >
-                      <span className="panel-btn-icon">⬇</span>
-                      Down
-                    </button>
-                    <button
-                      className="panel-btn panel-btn-secondary layer-btn"
-                      onClick={isViewer ? viewOnly : () => sendTextToBack(selectedTextIndex)}
-                      disabled={isViewer}
-                      title="Send to Back"
-                    >
-                      <span className="panel-btn-icon">⬇⬇</span>
-                      Back
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
 
             <div className="panel-section">
@@ -2461,50 +2448,6 @@ return (
                 Delete Selected
               </button>
 
-              {/* Z-index / Layer Order Controls */}
-              {selectedShapeIndex !== null && (
-                <div className="layer-order-section" style={{ marginTop: 12 }}>
-                  <div className="panel-section-label" style={{ marginBottom: 8 }}>Layer Order</div>
-                  <div className="layer-order-grid">
-                    <button
-                      className="panel-btn panel-btn-secondary layer-btn"
-                      onClick={isViewer ? viewOnly : () => bringShapeToFront(selectedShapeIndex)}
-                      disabled={isViewer}
-                      title="Bring to Front"
-                    >
-                      <span className="panel-btn-icon">⬆⬆</span>
-                      Front
-                    </button>
-                    <button
-                      className="panel-btn panel-btn-secondary layer-btn"
-                      onClick={isViewer ? viewOnly : () => bringShapeForward(selectedShapeIndex)}
-                      disabled={isViewer}
-                      title="Bring Forward"
-                    >
-                      <span className="panel-btn-icon">⬆</span>
-                      Up
-                    </button>
-                    <button
-                      className="panel-btn panel-btn-secondary layer-btn"
-                      onClick={isViewer ? viewOnly : () => sendShapeBackward(selectedShapeIndex)}
-                      disabled={isViewer}
-                      title="Send Backward"
-                    >
-                      <span className="panel-btn-icon">⬇</span>
-                      Down
-                    </button>
-                    <button
-                      className="panel-btn panel-btn-secondary layer-btn"
-                      onClick={isViewer ? viewOnly : () => sendShapeToBack(selectedShapeIndex)}
-                      disabled={isViewer}
-                      title="Send to Back"
-                    >
-                      <span className="panel-btn-icon">⬇⬇</span>
-                      Back
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </>
@@ -3163,12 +3106,13 @@ return (
               <button
                 className="panel-btn panel-btn-danger"
                 onClick={isViewer ? viewOnly : () => {
-                  if (selectedAnnotationIndex !== null) {
+                  if (selectedAnnotationIndex !== null && !annotationItems[selectedAnnotationIndex]?.locked) {
                     deleteAnnotation(selectedAnnotationIndex);
                     setSelectedAnnotationIndex(null);
                   }
                 }}
-                disabled={isViewer || selectedAnnotationIndex === null}
+                disabled={isViewer || selectedAnnotationIndex === null || annotationItems[selectedAnnotationIndex]?.locked}
+                title={annotationItems[selectedAnnotationIndex]?.locked ? "Unlock this annotation from Layers panel to delete" : "Delete Selected"}
               >
                 <span className="panel-btn-icon">🗑️</span>
                 Delete Selected
@@ -3185,17 +3129,30 @@ return (
                     {annotationItems.map((ann, idx) => (
                       <div
                         key={ann.id}
-                        onClick={() => setSelectedAnnotationIndex(idx)}
+                        onClick={() => {
+                          if (isViewer) return;
+                          // Clear all other selections before selecting annotation
+                          setSelectedTextIndex(null);
+                          setSelectedTextIndexes([]);
+                          setIsTextSelected(false);
+                          setSelectedShapeIndex(null);
+                          setSelectedShapeIndexes([]);
+                          setSelectedImageIndex(null);
+                          setSelectedFormFieldIndex(null);
+                          setSelectedFormFieldIndexes([]);
+                          setSelectedAnnotationIndex(idx);
+                        }}
                         style={{
                           padding: '6px 8px',
                           marginBottom: '4px',
                           backgroundColor: selectedAnnotationIndex === idx ? '#e0e7ff' : '#f3f4f6',
                           borderRadius: '4px',
-                          cursor: 'pointer',
+                          cursor: isViewer ? 'default' : 'pointer',
                           fontSize: '12px',
                           display: 'flex',
                           alignItems: 'center',
                           gap: '8px',
+                          opacity: isViewer ? 0.7 : 1,
                         }}
                       >
                         <span style={{
@@ -3227,6 +3184,20 @@ return (
         <TemplatesPanel
           onLoadTemplate={handleUseTemplate}
           onPreview={openTemplatePreview}
+          onClose={() => setActivePanel(null)}
+          isViewer={isViewer}
+        />
+      )}
+
+      {/* Layers Panel */}
+      {activePanel === 'layers' && (
+        <LayerPanel
+          layers={layers.layers}
+          onToggleVisibility={layers.toggleLayerVisibility}
+          onToggleLock={layers.toggleLayerLock}
+          onRename={layers.updateLayerName}
+          onSelect={layers.selectLayer}
+          onReorder={layers.reorderLayers}
           onClose={() => setActivePanel(null)}
           isViewer={isViewer}
         />

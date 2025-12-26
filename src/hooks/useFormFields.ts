@@ -163,6 +163,68 @@ export function useFormFields() {
     setFormFields(allFields);
   };
 
+  // Layer panel functions
+  // Toggle form field visibility
+  const toggleFormFieldVisibility = (index: number) => {
+    setFormFields((prev) =>
+      prev.map((f, i) => i === index ? { ...f, visible: !(f.visible ?? true) } : f)
+    );
+  };
+
+  // Toggle form field lock
+  const toggleFormFieldLock = (index: number) => {
+    setFormFields((prev) =>
+      prev.map((f, i) => i === index ? { ...f, locked: !f.locked } : f)
+    );
+  };
+
+  // Update form field name
+  const updateFormFieldName = (index: number, name: string) => {
+    setFormFields((prev) =>
+      prev.map((f, i) => i === index ? { ...f, name } : f)
+    );
+  };
+
+  // Set form field z-index directly
+  const setFormFieldZIndex = (index: number, zIndex: number) => {
+    setFormFields((prev) =>
+      prev.map((f, i) => i === index ? { ...f, zIndex } : f)
+    );
+  };
+
+  // Z-index actions for layering
+  const bringFormFieldForward = (index: number) => {
+    setFormFields((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? 100;
+      return prev.map((f, i) => i === index ? { ...f, zIndex: currentZ + 1 } : f);
+    });
+  };
+
+  const sendFormFieldBackward = (index: number) => {
+    setFormFields((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? 100;
+      return prev.map((f, i) => i === index ? { ...f, zIndex: currentZ - 1 } : f);
+    });
+  };
+
+  const bringFormFieldToFront = (index: number) => {
+    setFormFields((prev) => {
+      const maxZ = Math.max(...prev.map(f => f.zIndex ?? 100), 100);
+      return prev.map((f, i) => i === index ? { ...f, zIndex: maxZ + 1 } : f);
+    });
+  };
+
+  const sendFormFieldToBack = (index: number) => {
+    setFormFields((prev) => {
+      const minZ = Math.min(...prev.map(f => f.zIndex ?? 100), 100);
+      return prev.map((f, i) => i === index ? { ...f, zIndex: minZ - 1 } : f);
+    });
+  };
+
   return {
     // State
     formFields,
@@ -214,5 +276,17 @@ export function useFormFields() {
 
     // Hydration
     hydrateFromPages,
+
+    // Z-index layering
+    bringFormFieldForward,
+    sendFormFieldBackward,
+    bringFormFieldToFront,
+    sendFormFieldToBack,
+
+    // Layer panel functions
+    toggleFormFieldVisibility,
+    toggleFormFieldLock,
+    updateFormFieldName,
+    setFormFieldZIndex,
   };
 }

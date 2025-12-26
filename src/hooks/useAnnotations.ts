@@ -214,28 +214,37 @@ export function useAnnotations() {
     );
   };
 
-  // Delete an annotation by index
+  // Delete an annotation by index (respects locked property)
   const deleteAnnotation = (index: number) => {
+    // Don't delete if annotation is locked
+    if (annotationItems[index]?.locked) return;
     setAnnotationItems(prev => prev.filter((_, i) => i !== index));
     setSelectedAnnotationIndex(null);
   };
 
-  // Delete selected annotation (single)
+  // Delete selected annotation (single, respects locked property)
   const deleteSelectedAnnotation = () => {
     if (selectedAnnotationIndex !== null) {
+      // Don't delete if annotation is locked
+      if (annotationItems[selectedAnnotationIndex]?.locked) return;
       setAnnotationItems(prev => prev.filter((_, i) => i !== selectedAnnotationIndex));
       setSelectedAnnotationIndex(null);
     }
   };
 
-  // Delete multiple selected annotations
+  // Delete multiple selected annotations (respects locked property)
   const deleteSelectedAnnotations = () => {
     if (selectedAnnotationIndexes.length > 0) {
+      // Filter out locked annotations from deletion
       setAnnotationItems(prev =>
-        prev.filter((_, i) => !selectedAnnotationIndexes.includes(i))
+        prev.filter((item, i) => !selectedAnnotationIndexes.includes(i) || item.locked)
       );
-      setSelectedAnnotationIndexes([]);
-      setSelectedAnnotationIndex(null);
+      // Keep locked annotations in selection
+      const remainingSelected = selectedAnnotationIndexes.filter(i => annotationItems[i]?.locked);
+      setSelectedAnnotationIndexes(remainingSelected);
+      if (remainingSelected.length === 0) {
+        setSelectedAnnotationIndex(null);
+      }
     } else if (selectedAnnotationIndex !== null) {
       deleteSelectedAnnotation();
     }
@@ -471,6 +480,68 @@ export function useAnnotations() {
     return annotationItems[annotationIndex]?.linkedTextItemId;
   };
 
+  // Layer panel functions
+  // Toggle annotation visibility
+  const toggleAnnotationVisibility = (index: number) => {
+    setAnnotationItems((prev) =>
+      prev.map((a, i) => i === index ? { ...a, visible: !(a.visible ?? true) } : a)
+    );
+  };
+
+  // Toggle annotation lock
+  const toggleAnnotationLock = (index: number) => {
+    setAnnotationItems((prev) =>
+      prev.map((a, i) => i === index ? { ...a, locked: !a.locked } : a)
+    );
+  };
+
+  // Update annotation name
+  const updateAnnotationName = (index: number, name: string) => {
+    setAnnotationItems((prev) =>
+      prev.map((a, i) => i === index ? { ...a, name } : a)
+    );
+  };
+
+  // Set annotation z-index directly
+  const setAnnotationZIndex = (index: number, zIndex: number) => {
+    setAnnotationItems((prev) =>
+      prev.map((a, i) => i === index ? { ...a, zIndex } : a)
+    );
+  };
+
+  // Z-index actions for layering
+  const bringAnnotationForward = (index: number) => {
+    setAnnotationItems((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? -50;
+      return prev.map((a, i) => i === index ? { ...a, zIndex: currentZ + 1 } : a);
+    });
+  };
+
+  const sendAnnotationBackward = (index: number) => {
+    setAnnotationItems((prev) => {
+      const item = prev[index];
+      if (!item) return prev;
+      const currentZ = item.zIndex ?? -50;
+      return prev.map((a, i) => i === index ? { ...a, zIndex: currentZ - 1 } : a);
+    });
+  };
+
+  const bringAnnotationToFront = (index: number) => {
+    setAnnotationItems((prev) => {
+      const maxZ = Math.max(...prev.map(a => a.zIndex ?? -50), -50);
+      return prev.map((a, i) => i === index ? { ...a, zIndex: maxZ + 1 } : a);
+    });
+  };
+
+  const sendAnnotationToBack = (index: number) => {
+    setAnnotationItems((prev) => {
+      const minZ = Math.min(...prev.map(a => a.zIndex ?? -50), -50);
+      return prev.map((a, i) => i === index ? { ...a, zIndex: minZ - 1 } : a);
+    });
+  };
+
   return {
     // Core state
     annotationItems,
@@ -530,5 +601,17 @@ export function useAnnotations() {
 
     // Hydration
     hydrateFromPages,
+
+    // Z-index layering
+    bringAnnotationForward,
+    sendAnnotationBackward,
+    bringAnnotationToFront,
+    sendAnnotationToBack,
+
+    // Layer panel functions
+    toggleAnnotationVisibility,
+    toggleAnnotationLock,
+    updateAnnotationName,
+    setAnnotationZIndex,
   };
 }

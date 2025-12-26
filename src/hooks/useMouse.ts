@@ -419,23 +419,41 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
         const { x, y, w, h, cssW, cssH } = resolveImageRectCss(item, canvas);
 
         const handleSize = 10; // CSS px
-        const handleX = x + w - handleSize / 2;
-        const handleY = y + h - handleSize / 2;
+        const halfHandle = handleSize / 2;
 
-        if (cssX >= handleX && cssX <= handleX + handleSize &&
-            cssY >= handleY && cssY <= handleY + handleSize) {
-        setResizingImageIndex(index);
-        setResizeStart({
-            x: cssX,
-            y: cssY,
-            startW: w,
-            startH: h,
-            ratio: (w > 0 && h > 0) ? (w / h) : 1,
-            cssW,
-            cssH,
-        });
-        setIsSelecting(false);
-        return;
+        // Check all four corner handles
+        const handles = [
+            { name: 'top-left', hx: x - halfHandle, hy: y - halfHandle },
+            { name: 'top-right', hx: x + w - halfHandle, hy: y - halfHandle },
+            { name: 'bottom-left', hx: x - halfHandle, hy: y + h - halfHandle },
+            { name: 'bottom-right', hx: x + w - halfHandle, hy: y + h - halfHandle },
+        ];
+
+        for (const handle of handles) {
+            if (cssX >= handle.hx && cssX <= handle.hx + handleSize &&
+                cssY >= handle.hy && cssY <= handle.hy + handleSize) {
+                // Check if image is locked - don't allow resize
+                if (item.locked) {
+                    setSelectedImageIndex(index);
+                    setIsSelecting(false);
+                    return; // Select but don't resize
+                }
+                setResizingImageIndex(index);
+                setResizeStart({
+                    x: cssX,
+                    y: cssY,
+                    startX: x,
+                    startY: y,
+                    startW: w,
+                    startH: h,
+                    ratio: (w > 0 && h > 0) ? (w / h) : 1,
+                    cssW,
+                    cssH,
+                    handle: handle.name, // Track which handle is being dragged
+                });
+                setIsSelecting(false);
+                return;
+            }
         }
     }
 
@@ -448,6 +466,13 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
 
         if (cssX >= x && cssX <= x + w && cssY >= y && cssY <= y + h) {
         setSelectedImageIndex(index);
+
+        // Check if image is locked - select but don't prepare for drag
+        if (item.locked) {
+            setIsSelecting(false);
+            return;
+        }
+
         setDraggedImageIndex(index);
         // DON'T set isImageDragging here - only set it when actual movement occurs
         // This prevents simple clicks from triggering drag behavior and sync effects
@@ -573,6 +598,13 @@ const indexToXY = (index:any, layout:any, preferredX = null, verticalDir = 0) =>
             : [bestTextIndex];
 
         setSelectedTextIndexes(newSelectedIndexes);
+
+        // Check if the text item is locked - don't allow drag
+        const clickedTextItem = textItems[bestTextIndex];
+        if (clickedTextItem?.locked) {
+            setIsSelecting(false);
+            return; // Selected but not dragging
+        }
 
         // Push undo snapshot BEFORE starting drag (captures original positions)
         pushSnapshotToUndo?.(activePage);
@@ -868,32 +900,82 @@ if (isResizing && textBox) {
         const updated = [...imageItems];
         const item = updated[resizingImageIndex];
         if (!item || item.index !== activePage) return;
-    
+
+        const startX = resizeStart?.startX ?? item.x;
+        const startY = resizeStart?.startY ?? item.y;
         const startW = resizeStart?.startW ?? item.width;
         const startH = resizeStart?.startH ?? item.height;
         const ratio  = resizeStart?.ratio  ?? ((startW > 0 && startH > 0) ? startW / startH : 1);
-    
+        const handle = resizeStart?.handle ?? 'bottom-right';
+
         const totalDX = cssX - (resizeStart?.x ?? cssX);
         const totalDY = cssY - (resizeStart?.y ?? cssY);
-    
-        let newW = startW + totalDX;
-        let newH = startH + totalDY;
-    
+
+        let newX = startX;
+        let newY = startY;
+        let newW = startW;
+        let newH = startH;
+
+        // Resize based on which handle is being dragged
+        const isDraggingLeft = handle.includes('left');
+        const isDraggingTop = handle.includes('top');
+
+        if (isDraggingLeft) {
+          newX = startX + totalDX;
+          newW = startW - totalDX;
+        } else {
+          newW = startW + totalDX;
+        }
+
+        if (isDraggingTop) {
+          newY = startY + totalDY;
+          newH = startH - totalDY;
+        } else {
+          newH = startH + totalDY;
+        }
+
+        // Maintain aspect ratio if shift is held
         if (e.shiftKey && ratio > 0) {
           if (Math.abs(totalDX) >= Math.abs(totalDY)) {
-            newW = startW + totalDX; newH = newW / ratio;
+            const targetW = isDraggingLeft ? startW - totalDX : startW + totalDX;
+            newW = targetW;
+            newH = newW / ratio;
+            if (isDraggingTop) {
+              newY = startY + startH - newH;
+            }
           } else {
-            newH = startH + totalDY; newW = newH * ratio;
+            const targetH = isDraggingTop ? startH - totalDY : startH + totalDY;
+            newH = targetH;
+            newW = newH * ratio;
+            if (isDraggingLeft) {
+              newX = startX + startW - newW;
+            }
           }
         }
-    
-        newW = Math.max(10, newW);
-        newH = Math.max(10, newH);
-    
-        item.width  = newW;               // pixels
+
+        // Enforce minimum size and adjust position to keep opposite edge fixed
+        const minSize = 10;
+        if (newW < minSize) {
+          if (isDraggingLeft) {
+            newX = startX + startW - minSize;
+          }
+          newW = minSize;
+        }
+        if (newH < minSize) {
+          if (isDraggingTop) {
+            newY = startY + startH - minSize;
+          }
+          newH = minSize;
+        }
+
+        item.x = newX;
+        item.y = newY;
+        item.width  = newW;
         item.height = newH;
 
         // normalized (UNCLAMPED)
+        item.xNorm = rect.width ? (newX / rect.width) : 0;
+        item.yNormTop = rect.height ? (newY / rect.height) : 0;
         item.widthNorm  = rect.width  ? (newW / rect.width)  : 0;
         item.heightNorm = rect.height ? (newH / rect.height) : 0;
 
