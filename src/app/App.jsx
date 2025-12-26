@@ -1855,7 +1855,9 @@ return (
   <div className="app-shell">
     {/* Icon Rail (left) */}
     <nav className="icon-rail">
-      <div className="rail-logo">P</div>
+      <div className="rail-logo">
+        <img src="/logo.png" alt="PDF Editor" />
+      </div>
 
       {/* Main tool buttons */}
       <button
